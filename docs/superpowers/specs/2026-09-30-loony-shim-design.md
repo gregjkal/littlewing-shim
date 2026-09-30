@@ -96,10 +96,10 @@ Each Carbon module registers its handlers with `trap.c` from a `*_register()` fu
 |---|---|---|
 | `0x0000_0000` | 64 KB | Zeroed low-memory page. Reads return 0, writes are logged |
 | `0x0010_0000` | code size | Code section (read and execute) |
-| next 4 KB boundary | 23 KB | Data section (unpacked), then storage for imported data symbols |
+| next 4 KB boundary | 23 KB | Data section (unpacked), then the import area: one 8-byte slot per import (a transition vector for functions, a data word for data symbols) |
 | `0x0100_0000` | 64 MB | Guest heap: Ptrs, Handles and master pointers, resources, pixel buffers, QuickDraw structs |
 | `0x0600_0000` | 1 MB | Stack, growing down from `0x0610_0000`, with an unmapped guard page below it |
-| `0x0700_0000` | 64 KB | Stub page: one 4-byte trap slot and one 8-byte transition vector per import, plus `RETURN_MAGIC` |
+| `0x0700_0000` | unmapped | Trap addresses: import *i* is `0x0700_0000 + 4i`, and `RETURN_MAGIC` is `0x07FF_FFF0`. Nothing is mapped here, so jumping to one of these addresses stops the CPU with that exact address |
 | `0x0800_0000` | unmapped | Tag space for opaque host objects (CFStringRef, window refs, event refs). These are IDs, never dereferenced |
 
 Everything the game might inspect directly lives in guest memory, in the original big-endian layout: resource data, handles, PixMap/GWorld/CGrafPort structs, FSSpecs, Rects. State the game can only reach through accessor functions stays in host C structs: SDL objects, sound channels, event handlers, timers and CF objects.
@@ -110,14 +110,14 @@ Everything the game might inspect directly lives in guest memory, in the origina
 
 1. Parse the arguments: game folder, defaulting to `/Applications/Loony Labyrinth`. Open the data fork and the resource fork (through `/..namedfork/rsrc`).
 2. Map the guest memory. Load the PEF sections, unpack section 1's pattern-initialized data, and run the relocation program.
-3. Bind imports. Each function import gets a transition vector `{trap_slot_addr, 0}`, and each data import gets a guest word initialized by its handler module. Import names with no registered handler still bind. They only fail when called (see Error handling).
+3. Bind imports. Each function import gets a transition vector `{trap_address, 0}` in the import area, and each data import gets a guest word initialized by its handler module. Import names with no registered handler still bind. They only fail when called (see Error handling).
 4. Initialize the modules: the display creates the SDL window but shows nothing yet, the resource chain opens the application's resource fork as the current resource file, and sound starts its audio stream.
 5. If the loader header names an init routine, call it through `guest_call`. Then call the main entry point the same way. When main returns, or the game calls `ExitToShell`, shut down cleanly.
 
 ### Calling an import (guest → host)
 
-- The game calls an import through its transition vector in the usual CFM way: load the code address into CTR and the TOC into r2, then `bctr`. It lands on that import's trap slot in the stub page.
-- A Unicorn code hook covers only the stub page. When it fires, it records the slot index and calls `uc_emu_stop`. As a backstop, every slot holds a `trap` instruction.
+- The game calls an import through its transition vector in the usual CFM way: load the code address into CTR and the TOC into r2, then `bctr`. It jumps to that import's trap address.
+- The trap addresses are unmapped. Unicorn's unmapped-fetch hook records the address and stops emulation, and `(address - 0x0700_0000) / 4` is the import index. This avoids any doubt about whether the instruction at a stop was executed. (Revised during planning. The first draft used a mapped stub page with a code hook.)
 - The dispatch loop in `trap.c`, running outside Unicorn, looks up the handler. Handlers read their arguments from r3–r10 (and f1–f13 for floats) using PowerPC CFM calling-convention helpers, and write their result to r3 (or f1).
 - The dispatch loop sets PC to LR and resumes the CPU. It also delivers any pending sound callbacks (see Sound) before resuming.
 
