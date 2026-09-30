@@ -138,3 +138,82 @@ void pef_free(pef_file *pef) {
     pef->imports = NULL;
     pef->nimports = 0;
 }
+
+/* ---- pattern-initialized data ---- */
+
+typedef struct {
+    const uint8_t *p, *end;
+    uint8_t *dst;
+    size_t out, cap;
+    char *err;
+    size_t errlen;
+} unpacker;
+
+static bool u_arg(unpacker *u, uint32_t *v) {
+    *v = 0;
+    for (int i = 0; i < 5; i++) {
+        if (u->p >= u->end)
+            return fail(u->err, u->errlen, "truncated pattern data");
+        uint8_t b = *u->p++;
+        *v = (*v << 7) | (b & 0x7F);
+        if (!(b & 0x80))
+            return true;
+    }
+    return fail(u->err, u->errlen, "bad pattern-data argument");
+}
+
+static bool u_zero(unpacker *u, uint32_t n) {
+    if (n > u->cap - u->out)
+        return fail(u->err, u->errlen, "pattern data overflows the section");
+    memset(u->dst + u->out, 0, n);
+    u->out += n;
+    return true;
+}
+
+static bool u_copy(unpacker *u, uint32_t n) {
+    if (n > (size_t)(u->end - u->p))
+        return fail(u->err, u->errlen, "truncated pattern data");
+    if (n > u->cap - u->out)
+        return fail(u->err, u->errlen, "pattern data overflows the section");
+    memcpy(u->dst + u->out, u->p, n);
+    u->p += n;
+    u->out += n;
+    return true;
+}
+
+bool pef_unpack_pattern(const uint8_t *src, size_t srclen, uint8_t *dst, size_t dstlen,
+                        char *err, size_t errlen) {
+    unpacker u = {src, src + srclen, dst, 0, dstlen, err, errlen};
+    while (u.p < u.end) {
+        uint8_t b = *u.p++;
+        uint32_t op = b >> 5, count = b & 0x1F;
+        if (count == 0 && !u_arg(&u, &count))
+            return false;
+        switch (op) {
+        case 0: /* Zero */
+            if (!u_zero(&u, count))
+                return false;
+            break;
+        case 1: /* BlockCopy */
+            if (!u_copy(&u, count))
+                return false;
+            break;
+        case 4: { /* InterleaveRepeatBlockWithZero */
+            uint32_t custom, repeat;
+            if (!u_arg(&u, &custom) || !u_arg(&u, &repeat))
+                return false;
+            if (!u_zero(&u, count))
+                return false;
+            for (uint32_t i = 0; i < repeat; i++)
+                if (!u_copy(&u, custom) || !u_zero(&u, count))
+                    return false;
+            break;
+        }
+        default:
+            return fail(err, errlen, "unsupported pattern opcode %u", op);
+        }
+    }
+    if (u.out != dstlen)
+        return fail(err, errlen, "pattern data produced %zu of %zu bytes", u.out, dstlen);
+    return true;
+}
