@@ -217,3 +217,103 @@ bool pef_unpack_pattern(const uint8_t *src, size_t srclen, uint8_t *dst, size_t 
         return fail(err, errlen, "pattern data produced %zu of %zu bytes", u.out, dstlen);
     return true;
 }
+
+/* ---- relocations ---- */
+
+static bool add_word(const pef_reloc_target *t, uint32_t pos, uint32_t value, char *err,
+                     size_t errlen) {
+    if ((uint64_t)pos + 4 > t->len)
+        return fail(err, errlen, "relocation at offset 0x%x is past the end of the section", pos);
+    wr_be32(t->host + pos, rd_be32(t->host + pos) + value);
+    return true;
+}
+
+static bool add_import(const pef_reloc_target *t, uint32_t pos, uint32_t idx, char *err,
+                       size_t errlen) {
+    if (idx >= t->nimports)
+        return fail(err, errlen, "import index %u out of range", idx);
+    return add_word(t, pos, t->import_addr[idx], err, errlen);
+}
+
+bool pef_reloc_run(const uint8_t *instrs, uint32_t ninstrs, const pef_reloc_target *t,
+                   char *err, size_t errlen) {
+    uint32_t pos = 0, imp = 0;
+    const uint32_t sc = t->section_c, sd = t->section_d;
+    for (uint32_t k = 0; k < ninstrs; k++) {
+        uint16_t w = rd_be16(instrs + 2 * k);
+        if ((w >> 14) == 0) { /* RelocBySectDWithSkip */
+            pos += ((w >> 6) & 0xFFu) * 4u;
+            for (uint32_t n = w & 0x3Fu; n > 0; n--, pos += 4)
+                if (!add_word(t, pos, sd, err, errlen))
+                    return false;
+        } else if ((w >> 13) == 2) { /* run group */
+            uint32_t sub = (w >> 9) & 0xFu, run = (w & 0x1FFu) + 1u;
+            for (uint32_t n = 0; n < run; n++) {
+                switch (sub) {
+                case 0: /* RelocBySectC */
+                    if (!add_word(t, pos, sc, err, errlen))
+                        return false;
+                    pos += 4;
+                    break;
+                case 1: /* RelocBySectD */
+                    if (!add_word(t, pos, sd, err, errlen))
+                        return false;
+                    pos += 4;
+                    break;
+                case 3: /* RelocTVector8 */
+                    if (!add_word(t, pos, sc, err, errlen) || !add_word(t, pos + 4, sd, err, errlen))
+                        return false;
+                    pos += 8;
+                    break;
+                case 5: /* RelocImportRun */
+                    if (!add_import(t, pos, imp++, err, errlen))
+                        return false;
+                    pos += 4;
+                    break;
+                default:
+                    return fail(err, errlen, "unsupported relocation opcode 0x%04x", w);
+                }
+            }
+        } else if ((w >> 13) == 3) { /* small-index group */
+            uint32_t sub = (w >> 9) & 0xFu, idx = w & 0x1FFu;
+            if (sub != 0)
+                return fail(err, errlen, "unsupported relocation opcode 0x%04x", w);
+            if (!add_import(t, pos, idx, err, errlen)) /* RelocSmByImport */
+                return false;
+            imp = idx + 1;
+            pos += 4;
+        } else if ((w >> 12) == 8) { /* RelocIncrPosition */
+            pos += (w & 0xFFFu) + 1u;
+        } else {
+            return fail(err, errlen, "unsupported relocation opcode 0x%04x", w);
+        }
+    }
+    return true;
+}
+
+bool pef_relocate(const pef_file *pef, uint8_t *const section_host[],
+                  const uint32_t section_addr[], const uint32_t section_len[],
+                  const uint32_t import_addr[], char *err, size_t errlen) {
+    for (uint32_t r = 0; r < pef->nreloc_sections; r++) {
+        const uint8_t *h = pef->file + pef->reloc_headers_off + 12ull * r;
+        uint16_t si = rd_be16(h);
+        uint32_t count = rd_be32(h + 4);
+        uint32_t first = rd_be32(h + 8);
+        if (si >= pef->nsections || !section_host[si])
+            return fail(err, errlen, "relocations target section %u, which is not loaded", si);
+        uint64_t off = (uint64_t)pef->reloc_instr_off + first;
+        if (!in_file(pef->file_len, off, 2ull * count))
+            return fail(err, errlen, "relocation instructions lie outside the file");
+        pef_reloc_target t = {
+            section_host[si],
+            section_len[si],
+            section_addr[0],
+            pef->nsections > 1 ? section_addr[1] : 0,
+            import_addr,
+            pef->nimports,
+        };
+        if (!pef_reloc_run(pef->file + off, count, &t, err, errlen))
+            return false;
+    }
+    return true;
+}
