@@ -263,6 +263,6 @@ Milestones 1–3 have the most unknowns. Each later milestone's details may be a
 
 ## Build and repository
 
-- `~/Developer/loony-shim`, a git repo on `main`. C11, `-Wall -Wextra -Werror` in all builds. `Debug` adds the sanitizers, and `Release` is `-O2`.
+- `~/dev/loony-shim`, a git repo on `main`. C11, `-Wall -Wextra -Werror` in all builds. `Debug` adds the sanitizers, and `Release` is `-O2`.
 - `.gitignore` excludes build output, PNG dumps and anything copied from the game folder.
 - Dependencies come from Homebrew: `unicorn`, `sdl3`, `cmake`, `pkg-config`.
