@@ -83,6 +83,8 @@ int test_run_child(void (*fn)(void *), void *arg, char *out, size_t outlen) {
 }
 
 int main(int argc, char **argv) {
+    /* No test may open a real window; children inherit this too. */
+    setenv("SDL_VIDEO_DRIVER", "dummy", 1);
     const char *filter = argc > 1 ? argv[1] : NULL;
     int passed = 0, failed = 0, skipped = 0;
     for (int i = 0; i < ntests; i++) {

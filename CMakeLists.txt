@@ -16,13 +16,14 @@ set(CMAKE_C_FLAGS_RELEASE "-O2")
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(UNICORN REQUIRED IMPORTED_TARGET unicorn)
+pkg_check_modules(SDL3 REQUIRED IMPORTED_TARGET sdl3)
 
 file(GLOB CORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.c)
 list(REMOVE_ITEM CORE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.c)
 
 add_library(loony_core STATIC ${CORE_SOURCES})
 target_include_directories(loony_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(loony_core PUBLIC PkgConfig::UNICORN)
+target_link_libraries(loony_core PUBLIC PkgConfig::UNICORN PkgConfig::SDL3)
 
 add_executable(loony src/main.c)
 target_link_libraries(loony PRIVATE loony_core)
