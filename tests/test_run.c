@@ -50,11 +50,13 @@ TEST(run_plays_the_opening_headless) {
    goldens were recorded from runs whose frames were checked by eye: the
    title, and a one-player game started from the menu. */
 
-static char script_path[1024];
+static char script_path[1024], wav_path[1024];
 
 static void run_loony_scripted(void *dir) {
     setenv("LOONY_FIXED_CLOCK", "1", 1);
     setenv("LOONY_SCRIPT", script_path, 1);
+    if (wav_path[0])
+        setenv("LOONY_WAV", wav_path, 1);
     run_loony(dir);
 }
 
@@ -133,6 +135,41 @@ TEST(run_a_game_starts_from_the_menu) {
     CHECK_EQ(status, 0);
     CHECK_EQ(shots[0], 0xADE78151u); /* the menu */
     CHECK_EQ(shots[1], 0xA162CB3Du); /* ball 1 in play, "DEMO VERSION TIME LEFT" */
+}
+
+static uint32_t le32_at(const uint8_t *p) {
+    return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+}
+
+/* The opening's music, recorded on the fixed clock: the same samples every
+   run, in every build (the mixer is integer-only). The golden was recorded
+   from a run whose levels were checked: music from the first frames on. */
+TEST(run_the_opening_music_is_recorded) {
+    SKIP_UNLESS_GAME();
+    tmp_name(wav_path, sizeof wav_path, "wav");
+    char out[32768];
+    setenv("LOONY_EXIT_AFTER", "300", 1); /* on the fixed clock, unlike a quit's grace period */
+    int status = run_script("", NULL, NULL, 0, out, sizeof out);
+    unsetenv("LOONY_EXIT_AFTER");
+    size_t len = 0;
+    uint8_t *wav = read_file(wav_path, &len);
+    unlink(wav_path);
+    wav_path[0] = '\0';
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "sound:"));
+    CHECK(wav != NULL);
+    CHECK(len > 44);
+    CHECK_EQ(le32_at(wav + 24), 44100);
+    uint32_t frames = le32_at(wav + 40) / 4;
+    CHECK_EQ(frames, 300 * 44100 / 60); /* exactly the 5 s the run lasted */
+    int peak = 0;
+    for (uint32_t i = 0; i < 2 * 44100; i++) { /* the first second */
+        int v = (int16_t)(wav[44 + 2 * i] | wav[45 + 2 * i] << 8);
+        peak = v < 0 ? (-v > peak ? -v : peak) : (v > peak ? v : peak);
+    }
+    CHECK(peak > 8000);
+    CHECK_EQ(fnv1a32(wav, len), 0x852682F2u);
+    free(wav);
 }
 
 static void run_loony_bad_script(void *dir) {

@@ -78,7 +78,9 @@ src/
   qd.c          QuickDraw subset: ports, GWorlds, PixMaps, CopyBits, PaintRect, color
   pict.c        PICT v2 decoder
   display.c     SDL window, the emulated main screen, palette → RGBA, present
-  sound.c       Sound Manager: channels, snd parsing, command queue, mixer
+  sound.c       Sound Manager: channels, sound headers, audio output, callbacks
+  mixer.c       command queues and mixing, host-only
+  wav.c         .wav recording
   events.c      Carbon Event Manager, event loop, timers, key translation
   dialogs.c     Alert, GetNewDialog, ModalDialog, item text; draws with a built-in bitmap font
   files.c       FSSpec file calls, CFPreferences, CFString/CFNumber objects
@@ -145,7 +147,7 @@ Used for: the init and main entry points, Carbon event handlers, event loop time
 
 ### Time
 
-`TickCount` is the host monotonic clock at 60 Hz, starting at 0 on launch. `Microseconds` is the same clock in microseconds. `Delay` sleeps on the host but keeps pumping SDL events and sound callbacks, so the window never freezes.
+`TickCount` is the host monotonic clock at 60 Hz, starting at 3600 on launch, as on a Mac that booted a minute earlier: the game treats a tick count of 0 as "not scheduled" (`BGMKickOff`), so starting at 0 kept the opening music from playing on the fixed clock. (Revised during Plan 5.) `Microseconds` is the same clock in microseconds. `Delay` sleeps on the host but keeps pumping SDL events and sound callbacks, so the window never freezes.
 
 ## Subsystems
 
@@ -175,13 +177,15 @@ Used for: the init and main entry points, Carbon event handlers, event loop time
 - **DrawPicture:** a PICT v2 decoder covering the opcodes used by the game's 7 PICTs: header, clip, `PackBitsRect`, `DirectBitsRect`, comments, `OpEndPic`. Any other opcode fails loudly. We can test it offline against all 7.
 - **SDL window:** resizable. The emulated screen is scaled to the largest size that fits with the correct aspect ratio, using nearest-neighbor sampling, with vsync. Cmd-F toggles fullscreen and Cmd-Q quits (sends the quit Apple Event). The game never sees these two keys.
 
-### Sound (`sound.c`)
+### Sound (`sound.c`, `mixer.c`)
 
 - **Channels:** `SndNewChannel` creates a host channel with a FIFO command queue. `SndDoCommand` appends a command and `SndDoImmediate` runs it at once. `SndChannelStatus` and `SndDisposeChannel` are implemented.
-- **Supported commands:** `bufferCmd` and `soundCmd` (a sampled sound header: standard, extended or compressed-none; 8-bit unsigned or 16-bit signed; mono or stereo; any sample rate), `quietCmd`, `flushCmd`, `volumeCmd`, `callBackCmd`, `nullCmd`. Unknown commands are logged and ignored, not fatal, because sound problems shouldn't stop the game.
-- **Mixer:** the SDL audio callback thread does only host-side work. It pulls samples from each channel's current buffer, resamples to 44.1 kHz, mixes, and advances each queue. When a `callBackCmd` is reached, it pushes an event onto a lock-free queue.
-- **Callbacks:** the main thread drains that queue at every trap return and every pump iteration, calling the channel's callback with `guest_call`. The game code never runs on the audio thread.
-- **Format parsing:** `snd` format 1 and 2 resources are parsed when the game passes them. The game's `ESnd` resources are expected to be decoded by the game itself and passed to us as sampled sound headers in memory.
+- **Supported commands:** `bufferCmd` (a sampled sound header: standard, or extended with 8-bit unsigned or 16-bit signed samples, mono or stereo, any sample rate), `soundCmd` (accepted, does nothing), `quietCmd`, `flushCmd`, `waitCmd`, `volumeCmd`, `callBackCmd`, `nullCmd`. Unknown commands and header encodings (compressed headers) are logged once and ignored, not fatal, because sound problems shouldn't stop the game. (Measured: the game uses only standard 8-bit mono headers at 11,127 Hz on two channels, music and effects.)
+- **Copy on issue:** `SndDoCommand`/`SndDoImmediate` copy a buffer's samples to the host on the main thread, so the mixer never reads guest memory and the game may reuse a buffer as soon as its command is issued. (Revised during Plan 5; the first draft parsed buffers on the audio thread.)
+- **Mixer (`mixer.c`):** integer-only, 16-bit stereo at 44.1 kHz with linear interpolation, channels summed and clamped. It runs each channel's queue: a buffer plays to its end, then the next command runs on the following frame, so chained buffers have no gap. A `callBackCmd` posts to a callback queue (256 entries; a channel stalls while it is full, so none are lost).
+- **Two drivers, one mixer:** with an audio device, SDL's audio stream callback renders on the audio thread with the stream's lock held, and the main thread takes that lock for every mixer call. With `LOONY_FIXED_CLOCK=1`, or no device, the main thread renders up to the current time at every pump and before every Sound Manager call, so channels are busy exactly as long as their sounds would play and runs stay deterministic. (Revised during Plan 5; the first draft named a lock-free queue.)
+- **Callbacks:** the main thread drains the callback queue at every pump iteration, calling the channel's callback with `guest_call`. The game code never runs on the audio thread.
+- **Recording:** `LOONY_WAV=path` writes what the mixer renders to a .wav file, finished at exit. On the fixed clock it is the same file every run, which the end-to-end tests compare against a golden hash.
 
 ### Events and input (`events.c`)
 

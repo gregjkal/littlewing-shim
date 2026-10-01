@@ -37,8 +37,8 @@ The game starts with its opening and then a self-playing demo. To play:
 
 The keys can be changed from the game's OPTIONS menu. This is the shareware
 version: games are time-limited, and the two startup alerts ("Play Demo" and the
-key list) are answered automatically. There is no sound yet (milestone 5), and
-registering, saved preferences and high scores come with milestone 6.
+key list) are answered automatically. Registering, saved preferences and high
+scores come with milestone 6.
 
 ## Debugging
 
@@ -49,12 +49,17 @@ LOONY_TRACE=lowmem ./build/loony      # log the first write to each low-memory a
 LOONY_STUB=all ./build/loony          # unimplemented OS calls return 0 instead of crashing
 LOONY_EXIT_AFTER=600 LOONY_SCREENSHOT=shot.png ./build/loony   # run 10 s, save the last frame
 SDL_VIDEO_DRIVER=dummy ./build/loony  # no window (with LOONY_SCREENSHOT for headless runs)
+LOONY_WAV=out.wav ./build/loony       # also record the sound (44.1 kHz 16-bit stereo)
+SDL_AUDIO_DRIVER=dummy ./build/loony  # no sound output
 LOONY_FIXED_CLOCK=1 LOONY_SCRIPT=play.txt SDL_VIDEO_DRIVER=dummy ./build/loony
 ```
 
 `LOONY_FIXED_CLOCK=1` makes time advance only when the game waits, so a run is
-the same every time and doesn't depend on the host's speed. `LOONY_SCRIPT`
-plays keys and takes screenshots at given ticks (1/60 s since launch), one
+the same every time and doesn't depend on the host's speed. It plays no sound,
+but `LOONY_WAV` still records what would have played, the same samples every
+run.
+
+`LOONY_SCRIPT` plays keys and takes screenshots at given ticks (1/60 s since launch), one
 action per line:
 
 ```

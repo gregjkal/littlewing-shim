@@ -77,6 +77,7 @@ int main(int argc, char **argv) {
                                         events_request_quit};
     display_set_input(&input);
     display_set_vsync(!misc_fixed_clock());
+    sound_start_output();
     const char *script = getenv("LOONY_SCRIPT");
     if (script && *script && !script_load(script, err, sizeof err)) {
         fprintf(stderr, "loony: can't load the script %s: %s\n", script, err);
