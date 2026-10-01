@@ -153,13 +153,20 @@ void qd_bits(const char *call, uint32_t bits, qd_pixels *out, qd_palette *pal) {
         depth = gm_r16(bits + PM_PIXEL_SIZE);
         if (depth != 1 && depth != 2 && depth != 4 && depth != 8 && depth != 16 && depth != 32)
             trap_crash("%s: %d-bit pixmaps are not supported", call, depth);
-        if (depth <= 8)
+        if (depth <= 8) {
+            if (!gm_r32(bits + PM_TABLE))
+                trap_crash("%s: %d-bit pixmap has no color table", call, depth);
             qd_read_ctab(gm_r32(bits + PM_TABLE), pal);
+        }
     } else {
         qd_std_palette(1, pal);
     }
     uint32_t row_bytes = rb & 0x3FFFu;
+    uint32_t w = rect_w(b) > 0 ? (uint32_t)rect_w(b) : 0;
     uint32_t h = rect_h(b) > 0 ? (uint32_t)rect_h(b) : 0;
+    if ((uint64_t)row_bytes * 8 < (uint64_t)w * (uint32_t)depth)
+        trap_crash("%s: pixmap rowBytes %u is too small for %u %d-bit pixels", call, row_bytes, w,
+                   depth);
     uint32_t base = gm_r32(bits + PM_BASE_ADDR);
     out->base = gm_ptr(base, row_bytes * h);
     out->row_bytes = row_bytes;

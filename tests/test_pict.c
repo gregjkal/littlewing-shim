@@ -167,3 +167,99 @@ TEST(pict_rejects_unknown_opcodes) {
     CHECK(!ok);
     CHECK_CONTAINS(err, "picture opcode 0x0022 is not supported");
 }
+
+TEST(pict_odd_offset_at_the_end_is_truncated) {
+    /* A v2 picture whose data ends right after a 1-byte long comment, at an
+       odd offset, with no end opcode. Aligning must not step past the end. */
+    uint8_t pic[] = {0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0x00, 0x11, 0x02, 0xFF,
+                     0x00, 0xA1, 0, 0, 0, 1, 0x42};
+    uint8_t *copy = malloc(sizeof pic); /* exact size, so ASan sees an over-read */
+    memcpy(copy, pic, sizeof pic);
+    canvas c;
+    canvas_init(&c, 1, 1);
+    char err[256] = "";
+    bool ok = pict_draw(copy, sizeof pic, c.px.bounds, &c.px, c.px.bounds, (qd_rgb){0, 0, 0},
+                        (qd_rgb){0xFFFF, 0xFFFF, 0xFFFF}, err, sizeof err);
+    free(copy);
+    free(c.buf);
+    CHECK(!ok);
+    CHECK_CONTAINS(err, "truncated");
+}
+
+TEST(pict_every_truncation_point_fails_cleanly) {
+    SKIP_UNLESS_GAME();
+    rsrc_entry *e = pict(804);
+    CHECK(e != NULL);
+    for (size_t cut = 0; cut < e->len; cut += 3) {
+        uint8_t *part = malloc(cut ? cut : 1);
+        memcpy(part, rsrc_data(e), cut);
+        canvas c;
+        canvas_init(&c, 309, 80);
+        char err[256] = "";
+        bool ok = pict_draw(part, cut, c.px.bounds, &c.px, c.px.bounds, (qd_rgb){0, 0, 0},
+                            (qd_rgb){0xFFFF, 0xFFFF, 0xFFFF}, err, sizeof err);
+        free(part);
+        free(c.buf);
+        CHECK(!ok);
+    }
+}
+
+TEST(pict_rejects_corrupt_pictures) {
+    /* clip region smaller than its header */
+    uint8_t small_rgn[] = {0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0x11, 0x01, 0x01, 0, 4, 0, 0, 0, 0};
+    /* BitsRect with rowBytes 1 for a 16-pixel-wide 1-bit bitmap */
+    uint8_t short_rows[] = {0, 0, 0, 0, 0, 0, 0, 1, 0, 16, 0x11, 0x01, 0x90, 0, 1, 0, 0, 0, 0,
+                            0, 1, 0, 16, 0, 0, 0, 0, 0, 1, 0, 16, 0, 0, 0, 0, 0, 1, 0, 16,
+                            0, 0, 0xFF, 0xFF};
+    const uint8_t *pics[] = {small_rgn, short_rows};
+    size_t lens[] = {sizeof small_rgn, sizeof short_rows};
+    for (int i = 0; i < 2; i++) {
+        canvas c;
+        canvas_init(&c, 16, 1);
+        char err[256] = "";
+        bool ok = pict_draw(pics[i], lens[i], c.px.bounds, &c.px, c.px.bounds, (qd_rgb){0, 0, 0},
+                            (qd_rgb){0xFFFF, 0xFFFF, 0xFFFF}, err, sizeof err);
+        free(c.buf);
+        CHECK(!ok);
+        CHECK(err[0] != '\0');
+    }
+}
+
+TEST(pict_scaling_samples_every_other_pixel) {
+    SKIP_UNLESS_GAME();
+    rsrc_entry *e = pict(800);
+    CHECK(e != NULL);
+    canvas full, half;
+    canvas_init(&full, 512, 384);
+    canvas_init(&half, 256, 192);
+    char err[256] = "";
+    bool ok = draw(e, &full, err) && draw(e, &half, err);
+    bool same = true;
+    for (int y = 0; y < 192 && same; y++)
+        for (int x = 0; x < 256 && same; x++)
+            same = half.buf[y * half.px.row_bytes + x] ==
+                   full.buf[2 * y * full.px.row_bytes + 2 * x];
+    free(full.buf);
+    free(half.buf);
+    CHECK(ok);
+    CHECK(same);
+}
+
+static void child_huge_dst(void *unused) {
+    (void)unused;
+    uint8_t pic[] = {0, 0, 0, 0, 0, 0, 0, 2, 0, 4, 0x11, 0x01, 0x90, 0, 2, 0, 0, 0, 0, 0, 2, 0, 4,
+                     0, 0, 0, 0, 0, 2, 0, 4, 0, 0, 0, 0, 0, 2, 0, 4, 0, 0,
+                     0x90, 0x00, 0x60, 0x00, 0xFF};
+    canvas c;
+    canvas_init(&c, 4, 2);
+    char err[256];
+    pict_draw(pic, sizeof pic, (qd_rect){-32768, -32768, 32767, 32767}, &c.px, c.px.bounds,
+              (qd_rgb){0, 0, 0}, (qd_rgb){0xFFFF, 0xFFFF, 0xFFFF}, err, sizeof err);
+    free(c.buf);
+}
+
+TEST(pict_huge_destination_rects_are_well_defined) {
+    char out[8192];
+    CHECK_EQ(test_run_child(child_huge_dst, NULL, out, sizeof out), 0);
+    CHECK(!strstr(out, "runtime error"));
+}

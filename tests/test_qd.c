@@ -270,3 +270,31 @@ TEST(qd_draw_picture_into_a_gworld) {
     free(fork);
     CHECK_EQ(h, 0x4657C203u); /* same as pict_decodes_the_title_picture */
 }
+
+static void child_bad_pixmap(void *arg) {
+    setup();
+    uint32_t gw = new_gworld(16, 8, 2);
+    uint32_t pm = gm_r32(call_import("GetGWorldPixMap", 1, gw));
+    if (*(int *)arg == 0)
+        gm_w16(pm + PM_ROW_BYTES, 0x8000 | 8); /* 8 bytes is too short for 8 16-bit pixels */
+    else {
+        gm_w16(pm + PM_PIXEL_SIZE, 8);
+        gm_w32(pm + PM_TABLE, 0);           /* an indexed pixmap with no color table */
+    }
+    uint32_t bits = call_import("GetPortBitMapForCopyBits", 1, gw);
+    call_import("CopyBits", 6, bits, bits, rect(0, 0, 1, 1), rect(0, 0, 1, 1), 0u, 0u);
+}
+
+TEST(qd_pixmap_with_rows_too_short_crashes) {
+    char out[16384];
+    int which = 0;
+    CHECK_EQ(test_run_child(child_bad_pixmap, &which, out, sizeof out), 2);
+    CHECK_CONTAINS(out, "CopyBits: pixmap rowBytes 8 is too small for 8 16-bit pixels");
+}
+
+TEST(qd_indexed_pixmap_without_a_color_table_crashes) {
+    char out[16384];
+    int which = 1;
+    CHECK_EQ(test_run_child(child_bad_pixmap, &which, out, sizeof out), 2);
+    CHECK_CONTAINS(out, "CopyBits: 8-bit pixmap has no color table");
+}

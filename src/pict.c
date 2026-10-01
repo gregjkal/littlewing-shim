@@ -25,7 +25,7 @@ static bool fail(reader *r, const char *fmt, ...) {
 }
 
 static bool need(reader *r, size_t n) {
-    if ((size_t)(r->end - r->p) < n)
+    if (r->p > r->end || (size_t)(r->end - r->p) < n)
         return fail(r, "picture data is truncated");
     return true;
 }
@@ -66,16 +66,25 @@ bool pict_frame(const uint8_t *data, size_t len, qd_rect *frame) {
     return true;
 }
 
+static int16_t clamp16(int64_t v) {
+    return (int16_t)(v < -32768 ? -32768 : v > 32767 ? 32767 : v);
+}
+
+/* Maps coordinate v from [f0, f0 + fn) onto [d0, d0 + dn), in 64 bits. */
+static int16_t map(int v, int f0, int fn, int d0, int dn) {
+    return clamp16(d0 + (int64_t)(v - f0) * dn / fn);
+}
+
 /* Maps a rectangle from picture-frame coordinates to destination coordinates. */
 static qd_rect map_rect(qd_rect r, qd_rect frame, qd_rect dst) {
     int fw = rect_w(frame), fh = rect_h(frame), dw = rect_w(dst), dh = rect_h(dst);
     if (fw <= 0 || fh <= 0)
         return dst;
     return (qd_rect){
-        (int16_t)(dst.top + (r.top - frame.top) * dh / fh),
-        (int16_t)(dst.left + (r.left - frame.left) * dw / fw),
-        (int16_t)(dst.top + (r.bottom - frame.top) * dh / fh),
-        (int16_t)(dst.left + (r.right - frame.left) * dw / fw),
+        map(r.top, frame.top, fh, dst.top, dh),
+        map(r.left, frame.left, fw, dst.left, dw),
+        map(r.bottom, frame.top, fh, dst.top, dh),
+        map(r.right, frame.left, fw, dst.left, dw),
     };
 }
 
@@ -133,7 +142,11 @@ static bool color_table(reader *r, qd_palette *pal) {
 
 static bool region(reader *r, qd_rect *bbox) {
     uint16_t size;
-    if (!u16(r, &size) || size < 10 || !rect(r, bbox) || !skip(r, size - 10u))
+    if (!u16(r, &size))
+        return false;
+    if (size < 10)
+        return fail(r, "region of %u bytes is too short", size);
+    if (!rect(r, bbox) || !skip(r, size - 10u))
         return false;
     if (size != 10)
         return fail(r, "non-rectangular clip regions are not supported");
@@ -236,8 +249,8 @@ bool pict_draw(const uint8_t *data, size_t len, qd_rect dst, const qd_pixels *ta
                 return false;
             op = *r.p++;
         } else {
-            if ((r.p - data) & 1)
-                r.p++;
+            if (((r.p - data) & 1) && !skip(&r, 1))
+                return false;
             if (!u16(&r, &op))
                 return false;
         }
