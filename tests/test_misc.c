@@ -191,3 +191,30 @@ TEST(misc_exit_to_shell_exits_cleanly) {
     CHECK_EQ(status, 0);
     CHECK_CONTAINS(out, "loony: ExitToShell");
 }
+
+static int idle_calls;
+static void count_idle(void) { idle_calls++; }
+
+TEST(misc_seconds_has_sub_tick_resolution) {
+    setup();
+    double a = misc_seconds();
+    struct timespec ts = {0, 2000000};
+    nanosleep(&ts, NULL);
+    double b = misc_seconds();
+    CHECK(b - a >= 0.002);
+    CHECK(b - a < 0.5);
+}
+
+TEST(misc_delay_and_tick_count_run_the_idle_hook) {
+    setup();
+    idle_calls = 0;
+    misc_set_idle(count_idle);
+    call_import("Delay", 2, 3u, 0u);
+    int after_delay = idle_calls;
+    for (int i = 0; i < 1000; i++)
+        call_import("TickCount", 0);
+    misc_set_idle(NULL);
+    CHECK(after_delay >= 3); /* once per tick while waiting */
+    CHECK(after_delay <= 5);
+    CHECK(idle_calls - after_delay <= 2); /* TickCount only when the tick changes */
+}

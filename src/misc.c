@@ -21,10 +21,16 @@ static struct {
         uint32_t event_class, event_id, handler, refcon;
     } ae[MAX_AE_HANDLERS];
     int nae;
+    misc_idle_fn idle;
+    uint32_t last_idle_tick;
 } M;
 
+void misc_set_idle(misc_idle_fn fn) { M.idle = fn; }
+
 void misc_init(void) {
+    misc_idle_fn idle = M.idle;
     memset(&M, 0, sizeof M);
+    M.idle = idle;
     clock_gettime(CLOCK_MONOTONIC, &M.start);
 }
 
@@ -37,6 +43,8 @@ static uint64_t elapsed_us(void) {
 }
 
 uint32_t misc_ticks(void) { return (uint32_t)(elapsed_us() * 60 / 1000000); }
+
+double misc_seconds(void) { return (double)elapsed_us() / 1e6; }
 
 bool misc_cursor_visible(void) { return M.cursor_level == 0; }
 
@@ -87,7 +95,18 @@ static void h_gestalt(void) {
 
 /* ---- time ---- */
 
-static void h_tick_count(void) { trap_return(misc_ticks()); }
+static void idle_if_new_tick(uint32_t t) {
+    if (M.idle && t != M.last_idle_tick) {
+        M.last_idle_tick = t;
+        M.idle();
+    }
+}
+
+static void h_tick_count(void) {
+    uint32_t t = misc_ticks();
+    idle_if_new_tick(t);
+    trap_return(t);
+}
 
 static void h_microseconds(void) {
     uint64_t us = elapsed_us();
@@ -96,11 +115,17 @@ static void h_microseconds(void) {
     gm_w32(out + 4, (uint32_t)us);
 }
 
+/* Delay(ticks, &finalTicks): sleeps in steps of at most one tick, running
+   the idle hook between steps. */
 static void h_delay(void) {
     uint32_t ticks = trap_arg(0), final_ticks = trap_arg(1);
-    if ((int32_t)ticks > 0) {
-        uint64_t us = (uint64_t)ticks * 1000000 / 60;
-        struct timespec ts = {(time_t)(us / 1000000), (long)(us % 1000000) * 1000};
+    uint32_t end = misc_ticks() + ((int32_t)ticks > 0 ? ticks : 0);
+    for (;;) {
+        uint32_t t = misc_ticks();
+        idle_if_new_tick(t);
+        if (t >= end)
+            break;
+        struct timespec ts = {0, 1000000000L / 60 / 4};
         nanosleep(&ts, NULL);
     }
     if (final_ticks)

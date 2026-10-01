@@ -11,6 +11,9 @@ void misc_init(void);
 /* Ticks (1/60 s) since misc_init(). */
 uint32_t misc_ticks(void);
 
+/* Seconds since misc_init(), with microsecond resolution. */
+double misc_seconds(void);
+
 /* False while HideCursor has hidden the cursor (until InitCursor). */
 bool misc_cursor_visible(void);
 
@@ -18,6 +21,12 @@ bool misc_cursor_visible(void);
    Returns false if there is none. */
 bool misc_ae_handler(uint32_t event_class, uint32_t event_id, uint32_t *handler,
                      uint32_t *refcon);
+
+/* Called by Delay, and by TickCount whenever the tick count has changed,
+   so a game waiting in its own loop still pumps events, sound and the
+   screen. */
+typedef void (*misc_idle_fn)(void);
+void misc_set_idle(misc_idle_fn fn);
 
 /* Registers Gestalt, time, string, cursor, Apple Event, Internet Config,
    KeyScript, GetMBarHeight, BlockMoveData and ExitToShell imports. */
