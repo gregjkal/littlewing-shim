@@ -2,11 +2,13 @@
 
 #include <stdlib.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "asm.h"
 #include "harness.h"
 #include "memmgr.h"
 #include "misc.h"
+#include "mixer.h"
 #include "sound.h"
 
 static const char *const names[] = {
@@ -39,12 +41,14 @@ static void setup(void) {
     emit_callback();
 }
 
-/* A standard 8-bit header (encode 0) of frames at rate Hz. */
+/* A standard 8-bit header (encode 0) of frames of silence at rate Hz, the
+   samples following the header. */
 static uint32_t std_header(uint32_t frames, uint32_t rate) {
-    uint32_t h = scratch(22);
+    uint32_t h = scratch(22 + frames);
     gm_w32(h + 4, frames);
     gm_w32(h + 8, rate << 16);
     gm_w8(h + 20, 0);
+    memset(gm_ptr(h + 22, frames), 0x80, frames);
     return h;
 }
 
@@ -75,14 +79,64 @@ static void sleep_s(double s) {
     nanosleep(&ts, NULL);
 }
 
-TEST(sound_header_durations) {
+/* Renders through the mixer directly, bypassing sound_pump's clock. */
+static void render(int16_t *out, uint32_t frames) { mix_render(out, frames); }
+
+TEST(sound_buffers_are_copied_when_queued) {
     setup();
-    CHECK(sound_header_seconds(std_header(600, 600)) == 1.0);
-    uint32_t ext = scratch(64);
-    gm_w32(ext + 8, 22050u << 16);
-    gm_w8(ext + 20, 0xFF);
-    gm_w32(ext + 22, 44100);
-    CHECK(sound_header_seconds(ext) == 2.0);
+    uint32_t chan = new_channel();
+    uint32_t h = std_header(4, MIX_RATE);
+    gm_w8(h + 22, 0xC0); /* +64 of 128: 0x4000 */
+    call_import("SndDoCommand", 3, chan, cmd(SND_BUFFER_CMD, 0, h), 0u);
+    gm_w8(h + 22, 0x00); /* too late: the sound was copied */
+    int16_t out[8];
+    render(out, 4);
+    CHECK_EQ((uint16_t)out[0], 0x4000);
+    CHECK_EQ((uint16_t)out[1], 0x4000);
+    CHECK_EQ(out[2], 0);
+}
+
+TEST(sound_extended_headers_play_16_bit_stereo) {
+    setup();
+    uint32_t chan = new_channel();
+    uint32_t h = scratch(64 + 8);
+    gm_w32(h + 4, 2); /* channels */
+    gm_w32(h + 8, (uint32_t)MIX_RATE << 16);
+    gm_w8(h + 20, 0xFF);
+    gm_w32(h + 22, 2); /* frames */
+    gm_w16(h + 48, 16);
+    gm_w16(h + 64, 0x1234);
+    gm_w16(h + 66, 0xFEDC);
+    call_import("SndDoCommand", 3, chan, cmd(SND_BUFFER_CMD, 0, h), 0u);
+    int16_t out[4];
+    render(out, 2);
+    CHECK_EQ((uint16_t)out[0], 0x1234);
+    CHECK_EQ((uint16_t)out[1], 0xFEDC);
+}
+
+static void child_bad_header(void *unused) {
+    (void)unused;
+    setup();
+    uint32_t chan = new_channel();
+    uint32_t h = std_header(4, 600);
+    gm_w32(h, 0x7FFFFFF0u); /* samples outside memory */
+    call_import("SndDoCommand", 3, chan, cmd(SND_BUFFER_CMD, 0, h), 0u);
+    uint32_t c = std_header(4, 600);
+    gm_w8(c + 20, 0xFE); /* compressed */
+    call_import("SndDoCommand", 3, chan, cmd(SND_BUFFER_CMD, 0, c), 0u);
+    call_import("SndDoCommand", 3, chan, cmd(SND_BUFFER_CMD, 0, c), 0u);
+    if (busy(chan)) /* skipped buffers take no time */
+        _exit(3);
+}
+
+TEST(sound_bad_headers_are_logged_and_skipped) {
+    char out[4096];
+    CHECK_EQ(test_run_child(child_bad_header, NULL, out, sizeof out), 0);
+    CHECK_CONTAINS(out, "are outside memory (ignored)");
+    const char *msg = "loony: sound: sound header encoding 254 is not supported (ignored)";
+    const char *first = strstr(out, msg);
+    CHECK(first != NULL);
+    CHECK(strstr(first + strlen(msg), msg) == NULL);
 }
 
 TEST(sound_new_channel_allocates_one) {
