@@ -16,6 +16,7 @@
 #include "misc.h"
 #include "qd.h"
 #include "rsrc.h"
+#include "script.h"
 #include "sound.h"
 #include "trap.h"
 #include "util.h"
@@ -69,8 +70,18 @@ int main(int argc, char **argv) {
     files_init(dir);
     sound_init();
     display_init();
-    qd_set_present(display_present);
     events_set_present(display_present_if_dirty);
+    events_set_poll(display_poll);
+    events_set_screenshot(display_write_png);
+    static const display_input input = {events_post_key, events_post_activation,
+                                        events_request_quit};
+    display_set_input(&input);
+    display_set_vsync(!misc_fixed_clock());
+    const char *script = getenv("LOONY_SCRIPT");
+    if (script && *script && !script_load(script, err, sizeof err)) {
+        fprintf(stderr, "loony: can't load the script %s: %s\n", script, err);
+        return 1;
+    }
     misc_set_idle(events_pump);
 
     const char **names = calloc(img.pef.nimports ? img.pef.nimports : 1, sizeof *names);

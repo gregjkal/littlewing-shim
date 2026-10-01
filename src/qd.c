@@ -28,7 +28,6 @@ static struct {
     int nports;
     uint32_t cur_port, cur_device;
     bool dirty;
-    qd_present_fn present;
     int saved_w, saved_h; /* screen size before BeginFullScreen */
 } Q;
 
@@ -275,7 +274,6 @@ bool qd_take_dirty(void) {
     return d;
 }
 
-void qd_set_present(qd_present_fn fn) { Q.present = fn; }
 
 static void resize_screen(int w, int h, int depth) {
     free_pixmap_contents(Q.screen_pm);
@@ -469,10 +467,8 @@ static void h_inval_window_rect(void) {
     Q.dirty = true;
 }
 
-static void h_qd_flush_port_buffer(void) {
-    if (Q.present)
-        Q.present();
-}
+/* QDFlushPortBuffer(port, region): the screen is presented at the next pump. */
+static void h_qd_flush_port_buffer(void) { Q.dirty = true; }
 
 /* BeginFullScreen(Ptr *restoreState, GDHandle gd, short *desiredWidth,
    short *desiredHeight, WindowRef *newWindow, RGBColor *eraseColor, long flags) */

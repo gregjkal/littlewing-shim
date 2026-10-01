@@ -82,10 +82,6 @@ void qd_screen(qd_pixels *out, qd_palette *pal);
 
 /* True if anything drew to the screen since the last call. */
 bool qd_take_dirty(void);
-/* Called when the game flushes a window to the screen (QDFlushPortBuffer). */
-typedef void (*qd_present_fn)(void);
-void qd_set_present(qd_present_fn fn);
-
 uint32_t qd_current_port(void);
 
 /* Registers the QuickDraw, GWorld and window imports. */

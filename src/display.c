@@ -15,6 +15,8 @@ static struct {
     int tex_w, tex_h;
     unsigned frames;
     const char *screenshot;
+    display_input input;
+    bool no_vsync;
 } D;
 
 static uint8_t *screen_rgba(int *w, int *h) {
@@ -64,7 +66,7 @@ static bool open_window(int w, int h) {
         log_msg("display: can't create a window: %s (continuing without one)", SDL_GetError());
         return false;
     }
-    SDL_SetRenderVSync(D.renderer, 1);
+    SDL_SetRenderVSync(D.renderer, D.no_vsync ? 0 : 1);
     return true;
 }
 
@@ -90,12 +92,6 @@ void display_present(void) {
         SDL_RenderClear(D.renderer);
         SDL_RenderTexture(D.renderer, D.texture, NULL, NULL);
         SDL_RenderPresent(D.renderer);
-        SDL_Event e;
-        while (SDL_PollEvent(&e))
-            if (e.type == SDL_EVENT_QUIT || e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
-                log_msg("window closed");
-                exit(0);
-            }
     }
     free(rgba);
 }
@@ -106,3 +102,52 @@ void display_present_if_dirty(void) {
 }
 
 unsigned display_frames(void) { return D.frames; }
+
+void display_set_input(const display_input *in) { D.input = *in; }
+
+void display_set_vsync(bool on) {
+    D.no_vsync = !on;
+    if (D.renderer)
+        SDL_SetRenderVSync(D.renderer, on ? 1 : 0);
+}
+
+void display_poll(void) {
+    if (!D.sdl_ok)
+        return;
+    SDL_Event e;
+    while (SDL_PollEvent(&e)) {
+        switch (e.type) {
+        case SDL_EVENT_QUIT:
+        case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+            if (D.input.quit)
+                D.input.quit();
+            break;
+        case SDL_EVENT_WINDOW_FOCUS_GAINED:
+        case SDL_EVENT_WINDOW_FOCUS_LOST:
+            if (D.input.focus)
+                D.input.focus(e.type == SDL_EVENT_WINDOW_FOCUS_GAINED);
+            break;
+        case SDL_EVENT_KEY_DOWN:
+        case SDL_EVENT_KEY_UP: {
+            bool down = e.type == SDL_EVENT_KEY_DOWN;
+            if (down && (e.key.mod & SDL_KMOD_GUI) && e.key.scancode == SDL_SCANCODE_Q) {
+                if (D.input.quit)
+                    D.input.quit();
+                break;
+            }
+            if ((e.key.mod & SDL_KMOD_GUI) && e.key.scancode == SDL_SCANCODE_F) {
+                if (down && !e.key.repeat) {
+                    bool fs = (SDL_GetWindowFlags(D.window) & SDL_WINDOW_FULLSCREEN) != 0;
+                    SDL_SetWindowFullscreen(D.window, !fs);
+                }
+                break;
+            }
+            if (D.input.key)
+                D.input.key((int)e.key.scancode, down, e.key.repeat);
+            break;
+        }
+        default:
+            break;
+        }
+    }
+}

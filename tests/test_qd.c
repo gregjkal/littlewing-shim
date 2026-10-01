@@ -160,9 +160,6 @@ TEST(qd_set_depth_recreates_the_screen) {
     CHECK_EQ(b.right, 800);
 }
 
-static int presents;
-static void count_present(void) { presents++; }
-
 TEST(qd_begin_full_screen_makes_a_window_on_the_screen) {
     setup();
     call_import("SetDepth", 4, call_import("GetMainDevice", 0), 16u, 0u, 1u);
@@ -185,10 +182,9 @@ TEST(qd_begin_full_screen_makes_a_window_on_the_screen) {
     call_import("PaintRect", 1, rect(0, 0, 1, 1));
     CHECK_EQ(rd_be16(px.base), 0x7C00);
     CHECK(qd_take_dirty());
-    presents = 0;
-    qd_set_present(count_present);
-    call_import("QDFlushPortBuffer", 2, win, 0u);
-    CHECK_EQ(presents, 1);
+    CHECK(!qd_take_dirty());
+    call_import("QDFlushPortBuffer", 2, win, 0u); /* presented at the next pump */
+    CHECK(qd_take_dirty());
     call_import("HideWindow", 1, win);
     call_import("ShowWindow", 1, win);
     call_import("InvalWindowRect", 2, win, r);

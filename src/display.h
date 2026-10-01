@@ -10,9 +10,24 @@
    the process exits, including after a crash. */
 void display_init(void);
 
-/* Draws the current screen. Also handles window events: closing the window
-   exits cleanly. */
+/* Draws the current screen. */
 void display_present(void);
+
+/* Whether presenting waits for the display's refresh (the default). Turned
+   off for fixed-clock runs, where waiting would only slow the run down. */
+void display_set_vsync(bool on);
+
+/* Where display_poll sends host input. */
+typedef struct {
+    void (*key)(int scancode, bool down, bool repeat); /* SDL scancode */
+    void (*focus)(bool active);
+    void (*quit)(void); /* window closed or Cmd-Q */
+} display_input;
+void display_set_input(const display_input *in);
+
+/* Handles pending SDL events: keys go to the input callbacks, except Cmd-Q
+   (quit) and Cmd-F (toggle full screen), which the game never sees. */
+void display_poll(void);
 
 /* Writes the current screen as a PNG. */
 bool display_write_png(const char *path);
