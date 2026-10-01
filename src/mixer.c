@@ -137,10 +137,14 @@ static bool exec(channel *c, int ch, mix_cmd m) {
    the queue runs dry, or a callback can't be posted. */
 static void advance(channel *c, int ch) {
     while (!c->voice && !c->wait && c->count > 0) {
-        if (!exec(c, ch, c->queue[c->head]))
-            return;
+        mix_cmd m = c->queue[c->head]; /* popped first: a flush empties the queue */
         c->head = (c->head + 1) % MIX_QUEUE_LEN;
         c->count--;
+        if (!exec(c, ch, m)) { /* put the callback back */
+            c->head = (c->head + MIX_QUEUE_LEN - 1) % MIX_QUEUE_LEN;
+            c->count++;
+            return;
+        }
     }
 }
 

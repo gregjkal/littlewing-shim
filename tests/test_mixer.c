@@ -138,6 +138,20 @@ TEST(mixer_quiet_and_flush_stop_a_channel) {
     mix_init();
 }
 
+TEST(mixer_a_queued_flush_keeps_the_queue_whole) {
+    mix_init();
+    mix_open(0);
+    mix_queue(0, (mix_cmd){.kind = MIX_FLUSH});
+    int16_t out[4];
+    mix_render(out, 1); /* runs the flush */
+    mix_queue(0, buffer(mono(RATE, 1, (int16_t[]){77})));
+    CHECK(mix_busy(0));
+    mix_render(out, 1);
+    CHECK_EQ(out[0], 77);
+    CHECK(!mix_busy(0));
+    mix_init();
+}
+
 TEST(mixer_an_immediate_buffer_replaces_the_sound_playing) {
     mix_init();
     mix_open(0);

@@ -179,7 +179,7 @@ static mix_sound *copy_sound(uint32_t h) {
     }
     const uint8_t *p = gm_ptr(data, (uint32_t)bytes);
     for (uint32_t k = 0; k < frames * nch; k++)
-        s->samples[k] = bits == 8 ? (int16_t)((p[k] - 128) << 8) : (int16_t)rd_be16(p + 2 * k);
+        s->samples[k] = bits == 8 ? (int16_t)((p[k] - 128) * 256) : (int16_t)rd_be16(p + 2 * k);
     return s;
 }
 

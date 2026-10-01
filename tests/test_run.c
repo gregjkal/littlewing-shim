@@ -157,6 +157,7 @@ TEST(run_the_opening_music_is_recorded) {
     wav_path[0] = '\0';
     CHECK_EQ(status, 0);
     CHECK(!strstr(out, "sound:"));
+    CHECK(!strstr(out, "runtime error")); /* UBSan in Debug builds */
     CHECK(wav != NULL);
     CHECK(len > 44);
     CHECK_EQ(le32_at(wav + 24), 44100);
