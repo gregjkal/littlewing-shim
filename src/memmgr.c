@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "guest_mem.h"
+#include "trap.h"
 #include "util.h"
 
 /* Block header, 16 bytes, big-endian:
@@ -200,3 +201,149 @@ uint32_t mm_free_bytes(void) {
 int16_t mm_error(void) { return last_error; }
 void mm_set_error(int16_t err) { last_error = err; }
 
+/* ---- guest calls ---- */
+
+static void ret_err(int16_t err) {
+    last_error = err;
+    trap_return((uint32_t)(int32_t)err);
+}
+
+static void need_ptr(const char *call, uint32_t p) {
+    if (!mm_is_ptr(p))
+        trap_crash("%s: 0x%08x is not an allocated pointer", call, p);
+}
+
+/* Returns false (MemError = nilHandleErr) for a NULL handle; crashes on a
+   non-NULL value that isn't a handle. */
+static bool need_handle(const char *call, uint32_t h) {
+    if (h == 0) {
+        last_error = MM_NIL_HANDLE_ERR;
+        return false;
+    }
+    if (!mm_is_handle(h))
+        trap_crash("%s: 0x%08x is not a handle", call, h);
+    return true;
+}
+
+static void h_new_ptr(void) {
+    uint32_t p = mm_new_ptr(trap_arg(0), false);
+    last_error = p ? MM_NO_ERR : MM_MEM_FULL_ERR;
+    trap_return(p);
+}
+
+static void h_new_ptr_clear(void) {
+    uint32_t p = mm_new_ptr(trap_arg(0), true);
+    last_error = p ? MM_NO_ERR : MM_MEM_FULL_ERR;
+    trap_return(p);
+}
+
+static void h_dispose_ptr(void) {
+    uint32_t p = trap_arg(0);
+    if (p) {
+        need_ptr("DisposePtr", p);
+        mm_dispose_ptr(p);
+    }
+    last_error = MM_NO_ERR;
+}
+
+static void h_get_ptr_size(void) {
+    uint32_t p = trap_arg(0);
+    need_ptr("GetPtrSize", p);
+    last_error = MM_NO_ERR;
+    trap_return(mm_ptr_size(p));
+}
+
+static void h_set_ptr_size(void) {
+    uint32_t p = trap_arg(0);
+    need_ptr("SetPtrSize", p);
+    last_error = mm_set_ptr_size(p, trap_arg(1));
+}
+
+static void h_new_handle_clear(void) {
+    uint32_t h = mm_new_handle(trap_arg(0), true);
+    last_error = h ? MM_NO_ERR : MM_MEM_FULL_ERR;
+    trap_return(h);
+}
+
+static void h_dispose_handle(void) {
+    uint32_t h = trap_arg(0);
+    if (!need_handle("DisposeHandle", h))
+        return;
+    if (mm_handle_state(h) & MM_STATE_RESOURCE)
+        trap_crash("DisposeHandle: 0x%08x is a resource handle (use ReleaseResource)", h);
+    mm_dispose_handle(h);
+    last_error = MM_NO_ERR;
+}
+
+static void h_get_handle_size(void) {
+    uint32_t h = trap_arg(0);
+    if (!need_handle("GetHandleSize", h)) {
+        trap_return(0);
+        return;
+    }
+    last_error = MM_NO_ERR;
+    trap_return(mm_handle_size(h));
+}
+
+static void h_recover_handle(void) {
+    uint32_t p = trap_arg(0);
+    uint32_t h = mm_recover_handle(p);
+    if (!h)
+        trap_crash("RecoverHandle: 0x%08x is not the start of a handle's block", p);
+    last_error = MM_NO_ERR;
+    trap_return(h);
+}
+
+static void change_state(const char *call, uint8_t set, uint8_t clear) {
+    uint32_t h = trap_arg(0);
+    if (!need_handle(call, h))
+        return;
+    mm_set_handle_state(h, (uint8_t)((mm_handle_state(h) | set) & ~clear));
+    last_error = MM_NO_ERR;
+}
+
+static void h_hlock(void) { change_state("HLock", MM_STATE_LOCKED, 0); }
+static void h_hunlock(void) { change_state("HUnlock", 0, MM_STATE_LOCKED); }
+static void h_hpurge(void) { change_state("HPurge", MM_STATE_PURGEABLE, 0); }
+static void h_hnopurge(void) { change_state("HNoPurge", 0, MM_STATE_PURGEABLE); }
+static void h_move_hhi(void) { change_state("MoveHHi", 0, 0); }
+
+static void h_hget_state(void) {
+    uint32_t h = trap_arg(0);
+    if (!need_handle("HGetState", h)) {
+        trap_return(0);
+        return;
+    }
+    last_error = MM_NO_ERR;
+    trap_return((uint32_t)(int32_t)(int8_t)mm_handle_state(h));
+}
+
+static void h_hset_state(void) {
+    uint32_t h = trap_arg(0);
+    if (!need_handle("HSetState", h))
+        return;
+    mm_set_handle_state(h, (uint8_t)trap_arg(1));
+    last_error = MM_NO_ERR;
+}
+
+static void h_mem_error(void) { ret_err(last_error); }
+
+void mm_register(void) {
+    trap_register("NewPtr", h_new_ptr);
+    trap_register("NewPtrClear", h_new_ptr_clear);
+    trap_register("DisposePtr", h_dispose_ptr);
+    trap_register("GetPtrSize", h_get_ptr_size);
+    trap_register("SetPtrSize", h_set_ptr_size);
+    trap_register("NewHandleClear", h_new_handle_clear);
+    trap_register("DisposeHandle", h_dispose_handle);
+    trap_register("GetHandleSize", h_get_handle_size);
+    trap_register("RecoverHandle", h_recover_handle);
+    trap_register("HLock", h_hlock);
+    trap_register("HUnlock", h_hunlock);
+    trap_register("HPurge", h_hpurge);
+    trap_register("HNoPurge", h_hnopurge);
+    trap_register("MoveHHi", h_move_hhi);
+    trap_register("HGetState", h_hget_state);
+    trap_register("HSetState", h_hset_state);
+    trap_register("MemError", h_mem_error);
+}
