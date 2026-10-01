@@ -1,6 +1,7 @@
 #include "misc.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,6 +24,9 @@ static struct {
     int nae;
     misc_idle_fn idle;
     uint32_t last_idle_tick;
+    bool fixed;
+    uint64_t virtual_us;
+    int polls; /* time polls since the virtual clock last moved */
 } M;
 
 void misc_set_idle(misc_idle_fn fn) { M.idle = fn; }
@@ -32,9 +36,15 @@ void misc_init(void) {
     memset(&M, 0, sizeof M);
     M.idle = idle;
     clock_gettime(CLOCK_MONOTONIC, &M.start);
+    const char *f = getenv("LOONY_FIXED_CLOCK");
+    M.fixed = f && strcmp(f, "1") == 0;
 }
 
+bool misc_fixed_clock(void) { return M.fixed; }
+
 static uint64_t elapsed_us(void) {
+    if (M.fixed)
+        return M.virtual_us;
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     int64_t us = (int64_t)(now.tv_sec - M.start.tv_sec) * 1000000 +
@@ -45,6 +55,37 @@ static uint64_t elapsed_us(void) {
 uint32_t misc_ticks(void) { return (uint32_t)(elapsed_us() * 60 / 1000000); }
 
 double misc_seconds(void) { return (double)elapsed_us() / 1e6; }
+
+void misc_wait(double seconds) {
+    if (seconds <= 0)
+        return;
+    if (M.fixed) {
+        /* Round up: a wait that rounds to 0 us would never reach its deadline. */
+        uint64_t us = (uint64_t)ceil(seconds * 1e6);
+        M.virtual_us += us ? us : 1;
+        M.polls = 0;
+        return;
+    }
+    struct timespec ts = {(time_t)seconds, (long)((seconds - (double)(time_t)seconds) * 1e9)};
+    nanosleep(&ts, NULL);
+}
+
+/* Virtual clock: the start of the next tick. */
+static void advance_to_next_tick(void) {
+    uint64_t tick_us = 1000000 / 60;
+    uint64_t t = (M.virtual_us / tick_us + 1) * tick_us;
+    /* 1000000/60 isn't whole: step until misc_ticks() really changes */
+    uint32_t before = misc_ticks();
+    M.virtual_us = t;
+    while (misc_ticks() == before)
+        M.virtual_us++;
+    M.polls = 0;
+}
+
+void misc_poll(void) {
+    if (M.fixed && ++M.polls >= 200) /* a loop that polls without ever waiting */
+        advance_to_next_tick();
+}
 
 bool misc_cursor_visible(void) { return M.cursor_level == 0; }
 
@@ -103,12 +144,14 @@ static void idle_if_new_tick(uint32_t t) {
 }
 
 static void h_tick_count(void) {
+    misc_poll();
     uint32_t t = misc_ticks();
     idle_if_new_tick(t);
     trap_return(t);
 }
 
 static void h_microseconds(void) {
+    misc_poll();
     uint64_t us = elapsed_us();
     uint32_t out = trap_arg(0);
     gm_w32(out, (uint32_t)(us >> 32));
@@ -120,19 +163,31 @@ static void h_microseconds(void) {
 static void h_delay(void) {
     uint32_t ticks = trap_arg(0), final_ticks = trap_arg(1);
     uint32_t end = misc_ticks() + ((int32_t)ticks > 0 ? ticks : 0);
+    if (M.fixed && end == misc_ticks()) /* Delay(0) on the virtual clock: one tick passes */
+        end++;
     for (;;) {
         uint32_t t = misc_ticks();
         idle_if_new_tick(t);
         if (t >= end)
             break;
-        struct timespec ts = {0, 1000000000L / 60 / 4};
-        nanosleep(&ts, NULL);
+        if (M.fixed)
+            advance_to_next_tick();
+        else
+            misc_wait(1.0 / 60 / 4);
     }
     if (final_ticks)
         gm_w32(final_ticks, misc_ticks());
 }
 
+/* The virtual clock's calendar starts at 2003-01-01 00:00:00 (Mac time), so
+   fixed-clock runs see the same date every time. */
+#define FIXED_CLOCK_EPOCH 3124224000u
+
 static void h_get_date_time(void) {
+    if (M.fixed) {
+        gm_w32(trap_arg(0), FIXED_CLOCK_EPOCH + (uint32_t)(M.virtual_us / 1000000));
+        return;
+    }
     time_t now = time(NULL);
     struct tm lt;
     localtime_r(&now, &lt);

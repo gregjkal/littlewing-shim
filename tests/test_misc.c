@@ -218,3 +218,69 @@ TEST(misc_delay_and_tick_count_run_the_idle_hook) {
     CHECK(after_delay <= 5);
     CHECK(idle_calls - after_delay <= 2); /* TickCount only when the tick changes */
 }
+
+/* Runs with the virtual clock; restores the real one afterwards. */
+static void fixed_setup(void) {
+    setenv("LOONY_FIXED_CLOCK", "1", 1);
+    setup();
+}
+
+static void fixed_teardown(void) {
+    unsetenv("LOONY_FIXED_CLOCK");
+    misc_init();
+}
+
+TEST(misc_fixed_clock_stands_still_until_the_game_waits) {
+    fixed_setup();
+    bool fixed = misc_fixed_clock();
+    double t0 = misc_seconds();
+    struct timespec ts = {0, 20000000};
+    nanosleep(&ts, NULL);
+    double t1 = misc_seconds();
+    misc_wait(0.5);
+    double t2 = misc_seconds();
+    misc_wait(1e-9); /* rounds up to a microsecond, never to nothing */
+    double t3 = misc_seconds();
+    fixed_teardown();
+    CHECK(fixed);
+    CHECK(t0 == 0.0);
+    CHECK(t1 == 0.0);
+    CHECK(t2 == 0.5);
+    CHECK(t3 > t2);
+}
+
+TEST(misc_fixed_clock_delay_advances_whole_ticks) {
+    fixed_setup();
+    uint32_t final_ticks = scratch(4);
+    call_import("Delay", 2, 0u, final_ticks); /* one tick passes */
+    uint32_t a = call_import("TickCount", 0), fa = gm_r32(final_ticks);
+    call_import("Delay", 2, 3u, final_ticks);
+    uint32_t b = call_import("TickCount", 0);
+    fixed_teardown();
+    CHECK_EQ(a, 1);
+    CHECK_EQ(fa, 1);
+    CHECK_EQ(b, 4);
+}
+
+TEST(misc_fixed_clock_polling_alone_moves_time) {
+    fixed_setup();
+    for (int i = 0; i < 199; i++)
+        call_import("TickCount", 0);
+    uint32_t before = call_import("TickCount", 0); /* the 200th poll */
+    uint32_t us = scratch(8);
+    for (int i = 0; i < 200; i++)
+        call_import("Microseconds", 1, us);
+    uint32_t after = call_import("TickCount", 0);
+    fixed_teardown();
+    CHECK_EQ(before, 1);
+    CHECK_EQ(after, 2);
+}
+
+TEST(misc_fixed_clock_date_is_fixed) {
+    fixed_setup();
+    uint32_t secs = scratch(4);
+    call_import("GetDateTime", 1, secs);
+    uint32_t d = gm_r32(secs);
+    fixed_teardown();
+    CHECK_EQ(d, 3124224000u); /* 2003-01-01 00:00:00 */
+}
