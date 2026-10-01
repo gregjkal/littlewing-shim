@@ -39,6 +39,7 @@
 typedef struct {
     int refs; /* 0 = free slot */
     bool queued;
+    bool guest_owned; /* pulled by ReceiveNextEvent; the guest must release it */
     uint32_t cls, kind;
     uint32_t key_code, modifiers;
     uint8_t chr;
@@ -112,7 +113,7 @@ static ev_event *post(uint32_t cls, uint32_t kind) {
         E.warned_full = true;
         return NULL;
     }
-    E.events[i] = (ev_event){1, true, cls, kind, 0, 0, 0};
+    E.events[i] = (ev_event){1, true, false, cls, kind, 0, 0, 0};
     E.queue[(E.qhead + E.qcount) % EV_MAX_EVENTS] = i;
     E.qcount++;
     return &E.events[i];
@@ -130,6 +131,8 @@ static int dequeue_at(int k) {
 }
 
 static void release(ev_event *e) {
+    if (e->refs <= 0)
+        trap_crash("event reference count underflow (internal error)");
     if (--e->refs == 0)
         memset(e, 0, sizeof *e);
 }
@@ -228,6 +231,17 @@ bool events_has_standard_handler(uint32_t target) {
 
 /* ---- dispatch ---- */
 
+/* Runs guest code that isn't waiting for events: timers may fire only from a
+   wait in RunApplicationEventLoop or ReceiveNextEvent, not from a Delay
+   inside a callback, so the loop depth is hidden while it runs. */
+static uint32_t call_out(uint32_t tvector, int nargs, const uint32_t *args) {
+    int depth = E.loop_depth;
+    E.loop_depth = 0;
+    uint32_t r = guest_call(tvector, nargs, args);
+    E.loop_depth = depth;
+    return r;
+}
+
 /* The quit Apple Event goes to the handler AEInstallEventHandler recorded;
    with none, the application just exits. */
 static void handle_apple_event(void) {
@@ -245,7 +259,7 @@ static void handle_apple_event(void) {
     }
     log_msg("sending the quit Apple Event");
     uint32_t args[3] = {E.ae_descs, E.ae_descs + 8, refcon};
-    guest_call(handler, 3, args);
+    call_out(handler, 3, args);
 }
 
 static bool handles(const ev_handler *h, const ev_event *e) {
@@ -262,7 +276,7 @@ static int32_t run_handlers(uint32_t target, int idx) {
         if (h->target != target || !handles(h, &E.events[idx]))
             continue;
         uint32_t args[3] = {TAG_NEXT_HANDLER, event_ref(idx), h->user_data};
-        int32_t r = (int32_t)guest_call(h->handler, 3, args);
+        int32_t r = (int32_t)call_out(h->handler, 3, args);
         if (r != EV_NOT_HANDLED_ERR)
             return r;
     }
@@ -313,7 +327,7 @@ static void fire_due_timers(void) {
         }
         uint32_t args[2] = {timer_ref(i), E.timers[i].data};
         E.timers[i].running = true;
-        guest_call(E.timers[i].proc, 2, args);
+        call_out(E.timers[i].proc, 2, args);
         E.timers[i].running = false;
     }
 }
@@ -415,8 +429,11 @@ static void h_get_event_kind(void) { trap_return(need_event("GetEventKind", trap
 
 static void h_release_event(void) {
     ev_event *e = need_event("ReleaseEvent", trap_arg(0));
-    if (e->queued && e->refs == 1)
+    if (e->queued)
         trap_crash("ReleaseEvent: 0x%08x is still in the event queue", trap_arg(0));
+    if (!e->guest_owned)
+        trap_crash("ReleaseEvent: 0x%08x isn't owned by the caller", trap_arg(0));
+    e->guest_owned = false;
     release(e);
 }
 
@@ -479,8 +496,10 @@ static void h_receive_next_event(void) {
                         gm_r32(list + 8 * j + 4) == E.events[idx].kind;
             if (!match)
                 continue;
-            if (pull)
+            if (pull) {
                 dequeue_at(k);
+                E.events[idx].guest_owned = true;
+            }
             if (out)
                 gm_w32(out, event_ref(idx));
             E.loop_depth--;

@@ -284,3 +284,13 @@ TEST(misc_fixed_clock_date_is_fixed) {
     fixed_teardown();
     CHECK_EQ(d, 3124224000u); /* 2003-01-01 00:00:00 */
 }
+
+TEST(misc_fixed_clock_location_is_fixed) {
+    fixed_setup();
+    uint32_t loc = scratch(12);
+    gm_w32(loc + 8, 0xFFFFFFFFu);
+    call_import("ReadLocation", 1, loc);
+    uint32_t delta = gm_r32(loc + 8);
+    fixed_teardown();
+    CHECK_EQ(delta, 0); /* GMT, no daylight saving */
+}

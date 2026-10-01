@@ -203,6 +203,10 @@ static void h_read_location(void) {
     uint32_t loc = trap_arg(0);
     gm_w32(loc, 0);
     gm_w32(loc + 4, 0);
+    if (M.fixed) { /* GMT with no daylight saving, so runs don't depend on the host */
+        gm_w32(loc + 8, 0);
+        return;
+    }
     uint32_t dls = lt.tm_isdst > 0 ? 0x80u : 0u;
     gm_w32(loc + 8, (dls << 24) | ((uint32_t)lt.tm_gmtoff & 0x00FFFFFFu));
 }

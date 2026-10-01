@@ -506,3 +506,107 @@ TEST(events_pump_runs_due_script_actions) {
     CHECK_EQ(script_remaining(), 1);
     CHECK(script_parse("", err, sizeof err));
 }
+
+/* ---- review fixes ---- */
+
+#define REL_PROC (GUEST_IMAGE_BASE + 0x800)
+#define TV_REL   (GUEST_IMAGE_BASE + 0x8128)
+
+/* A handler that releases the event it was given (an over-release). */
+static void emit_releasing_handler(void) {
+    uint32_t c[24];
+    int n = 0;
+    c[n++] = PPC_MFLR_R0;
+    c[n++] = PPC_SAVE_LR;
+    c[n++] = PPC_PUSH64;
+    c[n++] = 0x7C832378u; /* mr r3,r4 */
+    n = emit_call(c, n, tv_of("ReleaseEvent"));
+    c[n++] = PPC_POP64;
+    c[n++] = PPC_LOAD_LR;
+    c[n++] = PPC_MTLR_R0;
+    c[n++] = ppc_addi(3, 0, 0);
+    c[n++] = PPC_BLR;
+    put_words(REL_PROC, c, n);
+    set_tv(TV_REL, REL_PROC);
+}
+
+static void child_release_in_run_loop(void *unused) {
+    (void)unused;
+    setup();
+    emit_handlers();
+    emit_releasing_handler();
+    emit_counting_proc(2);
+    install(EV_APPLICATION_TARGET, TV_REL, EV_CLASS_KEYBOARD, EV_RAW_KEY_DOWN);
+    events_post_key(SDL_SCANCODE_Z, true, false);
+    install_timer(0.01, 0.01);
+    call_import("RunApplicationEventLoop", 0);
+}
+
+TEST(events_handler_releasing_its_event_in_the_run_loop_crashes) {
+    char out[16384];
+    CHECK_EQ(test_run_child(child_release_in_run_loop, NULL, out, sizeof out), 2);
+    CHECK_CONTAINS(out, "isn't owned by the caller");
+}
+
+static void child_release_after_peek(void *unused) {
+    (void)unused;
+    setup();
+    emit_releasing_handler();
+    install(EV_APPLICATION_TARGET, TV_REL, EV_CLASS_APPLICATION, EV_APP_ACTIVATED);
+    uint32_t out = scratch(4);
+    cpu_set_fpr(1, 0.0);
+    call_import("ReceiveNextEvent", 6, 0u, 0u, 0u, 0u, 0u, out); /* peek */
+    call_import("SendEventToEventTarget", 2, gm_r32(out), EV_APPLICATION_TARGET);
+}
+
+TEST(events_handler_releasing_a_peeked_event_crashes) {
+    char out[16384];
+    CHECK_EQ(test_run_child(child_release_after_peek, NULL, out, sizeof out), 2);
+    CHECK_CONTAINS(out, "ReleaseEvent: 0x0a00");
+}
+
+#define WAIT_PROC (GUEST_IMAGE_BASE + 0xA00)
+#define TV_WAIT   (GUEST_IMAGE_BASE + 0x8130)
+#define SEEN      (GUEST_IMAGE_BASE + 0x8310)
+
+/* A timer proc that calls Delay(2), then records COUNTER in SEEN and quits. */
+static void emit_waiting_proc(void) {
+    uint32_t c[40];
+    int n = 0;
+    c[n++] = PPC_MFLR_R0;
+    c[n++] = PPC_SAVE_LR;
+    c[n++] = PPC_PUSH64;
+    c[n++] = ppc_addi(3, 0, 2);
+    c[n++] = ppc_addi(4, 0, 0);
+    n = emit_call(c, n, tv_of("Delay"));
+    c[n++] = ppc_lis(4, COUNTER >> 16);
+    c[n++] = ppc_ori(4, 4, COUNTER & 0xFFFF);
+    c[n++] = ppc_lwz(5, 0, 4);
+    c[n++] = ppc_lis(6, SEEN >> 16);
+    c[n++] = ppc_ori(6, 6, SEEN & 0xFFFF);
+    c[n++] = ppc_stw(5, 0, 6);
+    n = emit_call(c, n, tv_of("QuitApplicationEventLoop"));
+    c[n++] = PPC_POP64;
+    c[n++] = PPC_LOAD_LR;
+    c[n++] = PPC_MTLR_R0;
+    c[n++] = PPC_BLR;
+    put_words(WAIT_PROC, c, n);
+    set_tv(TV_WAIT, WAIT_PROC);
+    gm_w32(SEEN, 0xFFFFFFFFu);
+}
+
+TEST(events_delay_inside_a_timer_doesnt_fire_other_timers) {
+    setup();
+    misc_set_idle(events_pump);
+    emit_counting_proc(100);
+    emit_waiting_proc();
+    uint32_t out = scratch(4);
+    cpu_set_fpr(1, 0.0);
+    cpu_set_fpr(2, 0.0);
+    call_import("InstallEventLoopTimer", 8, EV_MAIN_LOOP, 0u, 0u, 0u, 0u, TV_WAIT, 0u, out);
+    install_timer(0.0, 0.0); /* the counting timer, due at the same time */
+    call_import("RunApplicationEventLoop", 0);
+    misc_set_idle(NULL);
+    CHECK_EQ(gm_r32(SEEN), 0);    /* it didn't run during the Delay */
+    CHECK_EQ(gm_r32(COUNTER), 1); /* it ran once the waiting proc returned */
+}
