@@ -1,6 +1,7 @@
 #include "guest_mem.h"
 
 #include <stdio.h>
+#include <string.h>
 #include <sys/mman.h>
 
 #include "util.h"
@@ -72,3 +73,34 @@ uint32_t gm_r32(uint32_t addr) { return rd_be32(gm_ptr(addr, 4)); }
 void gm_w8(uint32_t addr, uint8_t v) { *gm_ptr(addr, 1) = v; }
 void gm_w16(uint32_t addr, uint16_t v) { wr_be16(gm_ptr(addr, 2), v); }
 void gm_w32(uint32_t addr, uint32_t v) { wr_be32(gm_ptr(addr, 4), v); }
+
+void gm_read_pstr(uint32_t addr, char out[256]) {
+    uint8_t n = gm_r8(addr);
+    memcpy(out, gm_ptr(addr + 1, n), n);
+    out[n] = '\0';
+}
+
+void gm_write_pstr(uint32_t addr, const char *s) {
+    size_t n = strlen(s);
+    if (n > 255)
+        n = 255;
+    uint8_t *p = gm_ptr(addr, (uint32_t)n + 1);
+    p[0] = (uint8_t)n;
+    memcpy(p + 1, s, n);
+}
+
+bool gm_read_cstr(uint32_t addr, char *out, size_t cap) {
+    for (size_t i = 0; i + 1 < cap; i++) {
+        out[i] = (char)gm_r8(addr + (uint32_t)i);
+        if (out[i] == '\0')
+            return true;
+    }
+    if (cap)
+        out[cap - 1] = '\0';
+    return false;
+}
+
+void gm_write_cstr(uint32_t addr, const char *s) {
+    size_t n = strlen(s) + 1;
+    memcpy(gm_ptr(addr, (uint32_t)n), s, n);
+}

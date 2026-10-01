@@ -1,5 +1,6 @@
 #pragma once
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /* The guest's 32-bit address space. See the memory map in the spec. */
@@ -59,3 +60,16 @@ uint32_t gm_r32(uint32_t addr);
 void gm_w8(uint32_t addr, uint8_t v);
 void gm_w16(uint32_t addr, uint16_t v);
 void gm_w32(uint32_t addr, uint32_t v);
+
+/* Guest strings. Pascal strings are a length byte followed by up to 255
+   Mac Roman bytes; C strings are NUL-terminated. */
+
+/* Copies the Pascal string at addr into out as a C string (at most 255 bytes). */
+void gm_read_pstr(uint32_t addr, char out[256]);
+/* Writes s as a Pascal string at addr, truncated to 255 bytes. */
+void gm_write_pstr(uint32_t addr, const char *s);
+/* Copies the C string at addr into out. Returns false (out truncated, still
+   NUL-terminated) if no NUL appears in the first cap - 1 bytes. */
+bool gm_read_cstr(uint32_t addr, char *out, size_t cap);
+/* Writes s and its NUL at addr. */
+void gm_write_cstr(uint32_t addr, const char *s);
