@@ -13,6 +13,11 @@ uint8_t *read_file(const char *path, size_t *len_out);
 
 uint32_t fnv1a32(const void *data, size_t len);
 
+/* A Mac four-character code, e.g. FOURCC('P','I','C','T'). */
+#define FOURCC(a, b, c, d) \
+    (((uint32_t)(uint8_t)(a) << 24) | ((uint32_t)(uint8_t)(b) << 16) | \
+     ((uint32_t)(uint8_t)(c) << 8) | (uint32_t)(uint8_t)(d))
+
 static inline uint16_t rd_be16(const uint8_t *p) {
     return (uint16_t)((p[0] << 8) | p[1]);
 }
