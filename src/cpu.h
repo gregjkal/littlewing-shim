@@ -38,3 +38,9 @@ cpu_stop cpu_run(uint32_t pc);
 /* Snapshot of all registers. cpu_restore() restores and frees it. */
 cpu_context *cpu_save(void);
 void cpu_restore(cpu_context *ctx);
+
+/* Calls fn for every guest write that touches [begin, end] (inclusive), with
+   the CPU's registers (including pc) current. NULL removes the watch.
+   cpu_init() clears it. */
+typedef void (*cpu_write_fn)(uint32_t addr, int size, uint64_t value);
+void cpu_watch_writes(uint32_t begin, uint32_t end, cpu_write_fn fn);

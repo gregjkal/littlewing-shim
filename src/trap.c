@@ -26,7 +26,9 @@ static struct {
     uint32_t hist_count;
     int depth;
     bool trace_imports;
+    bool trace_calls;
     bool stub_all;
+    uint8_t lowmem_seen[GUEST_LOWMEM_SIZE / 8]; /* one bit per address already logged */
 } T;
 
 static const char *fmt_addr(uint32_t a, char buf[static 32]) {
@@ -41,6 +43,17 @@ static _Noreturn void on_guest_fault(const char *msg) {
     trap_crash("%s", msg);
 }
 
+/* Logs the first write to each low-memory address. */
+static void on_lowmem_write(uint32_t addr, int size, uint64_t value) {
+    uint32_t off = addr - GUEST_LOWMEM_BASE;
+    if (T.lowmem_seen[off / 8] & (1u << (off % 8)))
+        return;
+    T.lowmem_seen[off / 8] |= (uint8_t)(1u << (off % 8));
+    char a[32];
+    fprintf(stderr, "loony: lowmem: write 0x%04x = 0x%0*llx (%d bytes) at %s\n", addr, size * 2,
+            (unsigned long long)value, size, fmt_addr(cpu_pc(), a));
+}
+
 void trap_init(uint32_t nimports, const char *const *names, uint32_t code_base,
                uint32_t code_len) {
     trap_shutdown();
@@ -53,6 +66,10 @@ void trap_init(uint32_t nimports, const char *const *names, uint32_t code_base,
     T.code_len = code_len;
     const char *trace = getenv("LOONY_TRACE");
     T.trace_imports = trace && strstr(trace, "imports");
+    T.trace_calls = trace && strstr(trace, "calls");
+    if (trace && strstr(trace, "lowmem"))
+        cpu_watch_writes(GUEST_LOWMEM_BASE, GUEST_LOWMEM_BASE + GUEST_LOWMEM_SIZE - 1,
+                         on_lowmem_write);
     const char *stub = getenv("LOONY_STUB");
     T.stub_all = stub && strcmp(stub, "all") == 0;
     gm_set_fault_handler(on_guest_fault);
@@ -142,6 +159,13 @@ uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
     cpu_set_lr(GUEST_RETURN_MAGIC);
 
     T.depth++;
+    if (T.trace_calls) {
+        char a[32];
+        fprintf(stderr, "loony: trace: call %s(", fmt_addr(code, a));
+        for (int i = 0; i < nargs; i++)
+            fprintf(stderr, "%s0x%08x", i ? ", " : "", args[i]);
+        fprintf(stderr, ") depth %d\n", T.depth);
+    }
     uint32_t pc = code;
     for (;;) {
         cpu_stop s = cpu_run(pc);
@@ -178,9 +202,14 @@ uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
             fprintf(stderr, "loony: trace:   -> 0x%08x\n", cpu_gpr(3));
         pc = resume;
     }
+    uint32_t result = cpu_gpr(3);
+    if (T.trace_calls) {
+        char a[32];
+        fprintf(stderr, "loony: trace: return 0x%08x from %s depth %d\n", result,
+                fmt_addr(code, a), T.depth);
+    }
     T.depth--;
 
-    uint32_t result = cpu_gpr(3);
     cpu_restore(saved);
     return result;
 }

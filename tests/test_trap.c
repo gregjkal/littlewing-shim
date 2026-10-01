@@ -284,3 +284,49 @@ TEST(trap_stub_mode_needs_the_value_all) {
     CHECK_EQ(status, 2);
     CHECK_CONTAINS(out, "loony: crash: unimplemented import FooBar");
 }
+
+static void child_trace_calls(void *unused) {
+    (void)unused;
+    setenv("LOONY_TRACE", "calls", 1);
+    static const char *const names[] = {"CallInner"};
+    setup(names, 1);
+    uint32_t inner[] = {0x38630064 /* addi r3,r3,100 */, 0x4E800020 /* blr */};
+    put_words(INNER, inner, 2);
+    trap_register("CallInner", h_call_inner);
+    uint32_t arg = 5;
+    guest_call(TV_OUTER, 1, &arg);
+}
+
+TEST(trap_trace_calls_logs_nested_guest_calls) {
+    char out[16384];
+    int status = test_run_child(child_trace_calls, NULL, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: trace: call code+0x00000(0x00000005) depth 1");
+    CHECK_CONTAINS(out, "loony: trace: call code+0x00100(0x00000005) depth 2");
+    CHECK_CONTAINS(out, "loony: trace: return 0x00000069 from code+0x00100 depth 2");
+    CHECK_CONTAINS(out, "loony: trace: return 0x0000006a from code+0x00000 depth 1");
+}
+
+static void child_trace_lowmem(void *unused) {
+    (void)unused;
+    setenv("LOONY_TRACE", "lowmem", 1);
+    static const char *const names[] = {"Unused"};
+    setup(names, 1);
+    uint32_t code[] = {
+        0x38800123, /* li  r4,0x123 */
+        0x90800910, /* stw r4,0x910(0) */
+        0x90800910, /* stw r4,0x910(0) again: logged once */
+        0x4E800020, /* blr */
+    };
+    put_words(INNER, code, 4);
+    guest_call(TV_INNER, 0, NULL);
+}
+
+TEST(trap_trace_lowmem_logs_first_write_per_address) {
+    char out[16384];
+    int status = test_run_child(child_trace_lowmem, NULL, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: lowmem: write 0x0910 = 0x00000123 (4 bytes) at code+0x00104");
+    const char *first = strstr(out, "lowmem: write 0x0910");
+    CHECK(first && !strstr(first + 1, "lowmem: write 0x0910"));
+}

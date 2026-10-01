@@ -16,7 +16,8 @@ struct cpu_context {
 };
 
 static uc_engine *uc;
-static uc_hook mem_hook, intr_hook;
+static uc_hook mem_hook, intr_hook, write_hook;
+static cpu_write_fn write_fn;
 static bool mem_fault;
 static uc_mem_type mem_fault_type;
 static uint32_t mem_fault_addr;
@@ -99,6 +100,28 @@ void cpu_shutdown(void) {
     if (uc)
         uc_close(uc);
     uc = NULL;
+    write_fn = NULL;
+}
+
+static void on_write(uc_engine *engine, uc_mem_type type, uint64_t address, int size,
+                     int64_t value, void *user) {
+    (void)engine;
+    (void)type;
+    (void)user;
+    if (write_fn)
+        write_fn((uint32_t)address, size, (uint64_t)value);
+}
+
+void cpu_watch_writes(uint32_t begin, uint32_t end, cpu_write_fn fn) {
+    if (write_fn) {
+        check(uc_hook_del(uc, write_hook), "remove write hook");
+        write_fn = NULL;
+    }
+    if (!fn)
+        return;
+    check(uc_hook_add(uc, &write_hook, UC_HOOK_MEM_WRITE, (void *)on_write, NULL, begin, end),
+          "add write hook");
+    write_fn = fn;
 }
 
 uint32_t cpu_gpr(int n) { return (uint32_t)reg_read(UC_PPC_REG_0 + n); }
