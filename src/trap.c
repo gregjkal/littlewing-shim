@@ -26,6 +26,7 @@ static struct {
     uint32_t hist_count;
     int depth;
     bool trace_imports;
+    bool stub_all;
 } T;
 
 static const char *fmt_addr(uint32_t a, char buf[static 32]) {
@@ -52,6 +53,8 @@ void trap_init(uint32_t nimports, const char *const *names, uint32_t code_base,
     T.code_len = code_len;
     const char *trace = getenv("LOONY_TRACE");
     T.trace_imports = trace && strstr(trace, "imports");
+    const char *stub = getenv("LOONY_STUB");
+    T.stub_all = stub && strcmp(stub, "all") == 0;
     gm_set_fault_handler(on_guest_fault);
     cpu_set_gpr(1, GUEST_STACK_TOP - 64);
 }
@@ -152,9 +155,18 @@ uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
         if (index >= T.n)
             trap_crash("jump to unused trap address 0x%08x", s.addr);
         const hist_entry *h = record(index);
-        if (!T.handlers[index])
-            trap_crash("unimplemented import %s", T.names[index]);
         uint32_t resume = cpu_lr();
+        if (!T.handlers[index]) {
+            if (!T.stub_all)
+                trap_crash("unimplemented import %s", T.names[index]);
+            char a[32];
+            fprintf(stderr, "loony: stub: #%u %s(0x%08x, 0x%08x, 0x%08x, 0x%08x) from %s\n",
+                    T.hist_count - 1, T.names[index], h->a[0], h->a[1], h->a[2], h->a[3],
+                    fmt_addr(h->lr, a));
+            trap_return(0);
+            pc = resume;
+            continue;
+        }
         if (T.trace_imports) {
             char a[32];
             fprintf(stderr, "loony: trace: #%u %s(0x%08x, 0x%08x, 0x%08x, 0x%08x) from %s\n",

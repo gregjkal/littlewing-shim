@@ -250,3 +250,37 @@ TEST(trap_args_beyond_r10_come_from_the_parameter_area) {
     CHECK_EQ(trap_arg(9), 0x99);
 }
 
+static void child_stub(void *unused) {
+    (void)unused;
+    setenv("LOONY_STUB", "all", 1);
+    static const char *const names[] = {"FooBar"};
+    setup(names, 1);
+    uint32_t arg = 5;
+    /* The stub returns 0 and the caller adds 1. */
+    if (guest_call(TV_OUTER, 1, &arg) != 1)
+        exit(3);
+}
+
+TEST(trap_stub_mode_returns_zero_from_unimplemented_imports) {
+    char out[16384];
+    int status = test_run_child(child_stub, NULL, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: stub: #0 FooBar(0x00000005, ");
+    CHECK_CONTAINS(out, ") from code+0x");
+}
+
+static void child_stub_other_value(void *unused) {
+    (void)unused;
+    setenv("LOONY_STUB", "yes", 1);
+    static const char *const names[] = {"FooBar"};
+    setup(names, 1);
+    uint32_t arg = 5;
+    guest_call(TV_OUTER, 1, &arg);
+}
+
+TEST(trap_stub_mode_needs_the_value_all) {
+    char out[16384];
+    int status = test_run_child(child_stub_other_value, NULL, out, sizeof out);
+    CHECK_EQ(status, 2);
+    CHECK_CONTAINS(out, "loony: crash: unimplemented import FooBar");
+}

@@ -9,7 +9,8 @@ typedef void (*trap_handler)(void);
 
 /* Requires cpu_init(). names[i] is import i's name and must outlive trap use.
    code_base/code_len are used to print code addresses as code+0xNNNNN. Reads
-   LOONY_TRACE. */
+   LOONY_TRACE and LOONY_STUB (with LOONY_STUB=all, imports with no handler
+   log a "stub:" line and return 0 instead of crashing). */
 void trap_init(uint32_t nimports, const char *const *names, uint32_t code_base,
                uint32_t code_len);
 void trap_shutdown(void);

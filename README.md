@@ -19,6 +19,7 @@ cmake --build build
 ./build/loony                         # uses /Applications/Loony Labyrinth
 ./build/loony "/path/to/game folder"
 LOONY_TRACE=imports ./build/loony     # log every OS call
+LOONY_STUB=all ./build/loony          # unimplemented OS calls return 0 instead of crashing
 ```
 
 The original game files are only ever read, never modified.
