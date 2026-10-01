@@ -36,7 +36,20 @@ static void set_header(uint32_t p, uint32_t m, uint32_t cap, uint32_t size, uint
     gm_w32(h + 12, own);
 }
 
+/* Crashes unless the header of the block at p is one the allocator wrote:
+   a known magic and a capacity that is a multiple of 16 and ends inside the
+   heap. Headers live in guest memory, so a guest writing past the end of a
+   block can clobber the next one. */
+static void check_block(uint32_t p) {
+    uint32_t m = magic(p), cap = capacity(p);
+    bool known = m == MAGIC_FREE || m == MAGIC_PTR || m == MAGIC_DATA || m == MAGIC_MASTER;
+    if (!known || (cap & 15u) != 0 || cap > HEAP_END - p)
+        trap_crash("heap block header at 0x%08x is corrupt (did the game write past a block?)",
+                   hdr(p));
+}
+
 static uint32_t next_block(uint32_t p) {
+    check_block(p);
     return p + capacity(p) + MM_HEADER_SIZE;
 }
 
@@ -59,6 +72,7 @@ static void coalesce(uint32_t p) {
         uint32_t n = next_block(p);
         if (n >= HEAP_END || magic(n) != MAGIC_FREE)
             return;
+        check_block(n);
         gm_w32(hdr(p) + 4, capacity(p) + MM_HEADER_SIZE + capacity(n));
     }
 }

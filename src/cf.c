@@ -236,7 +236,7 @@ static void h_prefs_copy_app_value(void) {
         trap_return(0);
         return;
     }
-    lookup(p->value)->refs++;
+    need("CFPreferencesCopyAppValue", p->value)->refs++;
     trap_return(p->value);
 }
 
@@ -250,7 +250,7 @@ static void h_prefs_get_app_integer_value(void) {
     bool valid = false;
     int64_t v = 0;
     if (p) {
-        cf_obj *o = lookup(p->value);
+        cf_obj *o = need("CFPreferencesGetAppIntegerValue", p->value);
         if (o->type_id == CF_NUMBER_TYPE_ID) {
             v = o->num;
             valid = true;

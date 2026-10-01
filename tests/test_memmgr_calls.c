@@ -1,5 +1,7 @@
 #include "test.h"
 
+#include <unistd.h>
+
 #include "harness.h"
 #include "memmgr.h"
 
@@ -127,4 +129,33 @@ TEST(mmcall_dispose_handle_on_a_resource_crashes) {
     int status = test_run_child(child_dispose_resource, NULL, out, sizeof out);
     CHECK_EQ(status, 2);
     CHECK_CONTAINS(out, "is a resource handle (use ReleaseResource)");
+}
+
+/* Overwrites the capacity word of the free block that follows a 16-byte
+   pointer, as a guest writing past the end of that pointer would. */
+static void child_clobbered_header(void *arg) {
+    alarm(5); /* a hang becomes a signal, not a stuck test */
+    setup();
+    uint32_t a = call_import("NewPtr", 1, 16u);
+    uint32_t b = call_import("NewPtr", 1, 16u);
+    call_import("DisposePtr", 1, b);
+    gm_w32(a + 16 + 4, *(uint32_t *)arg);
+    call_import("NewPtr", 1, 64u);
+}
+
+TEST(mmcall_clobbered_header_with_odd_size_crashes) {
+    char out[16384];
+    uint32_t cap = 5;
+    int status = test_run_child(child_clobbered_header, &cap, out, sizeof out);
+    CHECK_EQ(status, 2);
+    CHECK_CONTAINS(out, "loony: crash: heap block header at 0x");
+    CHECK_CONTAINS(out, "is corrupt");
+}
+
+TEST(mmcall_clobbered_header_with_wrapping_size_crashes) {
+    char out[16384];
+    uint32_t cap = 0xFFFFFFF0u;
+    int status = test_run_child(child_clobbered_header, &cap, out, sizeof out);
+    CHECK_EQ(status, 2);
+    CHECK_CONTAINS(out, "is corrupt");
 }

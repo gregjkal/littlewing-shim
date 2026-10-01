@@ -176,3 +176,38 @@ TEST(cf_float_numbers_crash) {
     CHECK_EQ(status, 2);
     CHECK_CONTAINS(out, "CFNumberCreate: unsupported number type 13");
 }
+
+static void child_stored_value_over_released(void *unused) {
+    (void)unused;
+    setup();
+    uint32_t k = str("Name"), v = str("Greg");
+    call_import("CFPreferencesSetAppValue", 3, k, v, app());
+    call_import("CFRelease", 1, v);
+    call_import("CFRelease", 1, v); /* one too many: the stored value is freed */
+    call_import("CFPreferencesCopyAppValue", 2, k, app());
+}
+
+TEST(cf_prefs_over_released_value_crashes_with_a_report) {
+    char out[16384];
+    int status = test_run_child(child_stored_value_over_released, NULL, out, sizeof out);
+    CHECK_EQ(status, 2);
+    CHECK_CONTAINS(out, "loony: crash: CFPreferencesCopyAppValue: 0x08000");
+    CHECK_CONTAINS(out, "is not a live CF object");
+}
+
+static void child_stored_number_over_released(void *unused) {
+    (void)unused;
+    setup();
+    uint32_t k = str("Level"), v = num(3);
+    call_import("CFPreferencesSetAppValue", 3, k, v, app());
+    call_import("CFRelease", 1, v);
+    call_import("CFRelease", 1, v);
+    call_import("CFPreferencesGetAppIntegerValue", 3, k, app(), 0u);
+}
+
+TEST(cf_prefs_over_released_number_crashes_with_a_report) {
+    char out[16384];
+    int status = test_run_child(child_stored_number_over_released, NULL, out, sizeof out);
+    CHECK_EQ(status, 2);
+    CHECK_CONTAINS(out, "loony: crash: CFPreferencesGetAppIntegerValue: 0x08000");
+}
