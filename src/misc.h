@@ -3,9 +3,13 @@
 #include <stdint.h>
 
 #define MISC_GESTALT_UNDEF_SELECTOR_ERR (-5551)
+/* The game sees a Mac that booted a minute before launch: TickCount and
+   Microseconds start here, never at 0, which the game uses to mean "not
+   scheduled" (BGMKickOff). misc_ticks() and scripts still count from launch. */
+#define MISC_BOOT_TICKS 3600u
 #define MISC_IC_INSTANCE 0x0FFF0001u /* opaque ICInstance returned by ICStart */
 
-/* Resets the clock (TickCount starts at 0), cursor and Apple Event state.
+/* Resets the clock (misc_ticks() starts at 0), cursor and Apple Event state.
    With LOONY_FIXED_CLOCK=1 the clock is virtual: it moves only when the game
    waits (Delay, misc_wait), one tick per Delay(0), or by one tick after 200
    time polls in a row (TickCount, Microseconds, misc_poll), so runs don't

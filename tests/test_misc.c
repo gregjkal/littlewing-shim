@@ -64,7 +64,7 @@ TEST(misc_gestalt_unknown_selector_is_logged_not_fatal) {
 TEST(misc_tick_count_and_delay) {
     setup();
     uint32_t t0 = call_import("TickCount", 0);
-    CHECK(t0 < 60);
+    CHECK(t0 >= MISC_BOOT_TICKS && t0 < MISC_BOOT_TICKS + 60); /* never 0 */
     uint32_t final_ticks = scratch(4);
     call_import("Delay", 2, 3u, final_ticks);
     uint32_t t1 = call_import("TickCount", 0);
@@ -81,6 +81,7 @@ TEST(misc_microseconds_advances) {
     call_import("Microseconds", 1, b);
     uint64_t ua = ((uint64_t)gm_r32(a) << 32) | gm_r32(a + 4);
     uint64_t ub = ((uint64_t)gm_r32(b) << 32) | gm_r32(b + 4);
+    CHECK(ua >= MISC_BOOT_TICKS * 1000000ull / 60); /* the boot minute */
     CHECK(ub >= ua + 10000);
 }
 
@@ -257,9 +258,9 @@ TEST(misc_fixed_clock_delay_advances_whole_ticks) {
     call_import("Delay", 2, 3u, final_ticks);
     uint32_t b = call_import("TickCount", 0);
     fixed_teardown();
-    CHECK_EQ(a, 1);
-    CHECK_EQ(fa, 1);
-    CHECK_EQ(b, 4);
+    CHECK_EQ(a, MISC_BOOT_TICKS + 1);
+    CHECK_EQ(fa, MISC_BOOT_TICKS + 1);
+    CHECK_EQ(b, MISC_BOOT_TICKS + 4);
 }
 
 TEST(misc_fixed_clock_polling_alone_moves_time) {
@@ -272,8 +273,8 @@ TEST(misc_fixed_clock_polling_alone_moves_time) {
         call_import("Microseconds", 1, us);
     uint32_t after = call_import("TickCount", 0);
     fixed_teardown();
-    CHECK_EQ(before, 1);
-    CHECK_EQ(after, 2);
+    CHECK_EQ(before, MISC_BOOT_TICKS + 1);
+    CHECK_EQ(after, MISC_BOOT_TICKS + 2);
 }
 
 TEST(misc_fixed_clock_date_is_fixed) {

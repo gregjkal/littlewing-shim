@@ -147,12 +147,12 @@ static void h_tick_count(void) {
     misc_poll();
     uint32_t t = misc_ticks();
     idle_if_new_tick(t);
-    trap_return(t);
+    trap_return(t + MISC_BOOT_TICKS);
 }
 
 static void h_microseconds(void) {
     misc_poll();
-    uint64_t us = elapsed_us();
+    uint64_t us = elapsed_us() + MISC_BOOT_TICKS * 1000000ull / 60;
     uint32_t out = trap_arg(0);
     gm_w32(out, (uint32_t)(us >> 32));
     gm_w32(out + 4, (uint32_t)us);
@@ -176,7 +176,7 @@ static void h_delay(void) {
             misc_wait(1.0 / 60 / 4);
     }
     if (final_ticks)
-        gm_w32(final_ticks, misc_ticks());
+        gm_w32(final_ticks, misc_ticks() + MISC_BOOT_TICKS);
 }
 
 /* The virtual clock's calendar starts at 2003-01-01 00:00:00 (Mac time), so
