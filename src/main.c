@@ -6,11 +6,17 @@
 
 #include "cf.h"
 #include "cpu.h"
+#include "dialogs.h"
+#include "display.h"
+#include "events.h"
+#include "files.h"
 #include "guest_mem.h"
 #include "loader.h"
 #include "memmgr.h"
 #include "misc.h"
+#include "qd.h"
 #include "rsrc.h"
+#include "sound.h"
 #include "trap.h"
 #include "util.h"
 
@@ -57,6 +63,15 @@ int main(int argc, char **argv) {
     mm_init();
     misc_init();
     cf_init();
+    qd_init(800, 600, 8);
+    dialogs_init();
+    events_init();
+    files_init(dir);
+    sound_init();
+    display_init();
+    qd_set_present(display_present);
+    events_set_present(display_present_if_dirty);
+    misc_set_idle(events_pump);
 
     const char **names = calloc(img.pef.nimports ? img.pef.nimports : 1, sizeof *names);
     if (!names)
@@ -68,6 +83,11 @@ int main(int argc, char **argv) {
     rsrc_register();
     misc_register();
     cf_register();
+    qd_register();
+    dialogs_register();
+    events_register();
+    files_register();
+    sound_register();
     int32_t app_id = image_find_import(&img, "kCFPreferencesCurrentApplication");
     if (app_id >= 0)
         gm_w32(img.import_addr[app_id], cf_current_app());
