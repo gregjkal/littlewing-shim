@@ -1,4 +1,5 @@
 build/
+build-*/
 *.png
 /game/
 .DS_Store

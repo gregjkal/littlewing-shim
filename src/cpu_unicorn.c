@@ -10,6 +10,7 @@
 #include "util.h"
 
 #define MSR_FP 0x2000u
+#define TCG_BUFFER_SIZE (64u << 20)
 
 struct cpu_context {
     uc_context *uc_ctx;
@@ -75,6 +76,8 @@ void cpu_init(void) {
         cpu_shutdown();
     check(uc_open(UC_ARCH_PPC, UC_MODE_PPC32 | UC_MODE_BIG_ENDIAN, &uc), "uc_open");
     check(uc_ctl_set_cpu_model(uc, UC_CPU_PPC32_750_V3_1), "set CPU model");
+    /* The default translation cache is 1 GB; the game's code is 280 KB. */
+    check(uc_ctl_set_tcg_buffer_size(uc, TCG_BUFFER_SIZE), "set translation cache size");
     const gm_region *regions;
     int n = gm_regions(&regions);
     for (int i = 0; i < n; i++) {
