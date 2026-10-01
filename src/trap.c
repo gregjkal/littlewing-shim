@@ -36,6 +36,10 @@ static const char *fmt_addr(uint32_t a, char buf[static 32]) {
     return buf;
 }
 
+static _Noreturn void on_guest_fault(const char *msg) {
+    trap_crash("%s", msg);
+}
+
 void trap_init(uint32_t nimports, const char *const *names, uint32_t code_base,
                uint32_t code_len) {
     trap_shutdown();
@@ -48,10 +52,12 @@ void trap_init(uint32_t nimports, const char *const *names, uint32_t code_base,
     T.code_len = code_len;
     const char *trace = getenv("LOONY_TRACE");
     T.trace_imports = trace && strstr(trace, "imports");
+    gm_set_fault_handler(on_guest_fault);
     cpu_set_gpr(1, GUEST_STACK_TOP - 64);
 }
 
 void trap_shutdown(void) {
+    gm_set_fault_handler(NULL);
     free(T.handlers);
     memset(&T, 0, sizeof T);
 }
@@ -94,6 +100,14 @@ void trap_crash(const char *fmt, ...) {
     exit(2);
 }
 
+uint32_t trap_arg(int n) {
+    if (n < 0)
+        fatal("trap_arg: bad argument index %d", n);
+    if (n < 8)
+        return cpu_gpr(3 + n);
+    return gm_r32(cpu_gpr(1) + 24 + 4u * (uint32_t)n);
+}
+
 static const hist_entry *record(uint32_t index) {
     hist_entry *h = &T.hist[T.hist_count % HISTORY];
     h->index = index;
@@ -111,6 +125,8 @@ uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
     cpu_context *saved = cpu_save();
 
     uint32_t old_sp = cpu_gpr(1);
+    if (old_sp < GUEST_STACK_BASE || old_sp > GUEST_STACK_TOP)
+        trap_crash("guest stack pointer 0x%08x is outside the stack", old_sp);
     uint32_t sp = (old_sp - CALL_FRAME_GAP) & ~15u;
     if (sp < GUEST_STACK_BASE + 4096)
         trap_crash("guest stack exhausted");

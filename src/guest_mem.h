@@ -40,10 +40,17 @@ uint8_t *gm_host_base(void);
 /* The regions the CPU maps. Everything else is unmapped. */
 int gm_regions(const gm_region **out);
 
-/* True if [addr, addr+len) lies inside a single backed region. */
+/* True if [addr, addr+len) lies inside a single backed region. A zero-length
+   range counts only if addr itself is backed. */
 bool gm_is_backed(uint32_t addr, uint32_t len);
 
-/* Host pointer for a guest range. Fatal if the range is not backed. */
+/* Called with a message when gm_ptr() is given an unbacked range. Must not
+   return. trap_init() installs one that prints a full crash report. */
+typedef void (*gm_fault_fn)(const char *msg);
+void gm_set_fault_handler(gm_fault_fn fn);
+
+/* Host pointer for a guest range. If the range is not backed, calls the fault
+   handler, or fatal() if none is set. */
 uint8_t *gm_ptr(uint32_t addr, uint32_t len);
 
 uint8_t gm_r8(uint32_t addr);

@@ -59,3 +59,11 @@ TEST(gm_unbacked_access_is_fatal) {
     CHECK_EQ(status, 2);
     CHECK_CONTAINS(out, "unmapped guest address 0x05000000");
 }
+
+TEST(gm_zero_length_range_must_start_inside_a_region) {
+    gm_init();
+    CHECK(gm_is_backed(GUEST_HEAP_BASE, 0));
+    CHECK(!gm_is_backed(GUEST_LOWMEM_BASE + GUEST_LOWMEM_SIZE, 0));
+    CHECK(!gm_is_backed(GUEST_STACK_TOP, 0));
+    CHECK(!gm_is_backed(GUEST_TRAP_BASE, 0));
+}

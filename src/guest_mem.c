@@ -1,5 +1,6 @@
 #include "guest_mem.h"
 
+#include <stdio.h>
 #include <sys/mman.h>
 
 #include "util.h"
@@ -7,6 +8,7 @@
 #define GUEST_MEM_SIZE GUEST_STACK_TOP
 
 static uint8_t *mem;
+static gm_fault_fn fault_handler;
 
 static const gm_region regions[] = {
     {GUEST_LOWMEM_BASE, GUEST_LOWMEM_SIZE, GM_PROT_R | GM_PROT_W},
@@ -41,17 +43,26 @@ int gm_regions(const gm_region **out) {
 bool gm_is_backed(uint32_t addr, uint32_t len) {
     for (size_t i = 0; i < sizeof regions / sizeof regions[0]; i++) {
         uint64_t start = regions[i].base, end = start + regions[i].size;
-        if (addr >= start && (uint64_t)addr + len <= end)
+        if (addr >= start && addr < end && (uint64_t)addr + len <= end)
             return true;
     }
     return false;
 }
 
+void gm_set_fault_handler(gm_fault_fn fn) {
+    fault_handler = fn;
+}
+
 uint8_t *gm_ptr(uint32_t addr, uint32_t len) {
     if (!mem)
         fatal("guest memory used before gm_init()");
-    if (!gm_is_backed(addr, len))
-        fatal("access to unmapped guest address 0x%08x (%u bytes)", addr, len);
+    if (!gm_is_backed(addr, len)) {
+        char msg[96];
+        snprintf(msg, sizeof msg, "access to unmapped guest address 0x%08x (%u bytes)", addr, len);
+        if (fault_handler)
+            fault_handler(msg);
+        fatal("%s", msg);
+    }
     return mem + addr;
 }
 

@@ -8,7 +8,8 @@
 typedef void (*trap_handler)(void);
 
 /* Requires cpu_init(). names[i] is import i's name and must outlive trap use.
-   code_base/code_len are used to print code addresses as code+0xNNNNN. */
+   code_base/code_len are used to print code addresses as code+0xNNNNN. Reads
+   LOONY_TRACE. */
 void trap_init(uint32_t nimports, const char *const *names, uint32_t code_base,
                uint32_t code_len);
 void trap_shutdown(void);
@@ -26,5 +27,7 @@ const char *trap_import_name(uint32_t index);
 /* Prints a crash report (message, registers, depth, recent imports) and exits 2. */
 _Noreturn void trap_crash(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
-static inline uint32_t trap_arg(int n) { return cpu_gpr(3 + n); }
+/* Word argument n of the current import call: r3..r10 for n = 0..7, then the
+   caller's parameter area at r1 + 24 + 4n. */
+uint32_t trap_arg(int n);
 static inline void trap_return(uint32_t v) { cpu_set_gpr(3, v); }

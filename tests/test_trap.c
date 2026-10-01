@@ -154,3 +154,99 @@ TEST(trap_trace_logs_imports) {
     CHECK_CONTAINS(out, "loony: trace: #0 TestDouble(0x00000005");
     CHECK_CONTAINS(out, "-> 0x0000000a");
 }
+
+static void h_read_bad_pointer(void) {
+    trap_return(gm_r32(0x05000000u));
+}
+
+static void child_handler_bad_pointer(void *unused) {
+    (void)unused;
+    static const char *const names[] = {"ReadsBadPointer"};
+    setup(names, 1);
+    trap_register("ReadsBadPointer", h_read_bad_pointer);
+    uint32_t arg = 5;
+    guest_call(TV_OUTER, 1, &arg);
+}
+
+TEST(trap_bad_guest_pointer_in_handler_gives_crash_report) {
+    char out[16384];
+    int status = test_run_child(child_handler_bad_pointer, NULL, out, sizeof out);
+    CHECK_EQ(status, 2);
+    CHECK_CONTAINS(out, "loony: crash: access to unmapped guest address 0x05000000");
+    CHECK_CONTAINS(out, "depth 1");
+    CHECK_CONTAINS(out, "ReadsBadPointer(0x00000005, ");
+}
+
+static void child_bad_tvector(void *unused) {
+    (void)unused;
+    static const char *const names[] = {"Unused"};
+    setup(names, 1);
+    guest_call(0x05000000u, 0, NULL);
+}
+
+TEST(trap_bad_tvector_gives_crash_report) {
+    char out[16384];
+    int status = test_run_child(child_bad_tvector, NULL, out, sizeof out);
+    CHECK_EQ(status, 2);
+    CHECK_CONTAINS(out, "loony: crash: access to unmapped guest address 0x05000000");
+    CHECK_CONTAINS(out, "last 0 imports");
+}
+
+static void child_sp_above_stack(void *unused) {
+    (void)unused;
+    static const char *const names[] = {"Unused"};
+    setup(names, 1);
+    cpu_set_gpr(1, GUEST_STACK_TOP + 0x1000);
+    guest_call(TV_INNER, 0, NULL);
+}
+
+TEST(trap_stack_pointer_above_stack_crashes) {
+    char out[16384];
+    int status = test_run_child(child_sp_above_stack, NULL, out, sizeof out);
+    CHECK_EQ(status, 2);
+    CHECK_CONTAINS(out, "loony: crash: guest stack pointer 0x06101000 is outside the stack");
+}
+
+static void child_sp_zero(void *unused) {
+    (void)unused;
+    static const char *const names[] = {"Unused"};
+    setup(names, 1);
+    cpu_set_gpr(1, 0);
+    guest_call(TV_INNER, 0, NULL);
+}
+
+TEST(trap_stack_pointer_zero_crashes) {
+    char out[16384];
+    int status = test_run_child(child_sp_zero, NULL, out, sizeof out);
+    CHECK_EQ(status, 2);
+    CHECK_CONTAINS(out, "loony: crash: guest stack pointer 0x00000000 is outside the stack");
+}
+
+static void child_stack_exhausted(void *unused) {
+    (void)unused;
+    static const char *const names[] = {"Unused"};
+    setup(names, 1);
+    cpu_set_gpr(1, GUEST_STACK_BASE + 0x800);
+    guest_call(TV_INNER, 0, NULL);
+}
+
+TEST(trap_stack_exhausted_crashes) {
+    char out[16384];
+    int status = test_run_child(child_stack_exhausted, NULL, out, sizeof out);
+    CHECK_EQ(status, 2);
+    CHECK_CONTAINS(out, "loony: crash: guest stack exhausted");
+}
+
+TEST(trap_args_beyond_r10_come_from_the_parameter_area) {
+    static const char *const names[] = {"Unused"};
+    setup(names, 1);
+    uint32_t sp = GUEST_STACK_TOP - 0x1000;
+    cpu_set_gpr(1, sp);
+    cpu_set_gpr(6, 0x66);
+    gm_w32(sp + 24 + 4 * 8, 0x88);
+    gm_w32(sp + 24 + 4 * 9, 0x99);
+    CHECK_EQ(trap_arg(3), 0x66);
+    CHECK_EQ(trap_arg(8), 0x88);
+    CHECK_EQ(trap_arg(9), 0x99);
+}
+
