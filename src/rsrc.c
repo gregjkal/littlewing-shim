@@ -6,6 +6,9 @@
 #include <string.h>
 #include <strings.h>
 
+#include "guest_mem.h"
+#include "memmgr.h"
+#include "trap.h"
 #include "util.h"
 
 static struct {
@@ -13,6 +16,7 @@ static struct {
     rsrc_entry *entries;
     uint32_t n;
     uint32_t ntypes;
+    int16_t error; /* ResError */
 } R;
 
 static bool fail(char *err, size_t errlen, const char *fmt, ...)
@@ -136,3 +140,96 @@ rsrc_entry *rsrc_find_handle(uint32_t h) {
 
 const uint8_t *rsrc_data(const rsrc_entry *e) { return R.fork + e->data_off; }
 
+/* ---- guest calls ---- */
+
+/* Returns e's handle, loading it into the guest heap on first use. */
+static uint32_t load(rsrc_entry *e) {
+    if (!e->handle) {
+        uint32_t h = mm_new_handle(e->len, false);
+        if (!h) {
+            R.error = MM_MEM_FULL_ERR;
+            return 0;
+        }
+        memcpy(gm_ptr(gm_r32(h), e->len), rsrc_data(e), e->len);
+        uint8_t state = MM_STATE_RESOURCE;
+        if (e->attrs & 0x20) /* resPurgeable */
+            state |= MM_STATE_PURGEABLE;
+        mm_set_handle_state(h, state);
+        e->handle = h;
+    }
+    R.error = 0;
+    return e->handle;
+}
+
+static uint32_t get(rsrc_entry *e) {
+    if (!e) {
+        R.error = RSRC_NOT_FOUND_ERR;
+        return 0;
+    }
+    return load(e);
+}
+
+static void h_get_resource(void) {
+    trap_return(get(rsrc_find(trap_arg(0), (int16_t)trap_arg(1))));
+}
+
+static void h_get_named_resource(void) {
+    char name[256];
+    gm_read_pstr(trap_arg(1), name);
+    trap_return(get(rsrc_find_named(trap_arg(0), name)));
+}
+
+static void h_load_resource(void) {
+    R.error = rsrc_find_handle(trap_arg(0)) ? 0 : RSRC_NOT_FOUND_ERR;
+}
+
+static void h_release_resource(void) {
+    rsrc_entry *e = rsrc_find_handle(trap_arg(0));
+    if (!e) {
+        R.error = RSRC_NOT_FOUND_ERR;
+        return;
+    }
+    mm_dispose_handle(e->handle);
+    e->handle = 0;
+    R.error = 0;
+}
+
+static void h_res_error(void) { trap_return((uint32_t)(int32_t)R.error); }
+
+static void h_cur_res_file(void) { trap_return(RSRC_APP_REFNUM); }
+
+/* GetIndString(Str255 theString, short strListID, short index): index is
+   1-based; an absent list or index gives an empty string. */
+static void h_get_ind_string(void) {
+    uint32_t out = trap_arg(0);
+    int16_t id = (int16_t)trap_arg(1), index = (int16_t)trap_arg(2);
+    gm_w8(out, 0);
+    rsrc_entry *e = rsrc_find(FOURCC('S', 'T', 'R', '#'), id);
+    if (!e) {
+        R.error = RSRC_NOT_FOUND_ERR;
+        return;
+    }
+    R.error = 0;
+    const uint8_t *d = rsrc_data(e);
+    if (e->len < 2 || index < 1 || index > rd_be16(d))
+        return;
+    uint32_t p = 2;
+    for (int i = 1; i < index; i++) {
+        if (p >= e->len)
+            return;
+        p += 1u + d[p];
+    }
+    if (p >= e->len || p + 1u + d[p] > e->len)
+        return;
+    memcpy(gm_ptr(out, 1u + d[p]), d + p, 1u + d[p]);
+}
+
+void rsrc_register(void) {
+    trap_register("GetResource", h_get_resource);
+    trap_register("GetNamedResource", h_get_named_resource);
+    trap_register("LoadResource", h_load_resource);
+    trap_register("ReleaseResource", h_release_resource);
+    trap_register("ResError", h_res_error);
+    trap_register("CurResFile", h_cur_res_file);
+    trap_register("GetIndString", h_get_ind_string);
+}
