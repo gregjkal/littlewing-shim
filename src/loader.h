@@ -20,3 +20,6 @@ typedef struct {
    must outlive img. On failure, writes err and leaves nothing to free. */
 bool image_load(const uint8_t *buf, size_t len, loaded_image *img, char *err, size_t errlen);
 void image_free(loaded_image *img);
+
+/* Index of the import called name, or -1. */
+int32_t image_find_import(const loaded_image *img, const char *name);

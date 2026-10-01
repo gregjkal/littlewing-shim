@@ -4,9 +4,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "cf.h"
 #include "cpu.h"
 #include "guest_mem.h"
 #include "loader.h"
+#include "memmgr.h"
+#include "misc.h"
+#include "rsrc.h"
 #include "trap.h"
 #include "util.h"
 
@@ -29,6 +33,15 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    char fork_path[PATH_MAX + 32];
+    snprintf(fork_path, sizeof fork_path, "%s/..namedfork/rsrc", path);
+    size_t fork_len = 0;
+    uint8_t *fork = read_file(fork_path, &fork_len);
+    if (!fork) {
+        fprintf(stderr, "loony: can't read %s: %s\n", fork_path, strerror(errno));
+        return 1;
+    }
+
     gm_init();
     cpu_init();
     loaded_image img;
@@ -37,6 +50,13 @@ int main(int argc, char **argv) {
         fprintf(stderr, "loony: can't load %s: %s\n", path, err);
         return 1;
     }
+    if (!rsrc_open(fork, fork_len, err, sizeof err)) {
+        fprintf(stderr, "loony: can't load the resources of %s: %s\n", path, err);
+        return 1;
+    }
+    mm_init();
+    misc_init();
+    cf_init();
 
     const char **names = calloc(img.pef.nimports ? img.pef.nimports : 1, sizeof *names);
     if (!names)
@@ -44,6 +64,13 @@ int main(int argc, char **argv) {
     for (uint32_t i = 0; i < img.pef.nimports; i++)
         names[i] = img.pef.imports[i].name;
     trap_init(img.pef.nimports, names, img.code_base, img.code_len);
+    mm_register();
+    rsrc_register();
+    misc_register();
+    cf_register();
+    int32_t app_id = image_find_import(&img, "kCFPreferencesCurrentApplication");
+    if (app_id >= 0)
+        gm_w32(img.import_addr[app_id], cf_current_app());
 
     if (!img.main_tvector)
         fatal("%s has no main entry point", path);

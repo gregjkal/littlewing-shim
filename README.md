@@ -19,9 +19,13 @@ cmake --build build
 ./build/loony                         # uses /Applications/Loony Labyrinth
 ./build/loony "/path/to/game folder"
 LOONY_TRACE=imports ./build/loony     # log every OS call
+LOONY_TRACE=imports,calls ./build/loony   # also log each call into the game (callbacks)
+LOONY_TRACE=lowmem ./build/loony      # log the first write to each low-memory address
 LOONY_STUB=all ./build/loony          # unimplemented OS calls return 0 instead of crashing
 ```
 
-The original game files are only ever read, never modified.
+The original game files are only ever read, never modified. Today the game
+runs through its startup (memory, resources, Gestalt, preferences) and stops at
+its first dialog, `Alert`, which needs graphics (milestone 3).
 
 Design: `docs/superpowers/specs/2026-09-30-loony-shim-design.md`

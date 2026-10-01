@@ -37,6 +37,9 @@ TEST(loader_loads_the_real_executable) {
     CHECK_EQ(gm_r32(img.main_tvector), 0x001387E0u);
     CHECK_EQ(gm_r32(img.main_tvector + 4), 0x00145000u);
     CHECK_EQ(img.init_tvector, 0);
+    CHECK_EQ(image_find_import(&img, "kCFPreferencesCurrentApplication"), 36);
+    CHECK_EQ(image_find_import(&img, "EndFullScreen"), 131);
+    CHECK_EQ(image_find_import(&img, "NoSuchCall"), -1);
 
     image_free(&img);
     free(buf);

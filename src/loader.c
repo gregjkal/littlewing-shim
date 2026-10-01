@@ -140,3 +140,10 @@ void image_free(loaded_image *img) {
     free(img->import_addr);
     memset(img, 0, sizeof *img);
 }
+
+int32_t image_find_import(const loaded_image *img, const char *name) {
+    for (uint32_t i = 0; i < img->pef.nimports; i++)
+        if (strcmp(img->pef.imports[i].name, name) == 0)
+            return (int32_t)i;
+    return -1;
+}

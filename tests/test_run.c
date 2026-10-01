@@ -9,14 +9,17 @@ static void run_loony(void *dir) {
     _exit(127);
 }
 
-TEST(run_stops_at_first_unimplemented_import) {
+TEST(run_reaches_the_shareware_alert) {
     SKIP_UNLESS_GAME();
     char out[32768];
     int status = test_run_child(run_loony, (void *)test_game_dir(), out, sizeof out);
     CHECK_EQ(status, 2);
     CHECK_CONTAINS(out, "loony: loaded ");
     CHECK_CONTAINS(out, "132 imports");
-    CHECK_CONTAINS(out, "loony: crash: unimplemented import ");
+    CHECK_CONTAINS(out, "loony: crash: unimplemented import Alert");
+    /* Alert 901 is the shareware dialog. Everything before it is implemented. */
+    CHECK_CONTAINS(out, "Alert(0x00000385, ");
+    CHECK(!strstr(out, "unknown selector"));
 }
 
 /* Review Focus 1: wrong or missing game folder. */
