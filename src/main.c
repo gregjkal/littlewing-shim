@@ -37,7 +37,10 @@ static void show_failure(const char *msg) {
     if (video && strcmp(video, "dummy") == 0) /* headless: nobody to click it */
         return;
     char text[2048];
-    snprintf(text, sizeof text, "%s\n\nThe log is in %s", msg, log_path);
+    if (log_path[0])
+        snprintf(text, sizeof text, "%s\n\nThe log is in %s", msg, log_path);
+    else
+        snprintf(text, sizeof text, "%s", msg);
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Loony Labyrinth", text, NULL);
 }
 
@@ -49,12 +52,16 @@ static void log_to_file_if_app(const char *argv0) {
     snprintf(dir, sizeof dir, "%s/Library/Logs/loony-shim", home);
     snprintf(log_path, sizeof log_path, "%s/loony.log", dir);
     snprintf(prev, sizeof prev, "%s/loony.previous.log", dir);
-    if (!make_dirs(dir))
+    util_set_failure_hook(show_failure);
+    if (!make_dirs(dir)) {
+        log_path[0] = '\0';
         return;
+    }
     rename(log_path, prev);
     if (freopen(log_path, "w", stderr))
         setvbuf(stderr, NULL, _IOLBF, 0);
-    util_set_failure_hook(show_failure);
+    else
+        log_path[0] = '\0';
 }
 
 /* An error before the game starts: printed, and shown when running as the app. */
@@ -80,10 +87,8 @@ int main(int argc, char **argv) {
         dir = argv[i];
         nargs++;
     }
-    if (nargs > 1) {
-        fprintf(stderr, "usage: loony [game-folder]\n");
-        return 1;
-    }
+    if (nargs > 1)
+        return startup_error("usage: loony [game-folder]");
 
     char path[PATH_MAX];
     snprintf(path, sizeof path, "%s/%s", dir, GAME_EXE_NAME);

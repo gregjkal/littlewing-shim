@@ -14,9 +14,7 @@ static struct {
     int n, cap, next;
 } SC;
 
-bool script_parse(const char *text, char *err, size_t errlen) {
-    free(SC.a);
-    memset(&SC, 0, sizeof SC);
+static bool parse(const char *text, char *err, size_t errlen) {
     int line_no = 0;
     uint32_t last = 0;
     const char *p = text;
@@ -100,6 +98,15 @@ bool script_parse(const char *text, char *err, size_t errlen) {
         SC.n++;
     }
     return true;
+}
+
+bool script_parse(const char *text, char *err, size_t errlen) {
+    free(SC.a);
+    memset(&SC, 0, sizeof SC);
+    if (parse(text, err, errlen))
+        return true;
+    SC.n = 0; /* nothing from a script with an error */
+    return false;
 }
 
 bool script_load(const char *path, char *err, size_t errlen) {

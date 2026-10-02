@@ -32,16 +32,36 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 # Copy each Homebrew library the binary links and point the binary at the copy.
-for lib in $(otool -L "$bin" | awk '/\/opt\/homebrew\// {print $1}'); do
+for lib in $(otool -L "$bin" | awk '/\/opt\/homebrew\// {print $1}'); do  # paths without spaces
     name=$(basename "$lib")
     cp "$lib" "$app/Contents/Frameworks/$name"
     chmod u+w "$app/Contents/Frameworks/$name"
     install_name_tool -id "@rpath/$name" "$app/Contents/Frameworks/$name"
     install_name_tool -change "$lib" "@rpath/$name" "$app/Contents/MacOS/loony"
 done
+# Search only Frameworks (the link adds /opt/homebrew/lib).
+for rp in $(otool -l "$app/Contents/MacOS/loony" | awk '/cmd LC_RPATH/ {getline; getline; print $2}'); do
+    install_name_tool -delete_rpath "$rp" "$app/Contents/MacOS/loony"
+done
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$app/Contents/MacOS/loony"
-if otool -L "$app/Contents/MacOS/loony" "$app"/Contents/Frameworks/*.dylib | grep -q /opt/homebrew/; then
-    echo "make_app.sh: the bundle still refers to Homebrew libraries" >&2
+# Self-contained: every library is the system's or in Frameworks, and the
+# only search path is Frameworks. (A sanitizer build fails here: it needs
+# the compiler's runtime library.)
+bad=0
+for f in "$app/Contents/MacOS/loony" "$app"/Contents/Frameworks/*.dylib; do
+    for dep in $(otool -L "$f" | tail -n +2 | awk '{print $1}'); do
+        case "$dep" in
+        /usr/lib/* | /System/*) ;;
+        @rpath/*) [ -f "$app/Contents/Frameworks/${dep#@rpath/}" ] || { echo "make_app.sh: $f needs $dep, which isn't bundled" >&2; bad=1; } ;;
+        *) echo "make_app.sh: $f needs $dep, outside the bundle" >&2; bad=1 ;;
+        esac
+    done
+    for rp in $(otool -l "$f" | awk '/cmd LC_RPATH/ {getline; getline; print $2}'); do
+        [ "$rp" = "@executable_path/../Frameworks" ] || { echo "make_app.sh: $f searches $rp" >&2; bad=1; }
+    done
+done
+if [ "$bad" != 0 ]; then
+    echo "make_app.sh: the bundle isn't self-contained (build it from a Release build)" >&2
     exit 1
 fi
 for lib in "$app"/Contents/Frameworks/*.dylib; do

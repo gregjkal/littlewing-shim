@@ -40,6 +40,8 @@ TEST(script_reports_errors_with_line_numbers) {
     CHECK(!script_parse("down z\n", err, sizeof err));
     CHECK_CONTAINS(err, "line 1: expected");
     CHECK_EQ(script_remaining(), 0);
+    CHECK(!script_parse("1 down z\n2 jump\n", err, sizeof err)); /* the good line isn't kept */
+    CHECK_EQ(script_remaining(), 0);
 }
 
 TEST(script_load_missing_file) {

@@ -25,7 +25,7 @@ while t < ticks - 600:
         if (t // 1000) % 7 == 0:
             lines += [(t, 'down space'), (t + 5, 'up space')]
             t += 20
-for minute in range(1, ticks // 3600 + 1, 5):
+for minute in range(1, (ticks - 61) // 3600 + 1, 5):  # all before the quit
     lines.append((minute * 3600, f'screenshot {prefix}{minute:02d}.png'))
 lines.append((ticks - 60, 'quit'))
 lines.sort(key=lambda a: a[0])

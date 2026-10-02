@@ -391,6 +391,7 @@ TEST(run_as_the_app_logs_to_library_logs) {
 static char bundle_bin[1300];
 
 static void run_bundle_scripted(void *dir) {
+    setenv("HOME", run_data, 1); /* as an app it logs under HOME */
     setenv("LOONY_FIXED_CLOCK", "1", 1);
     setenv("LOONY_SCRIPT", script_path, 1);
     setenv("LOONY_AUTO_ALERTS", "1", 1);
@@ -401,14 +402,27 @@ static void run_bundle_scripted(void *dir) {
 
 /* tools/make_app.sh: the bundle carries its own libraries, is signed with
    the hardened runtime and allow-jit, and still emulates the game exactly
-   (the approved menu frame). */
+   (the approved menu frame). A sanitizer build (Debug) can't be bundled:
+   it needs the compiler's runtime, and the script says so. */
 TEST(run_the_app_bundle_is_self_contained_and_plays) {
     SKIP_UNLESS_GAME();
     char out_dir[1024], cmd[3000], text[8192];
     test_tmp_dir(out_dir, sizeof out_dir);
-    snprintf(cmd, sizeof cmd, "'%s/tools/make_app.sh' '%s' '%s' >/dev/null 2>&1", LOONY_SRC_DIR,
-             LOONY_BIN, out_dir);
-    CHECK(system(cmd) == 0);
+    snprintf(cmd, sizeof cmd, "'%s/tools/make_app.sh' '%s' '%s' 2>&1", LOONY_SRC_DIR, LOONY_BIN, out_dir);
+    FILE *mk = popen(cmd, "r");
+    CHECK(mk != NULL);
+    size_t got = fread(text, 1, sizeof text - 1, mk);
+    text[got] = '\0';
+    int made = pclose(mk);
+    snprintf(cmd, sizeof cmd, "otool -L '%s' | grep -q libclang_rt", LOONY_BIN);
+    if (system(cmd) == 0) {
+        test_remove_tree(out_dir);
+        CHECK(made != 0);
+        CHECK_CONTAINS(text, "libclang_rt");
+        CHECK_CONTAINS(text, "isn't self-contained");
+        return;
+    }
+    CHECK(made == 0);
     snprintf(bundle_bin, sizeof bundle_bin, "%s/Loony Labyrinth.app/Contents/MacOS/loony", out_dir);
     snprintf(cmd, sizeof cmd, "otool -L '%s' && codesign -d --entitlements - '%s/Loony Labyrinth.app' 2>&1",
              bundle_bin, out_dir);
