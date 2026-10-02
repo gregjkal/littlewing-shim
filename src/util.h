@@ -12,6 +12,9 @@ typedef void (*util_failure_fn)(const char *msg);
 void util_set_failure_hook(util_failure_fn fn);
 void util_report_failure(const char *msg);
 
+/* True once util_report_failure has run (a crash or a fatal error). */
+bool util_failed(void);
+
 /* Prints "loony: <msg>" to stderr. */
 void log_msg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 

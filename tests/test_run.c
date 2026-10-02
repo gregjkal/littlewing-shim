@@ -329,6 +329,28 @@ TEST(run_a_key_code_registers_and_survives_a_relaunch) {
     CHECK(!strstr(out, key));
 }
 
+/* A run that ends without the game synchronizing (here LOONY_EXIT_AFTER;
+   for the user, a quit during a sequence that outlasts the 3-second grace)
+   still saves what the game set, as macOS would. */
+TEST(run_preferences_are_saved_even_without_synchronize) {
+    SKIP_UNLESS_GAME();
+    test_tmp_dir(run_data, sizeof run_data);
+    char prefs[1100];
+    snprintf(prefs, sizeof prefs, "%s/prefs.plist", run_data);
+    setenv("LOONY_EXIT_AFTER", "300", 1);
+    char out[32768];
+    int status = run_script("", NULL, NULL, 0, out, sizeof out);
+    unsetenv("LOONY_EXIT_AFTER");
+    char *xml = read_text(prefs);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "sending the quit Apple Event")); /* the game never quit */
+    CHECK(xml != NULL);
+    CHECK_CONTAINS(xml, "<string>SNOWMAN</string>");
+    free(xml);
+}
+
 static void run_loony_bad_script(void *dir) {
     setenv("LOONY_SCRIPT", "/nonexistent/loony.script", 1);
     run_loony(dir);

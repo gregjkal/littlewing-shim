@@ -327,15 +327,21 @@ bool cf_save_prefs(void) {
     plist_entry *e = calloc(C.nprefs + 1, sizeof *e);
     if (!e)
         fatal("out of memory");
+    uint32_t n = 0;
     for (uint32_t i = 0; i < C.nprefs; i++) {
-        cf_obj *o = need("CFPreferencesAppSynchronize", C.prefs[i].value);
-        e[i].key = C.prefs[i].key;
-        e[i].is_number = o->type_id == CF_NUMBER_TYPE_ID;
-        e[i].num = o->num;
-        e[i].str = o->str;
+        cf_obj *o = lookup(C.prefs[i].value);
+        if (!o) { /* the game released a stored value too often; leave the key out */
+            log_msg("preferences: \"%s\" no longer has a value; not saving it", C.prefs[i].key);
+            continue;
+        }
+        e[n].key = C.prefs[i].key;
+        e[n].is_number = o->type_id == CF_NUMBER_TYPE_ID;
+        e[n].num = o->num;
+        e[n].str = o->str;
+        n++;
     }
     char err[512];
-    bool ok = plist_write(C.prefs_path, e, C.nprefs, err, sizeof err);
+    bool ok = plist_write(C.prefs_path, e, n, err, sizeof err);
     free(e); /* the strings belong to the preferences */
     if (!ok)
         log_msg("preferences: %s", err);

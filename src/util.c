@@ -8,10 +8,14 @@
 #include <sys/stat.h>
 
 static util_failure_fn failure_hook;
+static bool failed;
 
 void util_set_failure_hook(util_failure_fn fn) { failure_hook = fn; }
 
+bool util_failed(void) { return failed; }
+
 void util_report_failure(const char *msg) {
+    failed = true;
     util_failure_fn fn = failure_hook;
     failure_hook = NULL; /* once, even if the hook itself fails */
     if (fn)

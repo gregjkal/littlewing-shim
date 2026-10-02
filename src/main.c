@@ -64,6 +64,15 @@ static void log_to_file_if_app(const char *argv0) {
         log_path[0] = '\0';
 }
 
+/* At exit, save what the game put in its preferences, unless it crashed:
+   macOS would have kept those values even if the game never called
+   CFPreferencesAppSynchronize (say, quit during a sequence that outlasted
+   the quit grace period). */
+static void save_prefs_at_exit(void) {
+    if (!util_failed())
+        cf_save_prefs();
+}
+
 /* An error before the game starts: printed, and shown when running as the app. */
 static int startup_error(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static int startup_error(const char *fmt, ...) {
@@ -124,6 +133,7 @@ int main(int argc, char **argv) {
         char prefs[PATH_MAX + 16];
         snprintf(prefs, sizeof prefs, "%s/prefs.plist", data_dir);
         cf_load_prefs(prefs);
+        atexit(save_prefs_at_exit);
     }
     qd_init(800, 600, 8);
     dialogs_init();

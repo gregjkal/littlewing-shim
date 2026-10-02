@@ -7,7 +7,8 @@
    (CF_TAG_BASE + 16 * index), which it never dereferences. Preferences live
    in memory; with a preferences file (cf_load_prefs) they are read from it
    at startup and written back by CFPreferencesAppSynchronize, which the game
-   calls as it quits. */
+   calls as it quits. main also saves them at any exit but a crash, as macOS
+   keeps values an application set without synchronizing. */
 
 #define CF_TAG_BASE       0x08000000u
 #define CF_TAG_LIMIT      0x09000000u
@@ -27,7 +28,8 @@ void cf_init(void);
 void cf_load_prefs(const char *path);
 
 /* Writes the preferences to the file named by cf_load_prefs. False (logged)
-   if that fails. True, doing nothing, if there's no file. */
+   if that fails. True, doing nothing, if there's no file. A key whose value
+   is no longer a live object is left out (logged). */
 bool cf_save_prefs(void);
 
 /* The CFStringRef stored in the kCFPreferencesCurrentApplication data import. */

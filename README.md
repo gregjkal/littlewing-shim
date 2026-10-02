@@ -58,7 +58,7 @@ The keys can be changed from the game's OPTIONS menu. Unregistered, games are
 time-limited.
 
 The game's preferences (options, keys, the high-score table and the license)
-are saved when it quits, in `~/Library/Application Support/loony-shim/prefs.plist`.
+are saved when it quits (and at any exit but a crash), in `~/Library/Application Support/loony-shim/prefs.plist`.
 Any file the game writes goes to the same folder, never into the game folder.
 Delete the folder to start over.
 
