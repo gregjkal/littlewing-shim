@@ -442,3 +442,75 @@ TEST(run_the_app_bundle_is_self_contained_and_plays) {
     CHECK_EQ(fnv1a32(shot, len), 0xADE78151u); /* the menu */
     free(shot);
 }
+
+/* The regression run: three minutes of scripted play on the fixed clock,
+   from the opening through a game (plunger, flippers, nudges), with frames
+   at each minute and the whole recording hashed. Any change to the
+   emulation, the physics the game computes, drawing or sound shows up here.
+   Recorded on 2026-10-02 after the user approved Plan 6's build. */
+#define REGRESSION_TICKS 10800
+
+static void write_regression_script(const char *path, char shots[3][1024]) {
+    FILE *f = fopen(path, "w");
+    /* Start a game: Esc ends the demo, Esc opens the menu, Return twice. */
+    fprintf(f, "1720 down esc\n1724 up esc\n1800 down esc\n1804 up esc\n"
+               "1900 down return\n1906 up return\n2000 down return\n2006 up return\n");
+    int shot = 0;
+    for (int t = 2100; t < REGRESSION_TICKS - 200;) {
+        fprintf(f, "%d down return\n%d up return\n", t, t + 80); /* the plunger */
+        t += 120;
+        for (int i = 0; i < 12; i++, t += 25)
+            fprintf(f, "%d down %s\n%d up %s\n", t, i % 2 ? "slash" : "z", t + 8, i % 2 ? "slash" : "z");
+        if ((t / 1000) % 3 == 0) {
+            fprintf(f, "%d down space\n%d up space\n", t, t + 5);
+            t += 20;
+        }
+        while (shot < 3 && t >= 3600 * (shot + 1) - 300) { /* just before each minute ends */
+            fprintf(f, "%d screenshot %s\n", t, shots[shot]);
+            shot++;
+            t += 2;
+        }
+    }
+    fclose(f);
+}
+
+TEST(run_three_minutes_of_play_match_the_recording) {
+    SKIP_UNLESS_GAME();
+    char shots[3][1024];
+    for (int i = 0; i < 3; i++)
+        tmp_name(shots[i], sizeof shots[i], "shot");
+    tmp_name(script_path, sizeof script_path, "script");
+    write_regression_script(script_path, shots);
+    tmp_name(wav_path, sizeof wav_path, "wav");
+    test_tmp_dir(run_data, sizeof run_data);
+    char ticks[16];
+    snprintf(ticks, sizeof ticks, "%d", REGRESSION_TICKS);
+    setenv("LOONY_EXIT_AFTER", ticks, 1);
+    char out[32768];
+    int status = test_run_child(run_loony_scripted, (void *)test_game_dir(), out, sizeof out);
+    unsetenv("LOONY_EXIT_AFTER");
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    unlink(script_path);
+    uint32_t h[3];
+    for (int i = 0; i < 3; i++) {
+        size_t len = 0;
+        uint8_t *png = read_file(shots[i], &len);
+        h[i] = png ? fnv1a32(png, len) : 0;
+        free(png);
+        unlink(shots[i]);
+    }
+    size_t len = 0;
+    uint8_t *wav = read_file(wav_path, &len);
+    uint32_t wh = wav ? fnv1a32(wav, len) : 0;
+    free(wav);
+    unlink(wav_path);
+    wav_path[0] = '\0';
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "runtime error"));
+    CHECK_EQ(len, 44 + (size_t)REGRESSION_TICKS * 44100 / 60 * 4);
+    CHECK_EQ(h[0], 0xAAD1E97Fu); /* minute 1: ball 1 in play */
+    CHECK_EQ(h[1], 0x015482C8u); /* minute 2: ball 3, 13 seconds of demo time left */
+    CHECK_EQ(h[2], 0x66E6FBF1u); /* minute 3: the time ran out; a new game, ball 1 */
+    CHECK_EQ(wh, 0x3663C0FEu);
+}
