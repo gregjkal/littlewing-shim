@@ -14,6 +14,7 @@ static const char *const names[] = {
     "GetPortBounds", "GetWindowPortBounds", "GetPortBitMapForCopyBits", "GetQDGlobalsScreenBits",
     "ShowWindow", "HideWindow", "InvalWindowRect", "QDFlushPortBuffer", "BeginFullScreen",
     "EndFullScreen", "ClipRect", "RGBForeColor", "PaintRect", "CopyBits", "DrawPicture",
+    "GetEntryColor", "DisposePalette",
 };
 
 static void setup(void) {
@@ -293,4 +294,36 @@ TEST(qd_indexed_pixmap_without_a_color_table_crashes) {
     int which = 1;
     CHECK_EQ(test_run_child(child_bad_pixmap, &which, out, sizeof out), 2);
     CHECK_CONTAINS(out, "CopyBits: 8-bit pixmap has no color table");
+}
+
+TEST(qd_palette_entries_and_dispose) {
+    setup();
+    uint32_t pal = mm_new_handle(16 + 2 * 16, true);
+    uint32_t p = gm_r32(pal);
+    gm_w16(p, 2);
+    gm_w16(p + 32, 0x1111);
+    gm_w16(p + 34, 0x2222);
+    gm_w16(p + 36, 0x3333);
+    uint32_t rgb = scratch(6);
+    call_import("GetEntryColor", 3, pal, 1u, rgb);
+    CHECK_EQ(gm_r16(rgb), 0x1111);
+    CHECK_EQ(gm_r16(rgb + 2), 0x2222);
+    CHECK_EQ(gm_r16(rgb + 4), 0x3333);
+    call_import("DisposePalette", 1, 0u); /* NULL is fine */
+    call_import("DisposePalette", 1, pal);
+    CHECK(!mm_is_handle(pal));
+}
+
+static void child_entry_outside(void *unused) {
+    (void)unused;
+    setup();
+    uint32_t pal = mm_new_handle(16 + 16, true);
+    gm_w16(gm_r32(pal), 1);
+    call_import("GetEntryColor", 3, pal, 1u, scratch(6));
+}
+
+TEST(qd_palette_entry_outside_crashes) {
+    char out[16384];
+    CHECK_EQ(test_run_child(child_entry_outside, NULL, out, sizeof out), 2);
+    CHECK_CONTAINS(out, "GetEntryColor: entry 1 is outside the palette (1 entries)");
 }

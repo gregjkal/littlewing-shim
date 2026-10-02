@@ -576,7 +576,34 @@ static void h_draw_picture(void) {
         Q.dirty = true;
 }
 
+/* Palette (Palettes.h): pmEntries (2), private fields (14), then 16-byte
+   ColorInfos whose first 6 bytes are the RGBColor. The game never makes a
+   palette (it imports no call that does), but it keeps these two calls for
+   one it might have. */
+#define PALETTE_INFO 16
+#define COLOR_INFO_SIZE 16
+
+/* GetEntryColor(PaletteHandle, short entry, RGBColor *rgb) */
+static void h_get_entry_color(void) {
+    uint32_t pal = trap_arg(0), out = trap_arg(2);
+    int16_t i = (int16_t)trap_arg(1);
+    if (!mm_is_handle(pal))
+        trap_crash("GetEntryColor: 0x%08x is not a palette handle", pal);
+    uint32_t p = gm_r32(pal), n = gm_r16(p);
+    if (i < 0 || (uint32_t)i >= n || PALETTE_INFO + COLOR_INFO_SIZE * (uint32_t)(i + 1) > mm_handle_size(pal))
+        trap_crash("GetEntryColor: entry %d is outside the palette (%u entries)", i, n);
+    write_rgb(out, read_rgb(p + PALETTE_INFO + COLOR_INFO_SIZE * (uint32_t)i));
+}
+
+static void h_dispose_palette(void) {
+    uint32_t pal = trap_arg(0);
+    if (pal && mm_dispose_handle(pal) != MM_NO_ERR)
+        trap_crash("DisposePalette: 0x%08x is not a palette handle", pal);
+}
+
 void qd_register(void) {
+    trap_register("GetEntryColor", h_get_entry_color);
+    trap_register("DisposePalette", h_dispose_palette);
     trap_register("SetRect", h_set_rect);
     trap_register("OffsetRect", h_offset_rect);
     trap_register("GetCTable", h_get_ctable);

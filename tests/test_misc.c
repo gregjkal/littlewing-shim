@@ -1,8 +1,10 @@
 #include "test.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <time.h>
 
+#include "cpu.h"
 #include "harness.h"
 #include "misc.h"
 
@@ -10,7 +12,7 @@ static const char *const names[] = {
     "Gestalt", "TickCount", "Microseconds", "Delay", "GetDateTime", "ReadLocation",
     "NumToString", "p2cstrcpy", "c2pstrcpy", "BlockMoveData", "InitCursor", "HideCursor",
     "SetThemeCursor", "KeyScript", "GetMBarHeight", "NewAEEventHandlerUPP",
-    "AEInstallEventHandler", "ICStart", "ICStop", "ExitToShell",
+    "AEInstallEventHandler", "ICStart", "ICStop", "ExitToShell", "ICLaunchURL", "num2dec",
 };
 
 static void setup(void) {
@@ -294,4 +296,75 @@ TEST(misc_fixed_clock_location_is_fixed) {
     uint32_t delta = gm_r32(loc + 8);
     fixed_teardown();
     CHECK_EQ(delta, 0); /* GMT, no daylight saving */
+}
+
+static char opened[256];
+static bool fake_open(const char *url) {
+    snprintf(opened, sizeof opened, "%s", url);
+    return true;
+}
+
+static int32_t launch(const char *data, int32_t start, int32_t end) {
+    uint32_t d = scratch(256), sp = scratch(4), ep = scratch(4);
+    memcpy(gm_ptr(d, 256), data, strlen(data));
+    gm_w32(sp, (uint32_t)start);
+    gm_w32(ep, (uint32_t)end);
+    return (int32_t)call_import("ICLaunchURL", 6, MISC_IC_INSTANCE, scratch(2), d,
+                                (uint32_t)strlen(data), sp, ep);
+}
+
+TEST(misc_ic_launch_url_opens_the_selection) {
+    misc_set_url_opener(fake_open);
+    setup();
+    opened[0] = '\0';
+    const char *u = "http://www.LittleWingPinball.com/";
+    CHECK_EQ(launch(u, 0, (int32_t)strlen(u)), 0);
+    CHECK_STR(opened, u);
+    opened[0] = '\0';
+    CHECK_EQ(launch("xx https://a.example/ yy", 3, 21), 0);
+    CHECK_STR(opened, "https://a.example/");
+    opened[0] = '\0';
+    CHECK_EQ(launch("file:///etc/passwd", 0, 18), -50); /* only the web */
+    CHECK_EQ(launch("http://a/", 0, 99), -50);           /* past the data */
+    CHECK_STR(opened, "");
+}
+
+static void check_dec(int style, int digits, double x, bool neg, const char *sig, int exp) {
+    misc_decimal d;
+    misc_num2dec(style, digits, x, &d);
+    if (d.negative != neg || strcmp(d.sig, sig) != 0 || d.exp != exp) {
+        char m[200];
+        snprintf(m, sizeof m, "num2dec(%d, %d, %g) = %s%se%d, expected %s%se%d", style, digits, x,
+                 d.negative ? "-" : "", d.sig, d.exp, neg ? "-" : "", sig, exp);
+        test_fail(__FILE__, __LINE__, m);
+    }
+}
+
+TEST(misc_num2dec_float_and_fixed) {
+    check_dec(0, 5, 3.14159265, false, "31416", -4);
+    check_dec(0, 3, -1234567.0, true, "123", 4);
+    check_dec(0, 2, 9.99, false, "10", 0); /* rounding carries */
+    check_dec(0, 4, 0.0, false, "0", 0);
+    check_dec(0, 4, -0.0, true, "0", 0);
+    check_dec(0, 6, 1e300 * 1e300, false, "I", 0);
+    check_dec(0, 6, NAN, false, "N", 0);
+    check_dec(0, 32, 0.1, false, "10000000000000000555111512312578", -32);
+    check_dec(1, 2, 3.14159, false, "314", -2);
+    check_dec(1, 0, 2.5, false, "2", 0); /* round half to even, like printf */
+    check_dec(1, 3, 0.0004, false, "0", 0);
+    check_dec(1, 2, -0.5, true, "50", -2);
+    check_dec(1, 2, 1e40, false, "?", 0);
+}
+
+TEST(misc_num2dec_writes_the_decimal_record) {
+    setup();
+    uint32_t f = scratch(4), d = scratch(42);
+    gm_w8(f, 0);
+    gm_w16(f + 2, 4);
+    cpu_set_fpr(1, -2.5);
+    call_import("num2dec", 4, f, 0u, 0u, d);
+    CHECK_EQ(gm_r8(d), 1);
+    CHECK_EQ((int16_t)gm_r16(d + 2), -3);
+    CHECK_EQ(gm_r8(d + 4), 4);
+    CHECK(memcmp(gm_ptr(d + 5, 4), "2500", 4) == 0);
 }

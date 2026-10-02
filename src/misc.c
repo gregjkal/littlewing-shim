@@ -2,11 +2,14 @@
 
 #include <ctype.h>
 #include <math.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <time.h>
 
+#include "cpu.h"
 #include "guest_mem.h"
 #include "trap.h"
 #include "util.h"
@@ -27,14 +30,30 @@ static struct {
     bool fixed;
     uint64_t virtual_us;
     int polls; /* time polls since the virtual clock last moved */
+    misc_url_fn open_url;
 } M;
+
+extern char **environ;
+
+static bool open_with_open(const char *url) {
+    char *argv[] = {"/usr/bin/open", (char *)url, NULL};
+    pid_t pid;
+    if (posix_spawn(&pid, argv[0], NULL, NULL, argv, environ) != 0)
+        return false;
+    int status;
+    return waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+void misc_set_url_opener(misc_url_fn fn) { M.open_url = fn; }
 
 void misc_set_idle(misc_idle_fn fn) { M.idle = fn; }
 
 void misc_init(void) {
     misc_idle_fn idle = M.idle;
+    misc_url_fn open_url = M.open_url;
     memset(&M, 0, sizeof M);
     M.idle = idle;
+    M.open_url = open_url ? open_url : open_with_open;
     clock_gettime(CLOCK_MONOTONIC, &M.start);
     const char *f = getenv("LOONY_FIXED_CLOCK");
     M.fixed = f && strcmp(f, "1") == 0;
@@ -276,6 +295,98 @@ static void h_ic_start(void) {
 
 static void h_ic_stop(void) { trap_return(0); }
 
+/* ICLaunchURL(ICInstance, ConstStr255Param hint, const void *data, long len,
+   long *selStart, long *selEnd) -> OSStatus. The URL is data[*selStart,
+   *selEnd). Only http and https URLs are opened. */
+static void h_ic_launch_url(void) {
+    uint32_t data = trap_arg(2), start_p = trap_arg(4), end_p = trap_arg(5);
+    int32_t len = (int32_t)trap_arg(3);
+    int32_t start = (int32_t)gm_r32(start_p), end = (int32_t)gm_r32(end_p);
+    if (len < 0 || start < 0 || end < start || end > len || end - start > 1023) {
+        trap_return((uint32_t)-50); /* paramErr */
+        return;
+    }
+    char url[1024];
+    memcpy(url, gm_ptr(data + (uint32_t)start, (uint32_t)(end - start) + 1), (size_t)(end - start));
+    url[end - start] = '\0';
+    if (strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0) {
+        log_msg("ICLaunchURL: not opening \"%s\" (only http and https)", url);
+        trap_return((uint32_t)-50);
+        return;
+    }
+    log_msg("opening %s", url);
+    if (!M.open_url(url))
+        log_msg("ICLaunchURL: couldn't open %s", url);
+    trap_return(0);
+}
+
+/* ---- SANE ---- */
+
+void misc_num2dec(int style, int digits, double x, misc_decimal *out) {
+    memset(out, 0, sizeof *out);
+    out->negative = signbit(x) != 0;
+    double a = fabs(x);
+    if (isnan(x) || isinf(x)) {
+        out->sig[0] = isnan(x) ? 'N' : 'I';
+        return;
+    }
+    char buf[400];
+    if (style == 0) {
+        if (digits < 1)
+            digits = 1;
+        if (digits > MISC_SIGDIGLEN)
+            digits = MISC_SIGDIGLEN;
+        if (a == 0) {
+            out->sig[0] = '0';
+            return;
+        }
+        snprintf(buf, sizeof buf, "%.*e", digits - 1, a); /* d.ddde[+-]x */
+        int e = atoi(strchr(buf, 'e') + 1);
+        int n = 0;
+        for (const char *p = buf; *p != 'e'; p++)
+            if (isdigit((unsigned char)*p))
+                out->sig[n++] = *p;
+        out->exp = (int16_t)(e - (n - 1));
+        return;
+    }
+    if (digits < 0)
+        digits = 0;
+    if (digits > 80)
+        digits = 80;
+    snprintf(buf, sizeof buf, "%.*f", digits, a);
+    char d[400];
+    int n = 0;
+    for (const char *p = buf; *p; p++)
+        if (isdigit((unsigned char)*p))
+            d[n++] = *p;
+    d[n] = '\0';
+    const char *first = d;
+    while (*first == '0' && first[1])
+        first++;
+    if (strlen(first) > MISC_SIGDIGLEN) {
+        out->sig[0] = '?';
+        return;
+    }
+    strcpy(out->sig, first);
+    out->exp = (int16_t)(strcmp(first, "0") == 0 ? 0 : -digits);
+}
+
+/* num2dec(const decform *f, double x, decimal *d). decform is {char style;
+   char unused; short digits}; decimal is {char sgn; char unused; short exp;
+   unsigned char length; unsigned char text[36]; unsigned char unused}. x
+   arrives in f1 and takes up r4-r5, so d is in r6. */
+static void h_num2dec(void) {
+    uint32_t f = trap_arg(0), d = trap_arg(3);
+    misc_decimal dec;
+    misc_num2dec((int8_t)gm_r8(f), (int16_t)gm_r16(f + 2), cpu_fpr(1), &dec);
+    gm_w8(d, dec.negative);
+    gm_w8(d + 1, 0);
+    gm_w16(d + 2, (uint16_t)dec.exp);
+    size_t n = strlen(dec.sig);
+    gm_w8(d + 4, (uint8_t)n);
+    memcpy(gm_ptr(d + 5, MISC_SIGDIGLEN), dec.sig, n);
+}
+
 static void h_exit_to_shell(void) {
     log_msg("ExitToShell");
     exit(0);
@@ -301,5 +412,7 @@ void misc_register(void) {
     trap_register("AEInstallEventHandler", h_ae_install_event_handler);
     trap_register("ICStart", h_ic_start);
     trap_register("ICStop", h_ic_stop);
+    trap_register("ICLaunchURL", h_ic_launch_url);
+    trap_register("num2dec", h_num2dec);
     trap_register("ExitToShell", h_exit_to_shell);
 }

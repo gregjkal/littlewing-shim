@@ -46,6 +46,26 @@ bool misc_ae_handler(uint32_t event_class, uint32_t event_id, uint32_t *handler,
 typedef void (*misc_idle_fn)(void);
 void misc_set_idle(misc_idle_fn fn);
 
+/* Opens a URL on the host. The default runs /usr/bin/open; tests replace
+   it. Returns false if it couldn't. */
+typedef bool (*misc_url_fn)(const char *url);
+void misc_set_url_opener(misc_url_fn fn);
+
+/* SANE's decimal record (fp.h): the value is sgn, then the digits in sig
+   times 10^exp. sig holds "0" for zero, "I" for infinity, "N" for a NaN and
+   "?" if the digits don't fit. */
+#define MISC_SIGDIGLEN 36
+typedef struct {
+    bool negative;
+    int16_t exp;
+    char sig[MISC_SIGDIGLEN + 1];
+} misc_decimal;
+
+/* num2dec: style 0 (FLOATDECIMAL) gives digits significant digits (1 to
+   MISC_SIGDIGLEN), style 1 (FIXEDDECIMAL) gives digits digits after the
+   decimal point. */
+void misc_num2dec(int style, int digits, double x, misc_decimal *out);
+
 /* Registers Gestalt, time, string, cursor, Apple Event, Internet Config,
-   KeyScript, GetMBarHeight, BlockMoveData and ExitToShell imports. */
+   KeyScript, GetMBarHeight, BlockMoveData, num2dec and ExitToShell imports. */
 void misc_register(void);
