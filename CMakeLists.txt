@@ -28,11 +28,19 @@ target_link_libraries(loony_core PUBLIC PkgConfig::UNICORN PkgConfig::SDL3 "-fra
 add_executable(loony src/main.c)
 target_link_libraries(loony PRIVATE loony_core)
 
+# The double-clickable app: cmake --build build-release --target app
+add_custom_target(app
+  COMMAND ${CMAKE_SOURCE_DIR}/tools/make_app.sh $<TARGET_FILE:loony> ${CMAKE_BINARY_DIR}
+  DEPENDS loony
+  COMMENT "Building Loony Labyrinth.app"
+  VERBATIM)
+
 file(GLOB TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/*.c)
 add_executable(loony_tests ${TEST_SOURCES})
 target_include_directories(loony_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
 target_link_libraries(loony_tests PRIVATE loony_core)
-target_compile_definitions(loony_tests PRIVATE LOONY_BIN="$<TARGET_FILE:loony>")
+target_compile_definitions(loony_tests PRIVATE LOONY_BIN="$<TARGET_FILE:loony>"
+                                               LOONY_SRC_DIR="${CMAKE_SOURCE_DIR}")
 add_dependencies(loony_tests loony)
 
 enable_testing()

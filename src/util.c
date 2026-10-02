@@ -7,13 +7,25 @@
 #include <string.h>
 #include <sys/stat.h>
 
+static util_failure_fn failure_hook;
+
+void util_set_failure_hook(util_failure_fn fn) { failure_hook = fn; }
+
+void util_report_failure(const char *msg) {
+    util_failure_fn fn = failure_hook;
+    failure_hook = NULL; /* once, even if the hook itself fails */
+    if (fn)
+        fn(msg);
+}
+
 void fatal(const char *fmt, ...) {
+    char msg[1024];
     va_list ap;
     va_start(ap, fmt);
-    fputs("loony: fatal: ", stderr);
-    vfprintf(stderr, fmt, ap);
-    fputc('\n', stderr);
+    vsnprintf(msg, sizeof msg, fmt, ap);
     va_end(ap);
+    fprintf(stderr, "loony: fatal: %s\n", msg);
+    util_report_failure(msg);
     exit(2);
 }
 

@@ -1,8 +1,11 @@
+#include <SDL3/SDL.h>
 #include <errno.h>
 #include <limits.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "cf.h"
 #include "cpu.h"
@@ -24,43 +27,87 @@
 #define DEFAULT_GAME_DIR "/Applications/Loony Labyrinth"
 #define GAME_EXE_NAME "LOONY LABYRINTH 3.0.1"
 
+/* Launched as the app (from Finder or `open`), there is no terminal: the
+   log goes to ~/Library/Logs/loony-shim/loony.log (the one before it is kept
+   as loony.previous.log), and failures are shown in a message box. */
+static char log_path[PATH_MAX];
+
+static void show_failure(const char *msg) {
+    const char *video = getenv("SDL_VIDEO_DRIVER");
+    if (video && strcmp(video, "dummy") == 0) /* headless: nobody to click it */
+        return;
+    char text[2048];
+    snprintf(text, sizeof text, "%s\n\nThe log is in %s", msg, log_path);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Loony Labyrinth", text, NULL);
+}
+
+static void log_to_file_if_app(const char *argv0) {
+    const char *home = getenv("HOME");
+    if (!strstr(argv0, ".app/Contents/MacOS/") || isatty(STDERR_FILENO) || !home)
+        return;
+    char dir[PATH_MAX], prev[PATH_MAX + 32];
+    snprintf(dir, sizeof dir, "%s/Library/Logs/loony-shim", home);
+    snprintf(log_path, sizeof log_path, "%s/loony.log", dir);
+    snprintf(prev, sizeof prev, "%s/loony.previous.log", dir);
+    if (!make_dirs(dir))
+        return;
+    rename(log_path, prev);
+    if (freopen(log_path, "w", stderr))
+        setvbuf(stderr, NULL, _IOLBF, 0);
+    util_set_failure_hook(show_failure);
+}
+
+/* An error before the game starts: printed, and shown when running as the app. */
+static int startup_error(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static int startup_error(const char *fmt, ...) {
+    char msg[2048];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof msg, fmt, ap);
+    va_end(ap);
+    fprintf(stderr, "loony: %s\n", msg);
+    util_report_failure(msg);
+    return 1;
+}
+
 int main(int argc, char **argv) {
-    if (argc > 2) {
+    log_to_file_if_app(argv[0]);
+    const char *dir = DEFAULT_GAME_DIR;
+    int nargs = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strncmp(argv[i], "-psn_", 5) == 0) /* older macOS adds this when launching an app */
+            continue;
+        dir = argv[i];
+        nargs++;
+    }
+    if (nargs > 1) {
         fprintf(stderr, "usage: loony [game-folder]\n");
         return 1;
     }
-    const char *dir = argc == 2 ? argv[1] : DEFAULT_GAME_DIR;
 
     char path[PATH_MAX];
     snprintf(path, sizeof path, "%s/%s", dir, GAME_EXE_NAME);
     size_t len = 0;
     uint8_t *buf = read_file(path, &len);
-    if (!buf) {
-        fprintf(stderr, "loony: can't read %s: %s\n", path, strerror(errno));
-        return 1;
-    }
+    if (!buf)
+        return startup_error("can't read %s: %s. Loony Labyrinth needs the original game in %s.", path,
+                             strerror(errno), dir);
 
     char fork_path[PATH_MAX + 32];
     snprintf(fork_path, sizeof fork_path, "%s/..namedfork/rsrc", path);
     size_t fork_len = 0;
     uint8_t *fork = read_file(fork_path, &fork_len);
-    if (!fork) {
-        fprintf(stderr, "loony: can't read %s: %s\n", fork_path, strerror(errno));
-        return 1;
-    }
+    if (!fork)
+        return startup_error("can't read %s: %s", fork_path, strerror(errno));
 
     gm_init();
     cpu_init();
     loaded_image img;
     char err[256];
-    if (!image_load(buf, len, &img, err, sizeof err)) {
-        fprintf(stderr, "loony: can't load %s: %s\n", path, err);
-        return 1;
-    }
-    if (!rsrc_open(fork, fork_len, err, sizeof err)) {
-        fprintf(stderr, "loony: can't load the resources of %s: %s\n", path, err);
-        return 1;
-    }
+    if (!image_load(buf, len, &img, err, sizeof err))
+        return startup_error("can't load %s: %s", path, err);
+    if (!rsrc_open(fork, fork_len, err, sizeof err))
+        return startup_error("can't load the resources of %s: %s", path, err);
     mm_init();
     misc_init();
     cf_init();

@@ -348,3 +348,97 @@ TEST(run_reports_missing_game_folder) {
     CHECK_EQ(status, 1);
     CHECK_CONTAINS(out, "can't read /nonexistent/loony/LOONY LABYRINTH 3.0.1");
 }
+
+/* Launched as the app, the log goes to ~/Library/Logs/loony-shim instead
+   of the (absent) terminal. HOME is a temporary folder here. */
+static char app_home[1024], app_bin[1200];
+
+static void run_as_app(void *dir) {
+    setenv("HOME", app_home, 1);
+    execl(app_bin, app_bin, (const char *)dir, (char *)NULL);
+    _exit(127);
+}
+
+TEST(run_as_the_app_logs_to_library_logs) {
+    test_tmp_dir(app_home, sizeof app_home);
+    char macos[1100], cmd[2600];
+    snprintf(macos, sizeof macos, "%s/Loony.app/Contents/MacOS", app_home);
+    CHECK(make_dirs(macos));
+    snprintf(app_bin, sizeof app_bin, "%s/loony", macos);
+    snprintf(cmd, sizeof cmd, "cp '%s' '%s'", LOONY_BIN, app_bin);
+    CHECK(system(cmd) == 0);
+    char log[1200];
+    snprintf(log, sizeof log, "%s/Library/Logs/loony-shim/loony.log", app_home);
+    char out[4096];
+    for (int run = 0; run < 2; run++) { /* the second run keeps the first log as loony.previous.log */
+        int status = test_run_child(run_as_app, (void *)"/nonexistent/loony", out, sizeof out);
+        CHECK_EQ(status, 1);
+        CHECK_STR(out, ""); /* nothing on stderr */
+    }
+    size_t len = 0;
+    char *text = (char *)read_file(log, &len);
+    CHECK(text != NULL);
+    text = realloc(text, len + 1);
+    text[len] = '\0';
+    CHECK_CONTAINS(text, "can't read /nonexistent/loony/LOONY LABYRINTH 3.0.1");
+    CHECK_CONTAINS(text, "needs the original game in /nonexistent/loony");
+    free(text);
+    snprintf(log, sizeof log, "%s/Library/Logs/loony-shim/loony.previous.log", app_home);
+    CHECK(access(log, F_OK) == 0);
+    test_remove_tree(app_home);
+}
+
+static char bundle_bin[1300];
+
+static void run_bundle_scripted(void *dir) {
+    setenv("LOONY_FIXED_CLOCK", "1", 1);
+    setenv("LOONY_SCRIPT", script_path, 1);
+    setenv("LOONY_AUTO_ALERTS", "1", 1);
+    setenv("LOONY_DATA_DIR", run_data, 1);
+    execl(bundle_bin, bundle_bin, (const char *)dir, (char *)NULL);
+    _exit(127);
+}
+
+/* tools/make_app.sh: the bundle carries its own libraries, is signed with
+   the hardened runtime and allow-jit, and still emulates the game exactly
+   (the approved menu frame). */
+TEST(run_the_app_bundle_is_self_contained_and_plays) {
+    SKIP_UNLESS_GAME();
+    char out_dir[1024], cmd[3000], text[8192];
+    test_tmp_dir(out_dir, sizeof out_dir);
+    snprintf(cmd, sizeof cmd, "'%s/tools/make_app.sh' '%s' '%s' >/dev/null 2>&1", LOONY_SRC_DIR,
+             LOONY_BIN, out_dir);
+    CHECK(system(cmd) == 0);
+    snprintf(bundle_bin, sizeof bundle_bin, "%s/Loony Labyrinth.app/Contents/MacOS/loony", out_dir);
+    snprintf(cmd, sizeof cmd, "otool -L '%s' && codesign -d --entitlements - '%s/Loony Labyrinth.app' 2>&1",
+             bundle_bin, out_dir);
+    FILE *p = popen(cmd, "r");
+    CHECK(p != NULL);
+    size_t n = fread(text, 1, sizeof text - 1, p);
+    text[n] = '\0';
+    pclose(p);
+    CHECK(!strstr(text, "/opt/homebrew/"));
+    CHECK_CONTAINS(text, "@rpath/libunicorn");
+    CHECK_CONTAINS(text, "com.apple.security.cs.allow-jit");
+
+    char png[1024];
+    tmp_name(png, sizeof png, "shot");
+    tmp_name(script_path, sizeof script_path, "script");
+    FILE *f = fopen(script_path, "w");
+    fprintf(f, "1720 down esc\n1724 up esc\n1800 down esc\n1804 up esc\n1880 screenshot %s\n1900 quit\n", png);
+    fclose(f);
+    test_tmp_dir(run_data, sizeof run_data);
+    char out[32768];
+    int status = test_run_child(run_bundle_scripted, (void *)test_game_dir(), out, sizeof out);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    unlink(script_path);
+    size_t len = 0;
+    uint8_t *shot = read_file(png, &len);
+    unlink(png);
+    test_remove_tree(out_dir);
+    CHECK_EQ(status, 0);
+    CHECK(shot != NULL);
+    CHECK_EQ(fnv1a32(shot, len), 0xADE78151u); /* the menu */
+    free(shot);
+}

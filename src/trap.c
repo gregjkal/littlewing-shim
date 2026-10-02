@@ -112,13 +112,14 @@ static void report_state(void) {
 }
 
 void trap_crash(const char *fmt, ...) {
+    char msg[1024];
     va_list ap;
     va_start(ap, fmt);
-    fputs("loony: crash: ", stderr);
-    vfprintf(stderr, fmt, ap);
-    fputc('\n', stderr);
+    vsnprintf(msg, sizeof msg, fmt, ap);
     va_end(ap);
+    fprintf(stderr, "loony: crash: %s\n", msg);
     report_state();
+    util_report_failure(msg);
     exit(2);
 }
 

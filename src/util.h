@@ -6,6 +6,12 @@
 /* Prints "loony: fatal: <msg>" to stderr and exits with status 2. */
 _Noreturn void fatal(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
+/* Called by fatal() and trap_crash() with their message just before the
+   process exits with status 2 (the app shows it in a message box). */
+typedef void (*util_failure_fn)(const char *msg);
+void util_set_failure_hook(util_failure_fn fn);
+void util_report_failure(const char *msg);
+
 /* Prints "loony: <msg>" to stderr. */
 void log_msg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
