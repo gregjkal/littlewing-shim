@@ -82,8 +82,11 @@ src/
   mixer.c       command queues and mixing, host-only
   wav.c         .wav recording
   events.c      Carbon Event Manager, event loop, timers, key translation
-  dialogs.c     Alert, GetNewDialog, ModalDialog, item text; draws with a built-in bitmap font
-  files.c       FSSpec file calls, CFPreferences, CFString/CFNumber objects
+  dialogs.c     Alert, GetNewDialog, ModalDialog, item text; draws on the emulated screen
+  font.c        the dialogs' 8x8 bitmap font (SDL's debug font) and word wrap
+  files.c       FSSpec file calls over the game folder and the writable folder
+  cf.c          CFString/CFNumber objects and CFPreferences
+  plist.c       prefs.plist, read and written with the host's CoreFoundation
   misc.c        Gestalt, TickCount, Microseconds, Delay, ICLaunchURL, AE, cursor calls
 tests/          unit and integration tests
 ```
@@ -174,7 +177,7 @@ Used for: the init and main entry points, Carbon event handlers, event loop time
 - **GWorlds:** `NewGWorld` allocates a PixMap and pixel buffer in the guest heap with the requested depth and color table. `LockPixels`, `GetPixBaseAddr`, `GetGWorldPixMap`, `SetGWorld`, `GetGWorld`, `UpdateGWorld` and `DisposeGWorld` are implemented over that structure.
 - **CopyBits:** the `srcCopy` mode at 8, 16 and 32 bits per pixel, same-depth or converting depth. It supports nearest-neighbor scaling when the source and destination rectangles differ, and clips to the destination port's clip rectangle. Any other transfer mode or mask region fails loudly. A copy to a window port marks the screen dirty.
 - **Also implemented:** `PaintRect` with the foreground color, `RGBForeColor`, `ClipRect`, rectangle helpers, `GetCTable`, `GetEntryColor`, `DisposePalette`, `QDFlushPortBuffer` (marks the screen dirty and presents at the next pump), and `GetQDGlobalsScreenBits` / `GetPortBitMapForCopyBits` accessors.
-- **DrawPicture:** a PICT v2 decoder covering the opcodes used by the game's 7 PICTs: header, clip, `PackBitsRect`, `DirectBitsRect`, comments, `OpEndPic`. Any other opcode fails loudly. We can test it offline against all 7.
+- **DrawPicture:** a PICT v2 decoder covering the opcodes used by the game's 7 PICTs: header, clip, `PackBitsRect`, `DirectBitsRect`, comments, `OpEndPic`. Any other opcode fails loudly. We can test it offline against all 7. The two dialog icons (PICT 128 and 129) also carry an `UncompressedQuickTime` opcode holding an alpha matte in QuickTime Animation format; it is decoded and only the matte's opaque pixels are drawn. (Revised during Plan 6.)
 - **SDL window:** resizable. The emulated screen is scaled to the largest size that fits with the correct aspect ratio, using nearest-neighbor sampling, with vsync. Cmd-F toggles fullscreen and Cmd-Q quits (sends the quit Apple Event). The game never sees these two keys.
 
 ### Sound (`sound.c`, `mixer.c`)
@@ -191,26 +194,28 @@ Used for: the init and main entry points, Carbon event handlers, event loop time
 
 - Implements the Carbon event calls on the import list: handler install and remove, event targets, `GetEventKind`, `GetEventParameter` (key code, character code, modifiers, mouse location, direct object), `SendEventToEventTarget`, `ReleaseEvent`, `ReceiveNextEvent`, timers, and the UPP constructors (which return the procedure pointer unchanged).
 - **Keyboard:** SDL scancodes are translated to Mac virtual key codes through a static table covering the full US layout. Modifiers are reported with left and right distinguished (for example `rightShiftKey`), since pinball games often map the flippers to left and right Shift or Command.
-- **`HideCursor` / `InitCursor` / `SetThemeCursor`:** hide or show the SDL cursor.
+- **`HideCursor` / `InitCursor` / `SetThemeCursor`:** hide or show the SDL cursor. It always shows while a dialog is open.
 
 ### Dialogs (`dialogs.c`)
 
-- **`Alert` / `StopAlert`:** build the dialog from its `ALRT` and `DITL` resources, apply `ParamText` substitutions, and draw it on the emulated screen. They run a modal loop until a button is clicked or Return/Esc is pressed, and return the item number.
-- **`GetNewDialog` / `ModalDialog`:** draw `DITL` items (buttons, static text, edit text, icon/PICT items) on the emulated screen with a built-in bitmap font. Edit text supports typing, backspace and Tab between fields. `ModalDialog` calls the game's filter proc, if one was given, for each event. `GetDialogItem`, `GetDialogItemText` and `DisposeDialog` are implemented.
-- These dialogs look plain, not like real Mac OS dialogs, but they work. Likely uses in this game: high-score name entry, preferences and error alerts.
+- **`Alert` / `StopAlert`:** build the dialog from its `ALRT` and `DITL` resources, apply `ParamText` substitutions, and draw it on the emulated screen. They run a modal loop until a button is clicked or Return is pressed (Esc for a button titled "Cancel"), restore the screen under the dialog, and return the item number. `LOONY_AUTO_ALERTS=1` answers with the default item at once, without drawing, for headless runs whose golden frames predate dialogs.
+- **`GetNewDialog` / `ModalDialog`:** draw `DITL` items (buttons, static text, edit text, icon/PICT items) on the emulated screen with a built-in bitmap font: SDL's 8x8 debug font, rasterized at startup, with Mac Roman text spelled in ASCII. Edit text supports typing, Delete, Tab and Shift-Tab between fields, clicking a field, and Cmd-V. `ModalDialog` returns when an enabled button is chosen; the game passes no filter proc, and one would fail loudly. The default button is item 1 if it is a button, otherwise the first button, so Return registers in the key-code form. `GetDialogItem` (text items get a handle holding their text), `GetDialogItemText` and `DisposeDialog` are implemented. (Revised during Plan 6.)
+- **Input while a dialog is open** goes to the dialog, not the game, and no timers fire. Mouse clicks are mapped from the window to the emulated screen.
+- **Measured uses (Plan 6):** the shareware alerts at startup (901, then 900 "Play Demo"), the registration form (DLOG 911: e-mail address and key code, no filter proc), its results (902 refused, 903 certified), the OS checks (800, 801) and the exception report (9000). High-score name entry and the options are drawn by the game itself, not with dialogs.
+- These dialogs look plain, not like real Mac OS dialogs, but they work.
 
 ### Files and preferences (`files.c`)
 
 - **Two folders:** the game folder, read-only, and a writable folder at `~/Library/Application Support/loony-shim/`.
 - **Reading:** looks in the writable folder first, then the game folder.
-- **Writing:** writes to any path inside the game folder go to the matching path in the writable folder, copying the file there first if it exists. This keeps the original files untouched while the game believes it saved in place.
+- **Writing:** writes to any path inside the game folder go to the matching path in the writable folder, copying the file there at its first write (not when it is opened) if it exists. This keeps the original files untouched while the game believes it saved in place. `LOONY_DATA_DIR` names another writable folder (the tests use temporary ones). Names `.` and `..` are refused, and `::` goes up one folder but never above the game folder. (Measured in Plan 6: the game writes no files in normal play; everything it saves is a preference.)
 - **FSSpec calls:** `FSMakeFSSpec` resolves vRefNum/dirID/name to a host path, using a small table of fake volume and directory IDs. `FSpCreate`, `FSpOpenDF`, `PBReadSync`, `FSWrite`, `GetEOF`, `SetEOF`, `GetFPos`, `SetFPos`, `FSClose` and `PBFlushFileSync` map to POSIX calls. Mac-Roman file names are converted to UTF-8, and `:` becomes `/`.
-- **CFPreferences:** stored in `prefs.plist` in the writable folder, written on `CFPreferencesAppSynchronize`. CFString and CFNumber are host objects referred to by tag-space IDs, with reference counts. `kCFPreferencesCurrentApplication` is a pre-made CFString ID.
+- **CFPreferences:** stored in `prefs.plist` in the writable folder, an XML property list of strings and integers written with the host's CoreFoundation, read at startup and written on `CFPreferencesAppSynchronize` (the game calls it as it quits). A file that can't be read is moved to `prefs.plist.bad`. CFString and CFNumber are host objects referred to by tag-space IDs, with reference counts. `kCFPreferencesCurrentApplication` is a pre-made CFString ID. (Measured in Plan 6: the game keeps its options, key assignments, the four-entry high-score table with a checksum, "highscore id", and the license, "user email" and "user id", in the preferences.)
 
 ### Miscellaneous (`misc.c`)
 
 - **`Gestalt`:** a fixed table. It reports OS X 10.2.8 (`sysv` = 0x1028), a G3 CPU with no AltiVec (`cpuf`/`ppcf` AltiVec bit clear), and Carbon present. Unknown selectors return `gestaltUndefSelectorErr` and are logged.
-- **`ICStart` / `ICStop`** are no-ops. **`ICLaunchURL`** opens the URL in the default browser.
+- **`ICStart` / `ICStop`** are no-ops. **`ICLaunchURL`** opens the URL in the default browser (http and https only).
 - **`AEInstallEventHandler`** records the handler. The quit event is sent on window close and Cmd-Q.
 - **`KeyScript`, `GetMBarHeight` (returns 0), `ReadLocation`, `GetDateTime`, `NumToString`, `num2dec`, `p2cstrcpy`, `c2pstrcpy`, `BlockMoveData`, `ExitToShell`:** straightforward.
 
@@ -269,4 +274,4 @@ Milestones 1–3 have the most unknowns. Each later milestone's details may be a
 
 - `~/dev/loony-shim`, a git repo on `main`. C11, `-Wall -Wextra -Werror` in all builds. `Debug` adds the sanitizers, and `Release` is `-O2`.
 - `.gitignore` excludes build output, PNG dumps and anything copied from the game folder.
-- Dependencies come from Homebrew: `unicorn`, `sdl3`, `cmake`, `pkg-config`.
+- Dependencies come from Homebrew: `unicorn`, `sdl3`, `cmake`, `pkg-config`. The preferences file also uses macOS's own CoreFoundation framework.

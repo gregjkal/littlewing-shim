@@ -23,7 +23,14 @@ cmake --build build-release
 ./build-release/loony "/path/to/game folder"
 ```
 
-The game starts with its opening and then a self-playing demo. To play:
+Until it is registered, the game first shows two alerts: the shareware screen
+(Play Demo, Buy Now, Enter Key-Code, Quit) and the key list. Click a button, or
+press Return for the outlined one. To register, click **Enter Key-Code**, type
+or paste (Cmd-V) your e-mail address and key code, using Tab to move between
+the fields, and click **Register** (or press Return). The license is saved with
+the preferences, so later launches go straight to the game.
+
+The game then plays its opening and a self-playing demo. To play:
 
 | Key | Does |
 |---|---|
@@ -35,10 +42,13 @@ The game starts with its opening and then a self-playing demo. To play:
 | Cmd-F | Full screen on or off |
 | Cmd-Q or closing the window | Quit |
 
-The keys can be changed from the game's OPTIONS menu. This is the shareware
-version: games are time-limited, and the two startup alerts ("Play Demo" and the
-key list) are answered automatically. Registering, saved preferences and high
-scores come with milestone 6.
+The keys can be changed from the game's OPTIONS menu. Unregistered, games are
+time-limited.
+
+The game's preferences (options, keys, the high-score table and the license)
+are saved when it quits, in `~/Library/Application Support/loony-shim/prefs.plist`.
+Any file the game writes goes to the same folder, never into the game folder.
+Delete the folder to start over.
 
 ## Debugging
 
@@ -52,6 +62,8 @@ SDL_VIDEO_DRIVER=dummy ./build/loony  # no window (with LOONY_SCREENSHOT for hea
 LOONY_WAV=out.wav ./build/loony       # also record the sound (44.1 kHz 16-bit stereo)
 SDL_AUDIO_DRIVER=dummy ./build/loony  # no sound output
 LOONY_FIXED_CLOCK=1 LOONY_SCRIPT=play.txt SDL_VIDEO_DRIVER=dummy ./build/loony
+LOONY_AUTO_ALERTS=1 ./build/loony     # answer alerts with their default button, without showing them
+LOONY_DATA_DIR=/tmp/fresh ./build/loony   # use another folder for preferences and saved files
 ```
 
 `LOONY_FIXED_CLOCK=1` makes time advance only when the game waits, so a run is
@@ -68,6 +80,9 @@ action per line:
 1880 screenshot menu.png
 2600 quit
 ```
+
+Scripts can also click (`20 click 460 270`, in emulated-screen pixels) and type
+into a dialog (`50 type me@example.com`, the rest of the line).
 
 Key names are those in `src/keymap.c` (`z`, `slash`, `return`, `space`, `esc`,
 `lshift`, `rshift`, ...).
