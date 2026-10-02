@@ -298,6 +298,12 @@ void cf_load_prefs(const char *path) {
     uint32_t n;
     char err[512];
     plist_status st = plist_read(path, &e, &n, err, sizeof err);
+    if (st == PLIST_UNREADABLE) { /* leave it alone, and don't overwrite it */
+        log_msg("preferences: %s; they won't be saved", err);
+        free(C.prefs_path);
+        C.prefs_path = NULL;
+        return;
+    }
     if (st == PLIST_BAD) {
         char bad[1100];
         snprintf(bad, sizeof bad, "%s.bad", path);

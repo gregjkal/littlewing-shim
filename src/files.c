@@ -1,6 +1,7 @@
 #include "files.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -96,15 +97,53 @@ bool files_data_dir(char *out, size_t cap) {
     return true;
 }
 
-void files_init(const char *game_dir, const char *data_dir) {
+/* path made absolute with symbolic links resolved, as far as it exists;
+   the missing rest is appended as given. */
+static void canonical(const char *path, char *out, size_t cap) {
+    char p[PATH_MAX], rest[PATH_MAX] = "";
+    snprintf(p, sizeof p, "%s", path);
+    for (;;) {
+        char real[PATH_MAX];
+        if (realpath(p, real)) {
+            snprintf(out, cap, "%s%s", real, rest);
+            return;
+        }
+        char *slash = strrchr(p, '/');
+        if (!slash || slash == p) {
+            snprintf(out, cap, "%s", path);
+            return;
+        }
+        char tail[PATH_MAX];
+        snprintf(tail, sizeof tail, "%s%s", slash, rest);
+        snprintf(rest, sizeof rest, "%s", tail);
+        *slash = '\0';
+    }
+}
+
+/* True if a is b or inside it. */
+static bool within(const char *a, const char *b) {
+    size_t n = strlen(b);
+    return strncmp(a, b, n) == 0 && (a[n] == '\0' || a[n] == '/' || (n > 0 && b[n - 1] == '/'));
+}
+
+bool files_init(const char *game_dir, const char *data_dir) {
     for (int i = 0; i < MAX_FILES; i++)
         if (F.files[i].f)
             fclose(F.files[i].f);
     memset(&F, 0, sizeof F);
     snprintf(F.game_dir, sizeof F.game_dir, "%s", game_dir);
-    if (data_dir)
-        snprintf(F.data_dir, sizeof F.data_dir, "%s", data_dir);
     F.ndirs = 1; /* ID 2: the game folder */
+    if (!data_dir)
+        return false;
+    char g[PATH_MAX], d[PATH_MAX];
+    canonical(game_dir, g, sizeof g);
+    canonical(data_dir, d, sizeof d);
+    if (within(g, d) || within(d, g)) {
+        log_msg("the writable folder %s overlaps the game folder %s; nothing will be saved", d, g);
+        return false;
+    }
+    snprintf(F.data_dir, sizeof F.data_dir, "%s", data_dir);
+    return true;
 }
 
 static const char *dir_path(uint32_t id) {
@@ -134,15 +173,16 @@ static bool exists(const char *path, bool want_dir) {
     return stat(path, &st) == 0 && (want_dir ? S_ISDIR(st.st_mode) : S_ISREG(st.st_mode));
 }
 
-/* Where rel is on the host: in the data folder if it's there, otherwise in
-   the game folder (whether or not it exists). */
-static void locate(const char *rel, bool want_dir, char *out, size_t cap) {
+/* Where rel is on the host: in the data folder if it's there (returns
+   true), otherwise in the game folder, whether or not it exists. */
+static bool locate(const char *rel, bool want_dir, char *out, size_t cap) {
     if (F.data_dir[0]) {
         under(F.data_dir, rel, out, cap);
         if (exists(out, want_dir))
-            return;
+            return true;
     }
     under(F.game_dir, rel, out, cap);
+    return false;
 }
 
 static bool is_dir(const char *rel) {
@@ -285,14 +325,12 @@ static void h_fsp_open_df(void) {
         trap_crash("FSpOpenDF: unknown permission %d", perm);
     char rel[REL_CAP], path[PATH_CAP];
     spec_rel_path(spec, rel, sizeof rel);
-    locate(rel, false, path, sizeof path);
+    bool in_data = locate(rel, false, path, sizeof path);
     int slot = 0;
     while (slot < MAX_FILES && F.files[slot].f)
         slot++;
     if (slot == MAX_FILES)
         trap_crash("FSpOpenDF: more than %d open files", MAX_FILES);
-    bool in_data = F.data_dir[0] && strncmp(path, F.data_dir, strlen(F.data_dir)) == 0 &&
-                   path[strlen(F.data_dir)] == '/';
     bool writable = perm != 1;
     FILE *f = exists(path, false) ? fopen(path, in_data && writable ? "r+b" : "rb") : NULL;
     if (!f) {
@@ -318,7 +356,9 @@ static open_file *file_of(int16_t ref) {
 }
 
 /* Makes an open file writable: copies a game-folder file into the data
-   folder and reopens the copy at the same mark. Returns an OSErr. */
+   folder (unless another open file already did) and reopens the copy at the
+   same mark. The copy is made under a temporary name and renamed when
+   complete, so a failed copy never hides the original. Returns an OSErr. */
 static int16_t make_writable(const char *call, open_file *o) {
     if (!o->writable)
         return FILES_WR_PERM_ERR;
@@ -326,22 +366,29 @@ static int16_t make_writable(const char *call, open_file *o) {
         return 0;
     if (!F.data_dir[0])
         return no_data_dir(call);
-    char src[PATH_CAP], dst[PATH_CAP], parent[PATH_CAP];
+    char src[PATH_CAP], dst[PATH_CAP], tmp[PATH_CAP + 8], parent[PATH_CAP];
     under(F.game_dir, o->rel, src, sizeof src);
     under(F.data_dir, o->rel, dst, sizeof dst);
+    snprintf(tmp, sizeof tmp, "%s.tmp", dst);
     snprintf(parent, sizeof parent, "%s", dst);
     *strrchr(parent, '/') = '\0';
     long mark = ftell(o->f);
-    FILE *out = make_dirs(parent) ? fopen(dst, "wb") : NULL;
-    bool ok = out != NULL;
-    fseek(o->f, 0, SEEK_SET);
-    char buf[65536];
-    size_t n;
-    while (ok && (n = fread(buf, 1, sizeof buf, o->f)) > 0)
-        ok = fwrite(buf, 1, n, out) == n;
-    ok = ok && !ferror(o->f);
-    if (out && fclose(out) != 0)
-        ok = false;
+    bool ok = true;
+    if (!exists(dst, false)) {
+        FILE *out = make_dirs(parent) ? fopen(tmp, "wb") : NULL;
+        ok = out != NULL;
+        fseek(o->f, 0, SEEK_SET);
+        char buf[65536];
+        size_t n;
+        while (ok && (n = fread(buf, 1, sizeof buf, o->f)) > 0)
+            ok = fwrite(buf, 1, n, out) == n;
+        ok = ok && !ferror(o->f);
+        if (out && fclose(out) != 0)
+            ok = false;
+        ok = ok && rename(tmp, dst) == 0;
+        if (!ok)
+            remove(tmp);
+    }
     FILE *f = ok ? fopen(dst, "r+b") : NULL;
     if (!f) {
         log_msg("%s: can't copy %s to %s: %s", call, src, dst, strerror(errno));

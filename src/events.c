@@ -64,6 +64,8 @@ static struct {
         uint32_t bits;
     } held[MAX_HELD]; /* modifier keys that are down */
     int nheld;
+    int game_down[MAX_HELD]; /* other keys whose key-down the game was sent */
+    int ngame_down;
     bool quit;
     int loop_depth; /* inside RunApplicationEventLoop or a ReceiveNextEvent wait */
     ev_present_fn present;
@@ -165,18 +167,26 @@ void events_post_key(int scancode, bool down, bool repeat) {
         else if (!down && at >= 0)
             E.held[at] = E.held[--E.nheld];
         uint32_t after = current_modifiers();
-        if (after != before && !E.modal) {
+        if (after != before) { /* even under a dialog: the game sees them after it */
             ev_event *e = post(EV_CLASS_KEYBOARD, EV_RAW_KEY_MODIFIERS_CHANGED);
             if (e)
                 e->modifiers = after;
         }
         return;
     }
-    if (E.modal) {
+    int at = -1;
+    for (int i = 0; i < E.ngame_down; i++)
+        if (E.game_down[i] == scancode)
+            at = i;
+    if (E.modal && (down || at < 0)) { /* a key that went down before the dialog still comes up */
         if (down)
             E.modal->key((uint32_t)k.vkey, keymap_char(&k, current_modifiers()), current_modifiers());
         return;
     }
+    if (down && at < 0 && E.ngame_down < MAX_HELD)
+        E.game_down[E.ngame_down++] = scancode;
+    else if (!down && at >= 0)
+        E.game_down[at] = E.game_down[--E.ngame_down];
     uint32_t kind = !down ? EV_RAW_KEY_UP : repeat ? EV_RAW_KEY_REPEAT : EV_RAW_KEY_DOWN;
     ev_event *e = post(EV_CLASS_KEYBOARD, kind);
     if (e) {

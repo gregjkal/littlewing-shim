@@ -81,8 +81,10 @@ void events_post_text(const char *utf8);
 
 /* While a modal dialog runs, it takes the input instead of the game: key
    downs and repeats (with their Mac key code, character and modifiers),
-   mouse buttons and text go to the sink, and nothing is queued for the
-   game. Modifier and key-up state is still tracked. NULL ends modal input. */
+   mouse buttons and text go to the sink. The game is still sent what keeps
+   its view of the keyboard right once the dialog closes: modifier changes,
+   and the key-up of any key whose key-down it was sent. NULL ends modal
+   input. */
 typedef struct {
     void (*key)(uint32_t vkey, uint8_t chr, uint32_t modifiers);
     void (*mouse)(int x, int y, bool down);

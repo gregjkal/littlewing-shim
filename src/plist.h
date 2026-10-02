@@ -15,11 +15,12 @@ typedef struct {
     char *str; /* when !is_number */
 } plist_entry;
 
-typedef enum { PLIST_OK, PLIST_MISSING, PLIST_BAD } plist_status;
+typedef enum { PLIST_OK, PLIST_MISSING, PLIST_UNREADABLE, PLIST_BAD } plist_status;
 
 /* Reads path into a malloc'd array (free with plist_free). PLIST_MISSING if
-   the file doesn't exist; PLIST_BAD, with err set, if it can't be read or
-   isn't a dictionary. Values that aren't strings or integers are skipped and
+   the file doesn't exist; PLIST_UNREADABLE, with err set, if it exists but
+   can't be read; PLIST_BAD, with err set, if it isn't a property list
+   dictionary. Values that aren't strings or integers are skipped and
    named in err (which is "" otherwise). */
 plist_status plist_read(const char *path, plist_entry **out, uint32_t *n, char *err, size_t errlen);
 

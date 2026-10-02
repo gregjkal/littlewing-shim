@@ -37,10 +37,10 @@ plist_status plist_read(const char *path, plist_entry **out, uint32_t *n, char *
     size_t len;
     uint8_t *buf = read_file(path, &len);
     if (!buf) {
-        if (errno == ENOENT)
+        if (errno == ENOENT || errno == ENOTDIR)
             return PLIST_MISSING;
         snprintf(err, errlen, "can't read %s: %s", path, strerror(errno));
-        return PLIST_BAD;
+        return PLIST_UNREADABLE;
     }
     CFDataRef data = CFDataCreate(NULL, buf, (CFIndex)len);
     free(buf);

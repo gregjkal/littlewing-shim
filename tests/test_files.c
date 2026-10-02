@@ -322,3 +322,66 @@ TEST(files_full_paths_crash) {
     CHECK_EQ(status, 2);
     CHECK_CONTAINS(out, "full path names");
 }
+
+static void child_overlap(void *unused) {
+    (void)unused;
+    char inside[1200];
+    snprintf(inside, sizeof inside, "%s/LL Data/saves", dir);
+    if (files_init(dir, dir) || files_init(dir, inside))
+        exit(3);
+    char parent[1100];
+    snprintf(parent, sizeof parent, "%s/..", dir); /* contains the game folder */
+    if (files_init(dir, parent))
+        exit(4);
+    uint32_t spec = scratch(FSSPEC_SIZE);
+    make_spec("new", spec);
+    if ((int16_t)call_import("FSpCreate", 4, spec, 0u, 0u, 0u) != FILES_WR_PERM_ERR)
+        exit(5);
+    if (!files_init(dir, data))
+        exit(6);
+}
+
+/* Review Focus 2: a writable folder that overlaps the game folder is refused. */
+TEST(files_a_writable_folder_overlapping_the_game_is_refused) {
+    setup();
+    char out[16384];
+    int status = test_run_child(child_overlap, NULL, out, sizeof out);
+    teardown();
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "overlaps the game folder");
+}
+
+/* Review Focus 2: a copy that fails leaves nothing behind to hide the original. */
+TEST(files_a_failed_copy_leaves_the_original_visible) {
+    setup();
+    char sub[1200];
+    snprintf(sub, sizeof sub, "%s/LL Data", data);
+    CHECK(make_dirs(sub));
+    chmod(sub, 0555); /* the copy can't be created */
+    uint16_t r = open_df(":LL Data:effect.bin", 3);
+    CHECK(r != 0);
+    CHECK_EQ(fs_write(r, "X"), FILES_IO_ERR);
+    CHECK_STR(read_at(r, 0, 5), "hello"); /* still reading the original */
+    call_import("FSClose", 1, (uint32_t)r);
+    chmod(sub, 0755);
+    char p[1300];
+    snprintf(p, sizeof p, "%s/effect.bin", sub);
+    CHECK(access(p, F_OK) != 0);
+    snprintf(p, sizeof p, "%s/effect.bin.tmp", sub);
+    CHECK(access(p, F_OK) != 0);
+    teardown();
+}
+
+TEST(files_two_writers_share_one_copy) {
+    setup();
+    uint16_t a = open_df(":LL Data:effect.bin", 3), b = open_df(":LL Data:effect.bin", 3);
+    CHECK(a != 0 && b != 0 && a != b);
+    CHECK_EQ(fs_write(a, "A"), 0);
+    CHECK_EQ(call_import("SetFPos", 3, (uint32_t)b, 1u, 1u), 0);
+    CHECK_EQ(fs_write(b, "B"), 0); /* the copy exists: b reopens it rather than copying again */
+    call_import("FSClose", 1, (uint32_t)a);
+    call_import("FSClose", 1, (uint32_t)b);
+    CHECK_STR(contents(data, "LL Data/effect.bin"), "ABllo world");
+    CHECK_STR(contents(dir, "LL Data/effect.bin"), "hello world");
+    teardown();
+}

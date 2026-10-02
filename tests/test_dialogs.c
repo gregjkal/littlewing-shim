@@ -220,6 +220,32 @@ TEST(dialogs_clicks_focus_fields_and_press_buttons) {
     CHECK_EQ(test_run_child(child_click_fields, NULL, out, sizeof out), 0);
 }
 
+/* ModalDialog runs the newest dialog, whatever slot it landed in. */
+static void child_newest(void *unused) {
+    (void)unused;
+    if (!setup())
+        exit(3);
+    uint32_t a = call_import("GetNewDialog", 3, 911u, 0u, 0xFFFFFFFFu);
+    uint32_t b = call_import("GetNewDialog", 3, 911u, 0u, 0xFFFFFFFFu);
+    call_import("DisposeDialog", 1, a);
+    uint32_t c = call_import("GetNewDialog", 3, 911u, 0u, 0xFFFFFFFFu); /* a's slot */
+    if (c != a)
+        exit(4);
+    script("5 type C\n6 down return\n7 up return\n");
+    call_import("ModalDialog", 2, 0u, scratch(2));
+    char t[256];
+    if (item_text(c, 5, t), strcmp(t, "C") != 0)
+        exit(5);
+    if (item_text(b, 5, t), strcmp(t, "") != 0)
+        exit(6);
+}
+
+TEST(dialogs_modal_dialog_runs_the_newest_dialog) {
+    SKIP_UNLESS_GAME();
+    char out[16384];
+    CHECK_EQ(test_run_child(child_newest, NULL, out, sizeof out), 0);
+}
+
 TEST(dialogs_param_text_substitutes) {
     SKIP_UNLESS_GAME();
     CHECK(setup());

@@ -652,7 +652,7 @@ TEST(events_modal_input_goes_to_the_sink_not_the_game) {
     events_post_mouse(30, 40, true);
     events_post_mouse(30, 40, false);
     events_post_text("hi");
-    CHECK_EQ(events_queued(), 0);
+    CHECK_EQ(events_queued(), 1); /* only the Shift change, for after the dialog */
     CHECK_EQ(sunk.keys, 2);
     CHECK_EQ(sunk.vkey, 0x00); /* kVK_ANSI_A */
     CHECK_EQ(sunk.chr, 'A');
@@ -662,10 +662,34 @@ TEST(events_modal_input_goes_to_the_sink_not_the_game) {
     CHECK_EQ(sunk.texts, 1);
     CHECK_STR(sunk.text, "hi");
     events_set_modal(NULL);
-    events_post_key(SDL_SCANCODE_LSHIFT, false, false); /* shift was tracked while modal */
+    events_post_key(SDL_SCANCODE_LSHIFT, false, false);
     uint32_t ev = next_event(EV_CLASS_KEYBOARD, EV_RAW_KEY_MODIFIERS_CHANGED);
     CHECK(ev != 0);
+    CHECK_EQ(param32(ev, 0x6B6D6F64u), KM_SHIFT);
+    call_import("ReleaseEvent", 1, ev);
+    ev = next_event(EV_CLASS_KEYBOARD, EV_RAW_KEY_MODIFIERS_CHANGED);
+    CHECK(ev != 0);
     CHECK_EQ(param32(ev, 0x6B6D6F64u), 0);
+    call_import("ReleaseEvent", 1, ev);
+    CHECK_EQ(events_queued(), 0); /* A's key-up went nowhere: the game never saw it go down */
+}
+
+/* A flipper held when a dialog opens and released under it comes up for
+   the game. */
+TEST(events_a_key_held_into_a_dialog_still_comes_up) {
+    setup();
+    next_event(EV_CLASS_APPLICATION, EV_APP_ACTIVATED);
+    events_post_key(SDL_SCANCODE_Z, true, false);
+    uint32_t ev = next_event(EV_CLASS_KEYBOARD, EV_RAW_KEY_DOWN);
+    call_import("ReleaseEvent", 1, ev);
+    memset(&sunk, 0, sizeof sunk);
+    events_set_modal(&sink);
+    events_post_key(SDL_SCANCODE_Z, false, false);
+    events_set_modal(NULL);
+    CHECK_EQ(sunk.keys, 0);
+    ev = next_event(EV_CLASS_KEYBOARD, EV_RAW_KEY_UP);
+    CHECK(ev != 0);
+    CHECK_EQ(param32(ev, 0x6B636F64u), 0x06); /* kVK_ANSI_Z */
     call_import("ReleaseEvent", 1, ev);
 }
 

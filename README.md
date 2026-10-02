@@ -67,9 +67,10 @@ LOONY_DATA_DIR=/tmp/fresh ./build/loony   # use another folder for preferences a
 ```
 
 `LOONY_FIXED_CLOCK=1` makes time advance only when the game waits, so a run is
-the same every time and doesn't depend on the host's speed. It plays no sound,
-but `LOONY_WAV` still records what would have played, the same samples every
-run.
+the same every time and doesn't depend on the host's speed, as long as it
+starts from the same preferences: point `LOONY_DATA_DIR` at an empty folder.
+It plays no sound, but `LOONY_WAV` still records what would have played, the
+same samples every run.
 
 `LOONY_SCRIPT` plays keys and takes screenshots at given ticks (1/60 s since launch), one
 action per line:

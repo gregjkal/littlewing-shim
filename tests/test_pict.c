@@ -275,3 +275,50 @@ TEST(pict_huge_destination_rects_are_well_defined) {
     CHECK_EQ(test_run_child(child_huge_dst, NULL, out, sizeof out), 0);
     CHECK(!strstr(out, "runtime error"));
 }
+
+/* A version 2 picture holding only an UncompressedQuickTime opcode whose
+   matte's image description claims id_size and data_size. */
+static size_t qt_picture(uint8_t *b, uint32_t id_size, uint32_t data_size) {
+    memset(b, 0, 400);
+    size_t n = 0;
+    wr_be16(b + 6, 10); /* frame 0,0,10,10 */
+    wr_be16(b + 8, 10);
+    n = 10;
+    wr_be16(b + n, 0x0011);
+    wr_be16(b + n + 2, 0x02FF);
+    n += 4;
+    wr_be16(b + n, 0x0C00);
+    n += 2 + 24;
+    wr_be16(b + n, 0x8201);
+    n += 2;
+    uint32_t body = 2 + 36 + 4 + 8 + 86 + 16;
+    wr_be32(b + n, body);
+    n += 4;
+    uint8_t *q = b + n;
+    wr_be32(q + 38, 86 + 16); /* matte size */
+    uint8_t *id = q + 50;
+    wr_be32(id, id_size);
+    memcpy(id + 4, "rle ", 4);
+    wr_be16(id + 32, 4); /* 4 x 4 */
+    wr_be16(id + 34, 4);
+    wr_be32(id + 44, data_size);
+    wr_be16(id + 82, 40);
+    n += body;
+    wr_be16(b + n, 0x00FF);
+    return n + 2;
+}
+
+/* Review Focus 1: sizes that would overflow a 32-bit sum. */
+TEST(pict_quicktime_matte_sizes_cant_overflow) {
+    uint8_t b[400];
+    canvas c;
+    canvas_init(&c, 10, 10);
+    uint32_t sizes[3][2] = {{0xFFFFFFF0u, 0x20}, {100, 0xFFFFFFF0u}, {86, 0xFFFFFFFFu}};
+    for (int i = 0; i < 3; i++) {
+        size_t len = qt_picture(b, sizes[i][0], sizes[i][1]);
+        char err[256] = "";
+        CHECK(pict_draw(b, len, c.px.bounds, &c.px, c.px.bounds, (qd_rgb){0, 0, 0},
+                        (qd_rgb){0xFFFF, 0xFFFF, 0xFFFF}, err, sizeof err)); /* matte ignored */
+    }
+    free(c.buf);
+}

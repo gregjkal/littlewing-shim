@@ -37,8 +37,10 @@ bool files_data_dir(char *out, size_t cap);
 
 /* Sets the game folder (read-only) and the writable folder (created when
    first needed; NULL means writes fail with wrPermErr). Closes open files
-   and forgets directory IDs. */
-void files_init(const char *game_dir, const char *data_dir);
+   and forgets directory IDs. Returns whether the writable folder is in use:
+   one that is, contains or is inside the game folder is refused (logged),
+   since writing there could change the game's files. */
+bool files_init(const char *game_dir, const char *data_dir);
 
 /* Converts a Mac Roman name to UTF-8, with '/' (legal in Mac names) becoming ':'. */
 void files_mac_to_utf8(const char *mac, char *out, size_t cap);

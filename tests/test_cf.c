@@ -1,6 +1,7 @@
 #include "test.h"
 
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "cf.h"
@@ -361,4 +362,34 @@ TEST(cf_prefs_synchronize_reports_a_write_failure) {
     char out[16384];
     CHECK_EQ(test_run_child(child_unwritable, NULL, out, sizeof out), 0);
     CHECK_CONTAINS(out, "loony: preferences: can't create the folder for /dev/null/loony/prefs.plist");
+}
+
+static void child_unreadable(void *unused) {
+    (void)unused;
+    setup();
+    cf_load_prefs(prefs_path);
+    set_str("a", "b");
+    if (call_import("CFPreferencesAppSynchronize", 1, app()) != 1)
+        exit(3);
+}
+
+/* Review Focus 4: a file that exists but can't be read is neither set
+   aside nor overwritten. */
+TEST(cf_prefs_leave_an_unreadable_file_alone) {
+    setup();
+    test_tmp_dir(prefs_dir, sizeof prefs_dir);
+    snprintf(prefs_path, sizeof prefs_path, "%s/prefs.plist", prefs_dir);
+    write_text(prefs_path, "secret");
+    chmod(prefs_path, 0);
+    char out[16384];
+    int status = test_run_child(child_unreadable, NULL, out, sizeof out);
+    chmod(prefs_path, 0644);
+    size_t len;
+    uint8_t *kept = read_file(prefs_path, &len);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "they won't be saved");
+    CHECK(kept != NULL);
+    CHECK_EQ(len, 6);
+    free(kept);
+    test_remove_tree(prefs_dir);
 }

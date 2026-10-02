@@ -306,7 +306,7 @@ static bool quicktime(reader *r) {
     uint32_t id_size = rd_be32(q), data_size = rd_be32(q + 44);
     int w = rd_be16(q + 32), h = rd_be16(q + 34), depth = rd_be16(q + 82);
     if (rd_be32(q + 4) != FOURCC('r', 'l', 'e', ' ') || depth != 40 || id_size < 86 ||
-        id_size + data_size > matte_size || w <= 0 || h <= 0 || w > 4096 || h > 4096)
+        id_size > matte_size || data_size > matte_size - id_size || w <= 0 || h <= 0 || w > 4096 || h > 4096)
         return true;
     uint8_t *gray = calloc((size_t)w * (size_t)h, 1);
     if (!gray)
@@ -371,14 +371,15 @@ static bool direct_bits_rect(reader *r, qd_rect frame, qd_rect dst, const qd_pix
     bool ok = true;
     for (int y = 0; y < h && ok; y++) {
         uint8_t *row = pixels + (size_t)y * (size_t)w * 4;
-        if (pack_type == 2) {
-            ok = need(r, (size_t)w * 3);
+        if (pack_type == 2) { /* rows lose their pad bytes: 3/4 of rowBytes */
+            size_t n = (size_t)row_bytes * 3 / 4;
+            ok = need(r, n);
             for (int x = 0; ok && x < w; x++) {
                 row[4 * x] = 0;
                 memcpy(row + 4 * x + 1, r->p + 3 * x, 3);
             }
             if (ok)
-                r->p += (size_t)w * 3;
+                r->p += n;
         } else if (pack_type == 4 && row_bytes >= 8) {
             size_t n = 0;
             if (row_bytes > 250) {

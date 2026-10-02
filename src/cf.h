@@ -20,9 +20,10 @@ void cf_init(void);
 
 /* Loads the preferences in path (a property list of strings and integers)
    and remembers path for CFPreferencesAppSynchronize. A missing file means
-   no preferences yet. A file that can't be read is logged and renamed to
-   path.bad, so the next synchronize doesn't destroy it, and the game starts
-   with no preferences. */
+   no preferences yet. A file that isn't a property list is logged and
+   renamed to path.bad, so the next synchronize doesn't destroy it, and the
+   game starts with no preferences. A file that can't be read (permissions,
+   an I/O error) is left alone and the preferences aren't saved. */
 void cf_load_prefs(const char *path);
 
 /* Writes the preferences to the file named by cf_load_prefs. False (logged)

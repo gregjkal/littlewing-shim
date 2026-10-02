@@ -55,6 +55,7 @@ typedef struct {
     int pressed;    /* the button under a held mouse button (0-based), -1 = none */
     int hit;        /* the item ModalDialog or Alert returns (1-based), 0 = none yet */
     bool shown;
+    unsigned order; /* when it opened: ModalDialog runs the newest */
     uint8_t *saved; /* the screen under the dialog and its frame, at saved_r */
     qd_rect saved_r, saved_screen;
     int saved_depth;
@@ -65,6 +66,7 @@ static struct {
     bool auto_alerts;
     dialog d[DLG_MAX];
     dialog *front; /* the one taking input */
+    unsigned opened; /* dialogs opened so far */
     qd_palette pal;
 } G;
 
@@ -234,6 +236,7 @@ static dialog *new_dialog(const char *call) {
         if (!G.d[i].open) {
             memset(&G.d[i], 0, sizeof G.d[i]);
             G.d[i].open = true;
+            G.d[i].order = ++G.opened;
             return &G.d[i];
         }
     trap_crash("%s: more than %d dialogs open", call, DLG_MAX);
@@ -300,7 +303,7 @@ static void draw_item(dialog *d, int i) {
         frame(r, 1, BLACK);
         int n = (int)strlen(text);
         if (n * FONT_W > rect_w(r) - 4)
-            n = (rect_w(r) - 4) / FONT_W;
+            n = rect_w(r) > 4 ? (rect_w(r) - 4) / FONT_W : 0;
         int x = r.left + (rect_w(r) - n * FONT_W) / 2, y = r.top + (rect_h(r) - FONT_H) / 2;
         qd_rgb ink = down ? WHITE : it->disabled ? GRAY : BLACK;
         text_at(x, y, text, n, ink, r);
@@ -317,7 +320,7 @@ static void draw_item(dialog *d, int i) {
         qd_rect box = outset(r, 3);
         fill(box, WHITE);
         frame(box, 1, BLACK);
-        int room = (rect_w(r) - 2) / FONT_W, n = (int)strlen(text);
+        int room = rect_w(r) > 2 ? (rect_w(r) - 2) / FONT_W : 0, n = (int)strlen(text);
         const char *tail = n > room ? text + (n - room) : text; /* the end, where typing happens */
         int sn = n > room ? room : n;
         int y = r.top + (rect_h(r) - FONT_H) / 2;
@@ -611,8 +614,8 @@ static void h_modal_dialog(void) {
     if (trap_arg(0))
         trap_crash("ModalDialog: filter procs are not supported");
     dialog *d = NULL;
-    for (int i = DLG_MAX - 1; i >= 0 && !d; i--)
-        if (G.d[i].open && !G.d[i].is_alert)
+    for (int i = 0; i < DLG_MAX; i++)
+        if (G.d[i].open && !G.d[i].is_alert && (!d || G.d[i].order > d->order))
             d = &G.d[i];
     if (!d)
         trap_crash("ModalDialog: no dialog is open");
