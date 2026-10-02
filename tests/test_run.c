@@ -46,9 +46,9 @@ TEST(run_plays_the_opening_headless) {
 }
 
 /* Fixed-clock runs are deterministic, so their frames can be compared with
-   golden hashes (FNV-1a32 of the PNG file, which is uncompressed). The
-   goldens were recorded from runs whose frames were checked by eye: the
-   title, and a one-player game started from the menu. */
+   golden hashes (FNV-1a32 of the PNG file, which is uncompressed). The user
+   approved the golden frames on 2026-10-02: the LittleWing logo, the title,
+   the menu, and a one-player game started from it. */
 
 static char script_path[1024], wav_path[1024];
 
@@ -142,8 +142,8 @@ static uint32_t le32_at(const uint8_t *p) {
 }
 
 /* The opening's music, recorded on the fixed clock: the same samples every
-   run, in every build (the mixer is integer-only). The golden was recorded
-   from a run whose levels were checked: music from the first frames on. */
+   run, in every build (the mixer is integer-only). The user listened to the
+   golden recording and approved it on 2026-10-02. */
 TEST(run_the_opening_music_is_recorded) {
     SKIP_UNLESS_GAME();
     tmp_name(wav_path, sizeof wav_path, "wav");
