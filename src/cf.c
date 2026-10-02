@@ -1,10 +1,12 @@
 #include "cf.h"
 
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "guest_mem.h"
+#include "plist.h"
 #include "trap.h"
 #include "util.h"
 
@@ -30,6 +32,7 @@ static struct {
     pref *prefs;
     uint32_t nprefs, prefs_cap;
     uint32_t current_app;
+    char *prefs_path; /* NULL: preferences are never saved */
 } C;
 
 static uint32_t ref_of(uint32_t index) { return CF_TAG_BASE + 16u * index; }
@@ -83,6 +86,7 @@ void cf_init(void) {
         free(C.prefs[i].key);
     free(C.objs);
     free(C.prefs);
+    free(C.prefs_path);
     memset(&C, 0, sizeof C);
     C.current_app = cf_string("com.littlewing.loonylabyrinth");
 }
@@ -195,13 +199,11 @@ static pref *find_pref(const char *key) {
     return NULL;
 }
 
-/* CFPreferencesSetAppValue(key, value, appID). A NULL value removes the key. */
-static void h_prefs_set_app_value(void) {
-    const char *key = key_string("CFPreferencesSetAppValue", trap_arg(0));
-    uint32_t value = trap_arg(1);
-    need_current_app("CFPreferencesSetAppValue", trap_arg(2));
+/* Sets key to value, which the preferences now hold a reference to (the
+   caller's reference is unchanged). A value of 0 removes the key. */
+static void set_pref(const char *key, uint32_t value) {
     if (value)
-        need("CFPreferencesSetAppValue", value)->refs++;
+        lookup(value)->refs++;
     pref *p = find_pref(key);
     if (p) {
         release(&C.objs[(p->value - CF_TAG_BASE) / 16u]);
@@ -225,6 +227,16 @@ static void h_prefs_set_app_value(void) {
     if (!copy)
         fatal("out of memory");
     C.prefs[C.nprefs++] = (pref){copy, value};
+}
+
+/* CFPreferencesSetAppValue(key, value, appID). A NULL value removes the key. */
+static void h_prefs_set_app_value(void) {
+    const char *key = key_string("CFPreferencesSetAppValue", trap_arg(0));
+    uint32_t value = trap_arg(1);
+    need_current_app("CFPreferencesSetAppValue", trap_arg(2));
+    if (value)
+        need("CFPreferencesSetAppValue", value);
+    set_pref(key, value);
 }
 
 /* CFPreferencesCopyAppValue(key, appID): a retained value, or NULL. */
@@ -269,10 +281,59 @@ static void h_prefs_get_app_integer_value(void) {
     trap_return(valid ? (uint32_t)(int32_t)v : 0);
 }
 
-/* CFPreferencesAppSynchronize(appID) -> Boolean. In memory only, so always true. */
+/* CFPreferencesAppSynchronize(appID) -> Boolean: writes the preferences file. */
 static void h_prefs_app_synchronize(void) {
     need_current_app("CFPreferencesAppSynchronize", trap_arg(0));
-    trap_return(1);
+    trap_return(cf_save_prefs());
+}
+
+/* ---- the preferences file ---- */
+
+void cf_load_prefs(const char *path) {
+    free(C.prefs_path);
+    C.prefs_path = strdup(path);
+    if (!C.prefs_path)
+        fatal("out of memory");
+    plist_entry *e;
+    uint32_t n;
+    char err[512];
+    plist_status st = plist_read(path, &e, &n, err, sizeof err);
+    if (st == PLIST_BAD) {
+        char bad[1100];
+        snprintf(bad, sizeof bad, "%s.bad", path);
+        rename(path, bad);
+        log_msg("preferences: %s; moved it to %s and starting with none", err, bad);
+        return;
+    }
+    if (err[0])
+        log_msg("preferences: %s: %s", path, err);
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t v = e[i].is_number ? new_obj(CF_NUMBER_TYPE_ID, NULL, e[i].num) : cf_string(e[i].str);
+        set_pref(e[i].key, v);
+        release(lookup(v));
+    }
+    plist_free(e, n);
+}
+
+bool cf_save_prefs(void) {
+    if (!C.prefs_path)
+        return true;
+    plist_entry *e = calloc(C.nprefs + 1, sizeof *e);
+    if (!e)
+        fatal("out of memory");
+    for (uint32_t i = 0; i < C.nprefs; i++) {
+        cf_obj *o = need("CFPreferencesAppSynchronize", C.prefs[i].value);
+        e[i].key = C.prefs[i].key;
+        e[i].is_number = o->type_id == CF_NUMBER_TYPE_ID;
+        e[i].num = o->num;
+        e[i].str = o->str;
+    }
+    char err[512];
+    bool ok = plist_write(C.prefs_path, e, C.nprefs, err, sizeof err);
+    free(e); /* the strings belong to the preferences */
+    if (!ok)
+        log_msg("preferences: %s", err);
+    return ok;
 }
 
 void cf_register(void) {

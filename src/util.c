@@ -1,8 +1,11 @@
 #include "util.h"
 
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
 
 void fatal(const char *fmt, ...) {
     va_list ap;
@@ -53,6 +56,33 @@ uint8_t *read_file(const char *path, size_t *len_out) {
     }
     *len_out = len;
     return buf;
+}
+
+bool make_dirs(const char *path) {
+    char p[1024];
+    if (snprintf(p, sizeof p, "%s", path) >= (int)sizeof p) {
+        errno = ENAMETOOLONG;
+        return false;
+    }
+    for (char *s = p + 1;; s++) {
+        if (*s != '/' && *s != '\0')
+            continue;
+        char c = *s;
+        *s = '\0';
+        if (mkdir(p, 0755) != 0 && errno != EEXIST)
+            return false;
+        *s = c;
+        if (!c)
+            break;
+    }
+    struct stat st;
+    if (stat(p, &st) != 0)
+        return false;
+    if (!S_ISDIR(st.st_mode)) {
+        errno = ENOTDIR;
+        return false;
+    }
+    return true;
 }
 
 uint32_t fnv1a32(const void *data, size_t len) {

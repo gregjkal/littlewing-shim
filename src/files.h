@@ -24,6 +24,10 @@
 /* FSSpec: vRefNum (2), parID (4), name (Str63, 64 bytes). */
 #define FSSPEC_SIZE 70
 
+/* The writable folder: $LOONY_DATA_DIR, or ~/Library/Application
+   Support/loony-shim. False if neither LOONY_DATA_DIR nor HOME is set. */
+bool files_data_dir(char *out, size_t cap);
+
 /* Sets the game folder (read-only). Closes open files and forgets directory IDs. */
 void files_init(const char *game_dir);
 

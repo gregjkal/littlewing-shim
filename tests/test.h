@@ -16,6 +16,12 @@ const char *test_game_dir(void);
 const char *test_game_exe_path(void);
 bool test_game_present(void);
 
+/* Creates a fresh, empty folder under $TMPDIR and writes its path to out. */
+void test_tmp_dir(char *out, size_t cap);
+
+/* Deletes a folder and everything in it. */
+void test_remove_tree(const char *path);
+
 /* Runs fn(arg) in a forked child with its stderr captured into out
    (NUL-terminated, truncated to outlen - 1 bytes). Returns the child's exit
    status, or -1 if it was killed by a signal. The child exits 0 if fn returns. */

@@ -1,4 +1,5 @@
 #pragma once
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -10,6 +11,10 @@ void log_msg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 /* Reads a whole file into a malloc'd buffer. Returns NULL (errno set) on failure. */
 uint8_t *read_file(const char *path, size_t *len_out);
+
+/* Creates a folder and any missing parents, like mkdir -p. False (errno set)
+   on failure. */
+bool make_dirs(const char *path);
 
 uint32_t fnv1a32(const void *data, size_t len);
 

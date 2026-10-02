@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
@@ -71,6 +72,17 @@ void files_mac_to_utf8(const char *mac, char *out, size_t cap) {
         }
     }
     out[o] = '\0';
+}
+
+bool files_data_dir(char *out, size_t cap) {
+    const char *d = getenv("LOONY_DATA_DIR"), *home = getenv("HOME");
+    if (d && *d)
+        snprintf(out, cap, "%s", d);
+    else if (home && *home)
+        snprintf(out, cap, "%s/Library/Application Support/loony-shim", home);
+    else
+        return false;
+    return true;
 }
 
 void files_init(const char *game_dir) {

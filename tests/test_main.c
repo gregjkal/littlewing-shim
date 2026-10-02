@@ -48,6 +48,22 @@ bool test_game_present(void) {
     return access(test_game_exe_path(), R_OK) == 0;
 }
 
+void test_tmp_dir(char *out, size_t cap) {
+    const char *t = getenv("TMPDIR");
+    snprintf(out, cap, "%s/loony-test-XXXXXX", t && *t ? t : "/tmp");
+    if (!mkdtemp(out)) {
+        fprintf(stderr, "mkdtemp %s failed\n", out);
+        exit(1);
+    }
+}
+
+void test_remove_tree(const char *path) {
+    char cmd[1200];
+    snprintf(cmd, sizeof cmd, "rm -rf '%s'", path);
+    if (system(cmd) != 0)
+        fprintf(stderr, "can't remove %s\n", path);
+}
+
 int test_run_child(void (*fn)(void *), void *arg, char *out, size_t outlen) {
     int fds[2];
     if (pipe(fds) != 0)
@@ -86,6 +102,10 @@ int main(int argc, char **argv) {
     /* No test may open a real window or play sound; children inherit this too. */
     setenv("SDL_VIDEO_DRIVER", "dummy", 1);
     setenv("SDL_AUDIO_DRIVER", "dummy", 1);
+    /* Nor touch the real preferences in ~/Library/Application Support. */
+    char data_dir[1024];
+    test_tmp_dir(data_dir, sizeof data_dir);
+    setenv("LOONY_DATA_DIR", data_dir, 1);
     const char *filter = argc > 1 ? argv[1] : NULL;
     int passed = 0, failed = 0, skipped = 0;
     for (int i = 0; i < ntests; i++) {
@@ -101,6 +121,7 @@ int main(int argc, char **argv) {
         else
             passed++;
     }
+    test_remove_tree(data_dir);
     fprintf(stderr, "\n%d passed, %d failed, %d skipped\n", passed, failed, skipped);
     return failed ? 1 : 0;
 }

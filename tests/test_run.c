@@ -5,7 +5,14 @@
 
 #include "util.h"
 
+/* LOONY_DATA_DIR for the runs that follow: each scripted run gets a fresh
+   one unless a test set this, so preferences saved by one run never change
+   another's frames. Otherwise the runner's own temporary folder is used. */
+static char run_data[1024];
+
 static void run_loony(void *dir) {
+    if (run_data[0])
+        setenv("LOONY_DATA_DIR", run_data, 1);
     execl(LOONY_BIN, "loony", (const char *)dir, (char *)NULL);
     fprintf(stderr, "exec %s failed\n", LOONY_BIN);
     _exit(127);
@@ -27,7 +34,10 @@ TEST(run_plays_the_opening_headless) {
     CHECK(fd >= 0);
     close(fd);
     char out[32768];
+    test_tmp_dir(run_data, sizeof run_data);
     int status = test_run_child(run_loony_headless, (void *)test_game_dir(), out, sizeof out);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
     size_t len = 0;
     uint8_t *png = read_file(shot, &len);
     unlink(shot);
@@ -99,7 +109,14 @@ static int run_script(const char *actions, const uint32_t *ticks, uint32_t *shot
     for (int i = 0; i < n; i++)
         fprintf(f, "%s\n", order[i]);
     fclose(f);
+    bool own_data = !run_data[0];
+    if (own_data)
+        test_tmp_dir(run_data, sizeof run_data);
     int status = test_run_child(run_loony_scripted, (void *)test_game_dir(), out, outlen);
+    if (own_data) {
+        test_remove_tree(run_data);
+        run_data[0] = '\0';
+    }
     for (int i = 0; i < nshots; i++) {
         size_t len = 0;
         uint8_t *png = read_file(pngs[i], &len);
@@ -170,6 +187,63 @@ TEST(run_the_opening_music_is_recorded) {
     }
     CHECK(peak > 8000);
     CHECK_EQ(fnv1a32(wav, len), 0x852682F2u);
+    free(wav);
+}
+
+static char *read_text(const char *path) {
+    size_t len = 0;
+    char *t = (char *)read_file(path, &len);
+    if (!t)
+        return NULL;
+    t = realloc(t, len + 1);
+    t[len] = '\0';
+    return t;
+}
+
+/* Spec success criterion 5: what the game keeps in its preferences (the
+   high-score table, the options, the license) is saved when it quits and
+   read at the next launch. The game rejects a high-score table it didn't
+   write (it checks "highscore id"), so this test changes an option instead:
+   with "switch music" off, the opening is silent. */
+TEST(run_preferences_are_saved_at_quit_and_read_at_launch) {
+    SKIP_UNLESS_GAME();
+    test_tmp_dir(run_data, sizeof run_data);
+    char prefs[1100];
+    snprintf(prefs, sizeof prefs, "%s/prefs.plist", run_data);
+    char out[32768];
+    int status = run_script("300 quit\n", NULL, NULL, 0, out, sizeof out);
+    char *xml = read_text(prefs);
+    CHECK_EQ(status, 0);
+    CHECK(xml != NULL);
+    CHECK_CONTAINS(xml, "<key>highscore name 1</key>");
+    CHECK_CONTAINS(xml, "<string>SNOWMAN</string>");
+    const char *music_on = "<key>switch music</key>\n\t<integer>1</integer>";
+    char *at = strstr(xml, music_on);
+    CHECK(at != NULL);
+    at[strlen(music_on) - strlen("1</integer>")] = '0';
+    FILE *f = fopen(prefs, "w");
+    fputs(xml, f);
+    fclose(f);
+    free(xml);
+
+    tmp_name(wav_path, sizeof wav_path, "wav");
+    setenv("LOONY_EXIT_AFTER", "300", 1);
+    status = run_script("", NULL, NULL, 0, out, sizeof out);
+    unsetenv("LOONY_EXIT_AFTER");
+    size_t len = 0;
+    uint8_t *wav = read_file(wav_path, &len);
+    unlink(wav_path);
+    wav_path[0] = '\0';
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "preferences:"));
+    CHECK(wav != NULL);
+    CHECK_EQ(len, 44 + 300 * 44100 / 60 * 4);
+    bool silent = true;
+    for (size_t i = 44; i < len; i++)
+        silent = silent && wav[i] == 0;
+    CHECK(silent);
     free(wav);
 }
 
