@@ -1,7 +1,7 @@
 #!/bin/sh
 # Builds "Loony Labyrinth.app" around a loony binary: the Unicorn and SDL3
 # libraries are copied into the bundle (so a Homebrew upgrade can't break
-# it), and the bundle is signed ad hoc with the hardened runtime and the
+# it), the icon is made from tools/AppIcon.png, and the bundle is signed ad hoc with the hardened runtime and the
 # allow-jit entitlement.
 #   tools/make_app.sh <loony binary> <output folder>
 set -eu
@@ -10,14 +10,24 @@ out=$2
 here=$(cd "$(dirname "$0")" && pwd)
 app="$out/Loony Labyrinth.app"
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources"
 cp "$bin" "$app/Contents/MacOS/loony"
+# The icon: tools/AppIcon.png (1024x1024, original art) at every iconset size.
+iconset=$(mktemp -d)/AppIcon.iconset
+mkdir "$iconset"
+for s in 16 32 128 256 512; do
+    sips -z $s $s "$here/AppIcon.png" --out "$iconset/icon_${s}x${s}.png" >/dev/null
+    sips -z $((s * 2)) $((s * 2)) "$here/AppIcon.png" --out "$iconset/icon_${s}x${s}@2x.png" >/dev/null
+done
+iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
+rm -rf "$(dirname "$iconset")"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 	<key>CFBundleExecutable</key><string>loony</string>
+	<key>CFBundleIconFile</key><string>AppIcon</string>
 	<key>CFBundleIdentifier</key><string>local.loony-shim</string>
 	<key>CFBundleName</key><string>Loony Labyrinth</string>
 	<key>CFBundleDisplayName</key><string>Loony Labyrinth</string>

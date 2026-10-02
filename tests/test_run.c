@@ -422,8 +422,8 @@ static void run_bundle_scripted(void *dir) {
     _exit(127);
 }
 
-/* tools/make_app.sh: the bundle carries its own libraries, is signed with
-   the hardened runtime and allow-jit, and still emulates the game exactly
+/* tools/make_app.sh: the bundle carries its own libraries and its icon, is
+   signed with the hardened runtime and allow-jit, and still emulates the game exactly
    (the approved menu frame). A sanitizer build (Debug) can't be bundled:
    it needs the compiler's runtime, and the script says so. */
 TEST(run_the_app_bundle_is_self_contained_and_plays) {
@@ -456,6 +456,9 @@ TEST(run_the_app_bundle_is_self_contained_and_plays) {
     CHECK(!strstr(text, "/opt/homebrew/"));
     CHECK_CONTAINS(text, "@rpath/libunicorn");
     CHECK_CONTAINS(text, "com.apple.security.cs.allow-jit");
+    char icns[1024];
+    snprintf(icns, sizeof icns, "%s/Loony Labyrinth.app/Contents/Resources/AppIcon.icns", out_dir);
+    CHECK(access(icns, R_OK) == 0);
 
     char png[1024];
     tmp_name(png, sizeof png, "shot");

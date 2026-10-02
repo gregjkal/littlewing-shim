@@ -1,5 +1,6 @@
 build/
 build-*/
 *.png
+!/tools/AppIcon.png
 /game/
 .DS_Store
