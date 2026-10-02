@@ -139,3 +139,24 @@ TEST(mm_handle_state_is_recorded) {
     CHECK_EQ(mm_handle_state(h), MM_STATE_LOCKED | MM_STATE_RESOURCE);
     CHECK(mm_is_handle(h));
 }
+
+TEST(mm_set_handle_size_grows_in_place_or_moves) {
+    fresh_heap();
+    uint32_t h = mm_new_handle(5, true);
+    memcpy(gm_ptr(gm_r32(h), 5), "hello", 5);
+    uint32_t d = gm_r32(h);
+    CHECK_EQ(mm_set_handle_size(h, 12), MM_NO_ERR); /* within the 16-byte block */
+    CHECK_EQ(gm_r32(h), d);
+    CHECK_EQ(mm_handle_size(h), 12);
+    uint32_t blocker = mm_new_ptr(16, false); /* the next block is taken */
+    CHECK_EQ(mm_set_handle_size(h, 300), MM_NO_ERR);
+    CHECK(gm_r32(h) != d);
+    CHECK_EQ(mm_handle_size(h), 300);
+    CHECK(memcmp(gm_ptr(gm_r32(h), 5), "hello", 5) == 0);
+    CHECK_EQ(mm_recover_handle(gm_r32(h)), h);
+    CHECK_EQ(mm_set_handle_size(h, 2), MM_NO_ERR);
+    CHECK_EQ(mm_handle_size(h), 2);
+    CHECK_EQ(mm_set_handle_size(blocker, 2), MM_MEM_WZ_ERR);
+    CHECK_EQ(mm_set_handle_size(h, GUEST_HEAP_SIZE), MM_MEM_FULL_ERR);
+    CHECK_EQ(mm_handle_size(h), 2);
+}

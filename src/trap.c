@@ -88,6 +88,8 @@ void trap_register(const char *name, trap_handler fn) {
             T.handlers[i] = fn;
 }
 
+bool trap_has_handler(uint32_t index) { return index < T.n && T.handlers[index]; }
+
 const char *trap_import_name(uint32_t index) {
     return index < T.n ? T.names[index] : "(unknown)";
 }

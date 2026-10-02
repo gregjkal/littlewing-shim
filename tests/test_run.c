@@ -10,9 +10,15 @@
    another's frames. Otherwise the runner's own temporary folder is used. */
 static char run_data[1024];
 
+/* The golden frames predate dialogs, so runs answer alerts at once unless a
+   test asks for real ones. */
+static bool real_alerts;
+
 static void run_loony(void *dir) {
     if (run_data[0])
         setenv("LOONY_DATA_DIR", run_data, 1);
+    if (!real_alerts)
+        setenv("LOONY_AUTO_ALERTS", "1", 1);
     execl(LOONY_BIN, "loony", (const char *)dir, (char *)NULL);
     fprintf(stderr, "exec %s failed\n", LOONY_BIN);
     _exit(127);
@@ -245,6 +251,82 @@ TEST(run_preferences_are_saved_at_quit_and_read_at_launch) {
         silent = silent && wav[i] == 0;
     CHECK(silent);
     free(wav);
+}
+
+/* Without LOONY_AUTO_ALERTS the shareware alerts wait for an answer. Alert
+   901 sits at (139, 150); its "Enter Key-Code" button is at (399, 260). The
+   registration form, DLOG 911, sits at (180, 130). The user approved these
+   frames on (pending: shown in the Plan 6 handoff). */
+TEST(run_the_shareware_alerts_wait_for_an_answer) {
+    SKIP_UNLESS_GAME();
+    real_alerts = true;
+    uint32_t ticks[1] = {30}, shots[1];
+    char out[32768];
+    int status = run_script("60 down return\n62 up return\n90 down return\n92 up return\n"
+                            "400 quit\n",
+                            ticks, shots, 1, out, sizeof out);
+    real_alerts = false;
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: Alert 901: answered item 1 (Play Demo)");
+    CHECK_CONTAINS(out, "loony: Alert 900: answered item 1 (OK)");
+    CHECK(strstr(out, "Alert 900: answered") < strstr(out, "sending the quit Apple Event"));
+    CHECK_EQ(shots[0], 0x94D533D8u); /* Alert 901 */
+}
+
+TEST(run_a_wrong_key_code_is_refused) {
+    SKIP_UNLESS_GAME();
+    real_alerts = true;
+    uint32_t ticks[2] = {80, 110}, shots[2];
+    char out[32768];
+    int status = run_script("20 click 460 270\n"
+                            "50 type nobody@example.com\n60 down tab\n61 up tab\n"
+                            "70 type ABCD-1234-EFGH\n90 down return\n91 up return\n"
+                            "120 down return\n121 up return\n"   /* 902's OK */
+                            "140 down return\n141 up return\n"   /* 901: Play Demo */
+                            "160 down return\n161 up return\n"   /* 900: OK */
+                            "400 quit\n",
+                            ticks, shots, 2, out, sizeof out);
+    real_alerts = false;
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: Alert 901: answered item 4 (Enter Key-Code)");
+    CHECK_CONTAINS(out, "loony: GetNewDialog 911");
+    CHECK_CONTAINS(out, "loony: Alert 902: answered item 1 (OK)");
+    CHECK(!strstr(out, "Alert 903"));
+    CHECK(!strstr(out, "nobody@example.com")); /* typed text is never logged */
+    CHECK_EQ(shots[0], 0x6E85582Au); /* the filled-in form */
+    CHECK_EQ(shots[1], 0x8CF0D4FDu); /* Alert 902 */
+}
+
+/* Registers with a real key code, given at run time (never stored):
+   LOONY_TEST_EMAIL and LOONY_TEST_KEY. The license is kept in the
+   preferences, so the next launch skips the shareware alerts. */
+TEST(run_a_key_code_registers_and_survives_a_relaunch) {
+    SKIP_UNLESS_GAME();
+    const char *email = getenv("LOONY_TEST_EMAIL"), *key = getenv("LOONY_TEST_KEY");
+    if (!email || !*email || !key || !*key) {
+        test_skip("LOONY_TEST_EMAIL and LOONY_TEST_KEY aren't set");
+        return;
+    }
+    test_tmp_dir(run_data, sizeof run_data);
+    real_alerts = true;
+    char actions[1024];
+    snprintf(actions, sizeof actions,
+             "20 click 460 270\n50 type %s\n60 down tab\n61 up tab\n70 type %s\n"
+             "90 down return\n91 up return\n120 down return\n121 up return\n600 quit\n",
+             email, key);
+    char out[32768];
+    int status = run_script(actions, NULL, NULL, 0, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: Alert 903: answered item 1 (OK)");
+    CHECK(!strstr(out, "Alert 900"));
+    status = run_script("300 quit\n", NULL, NULL, 0, out, sizeof out);
+    real_alerts = false;
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "Alert 90"));
+    CHECK(!strstr(out, email));
+    CHECK(!strstr(out, key));
 }
 
 static void run_loony_bad_script(void *dir) {

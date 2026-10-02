@@ -98,17 +98,29 @@ TEST(pict_scales_to_the_destination_rect) {
     CHECK(mid != 0);
 }
 
-TEST(pict_reports_quicktime_pictures) {
+/* The dialogs' icons: a QuickTime matte to skip, then a 32-bit
+   DirectBitsRect packed as component planes. */
+TEST(pict_draws_the_dialog_icons) {
     SKIP_UNLESS_GAME();
-    rsrc_entry *e = pict(128);
-    CHECK(e != NULL);
-    canvas c;
-    canvas_init(&c, 104, 128);
-    char err[256] = "";
-    bool ok = draw(e, &c, err);
-    free(c.buf);
-    CHECK(!ok);
-    CHECK_CONTAINS(err, "picture opcode 0x8201 is not supported");
+    for (int16_t id = 128; id <= 129; id++) {
+        rsrc_entry *e = pict(id);
+        CHECK(e != NULL);
+        canvas c;
+        canvas_init(&c, 104, 128);
+        char err[256] = "";
+        bool ok = draw(e, &c, err);
+        int distinct = 0;
+        bool seen[256] = {false};
+        for (int i = 0; i < 104 * 128; i++)
+            if (!seen[c.buf[i]]) {
+                seen[c.buf[i]] = true;
+                distinct++;
+            }
+        free(c.buf);
+        CHECK_STR(err, "");
+        CHECK(ok);
+        CHECK(distinct > 8); /* a picture, not a flat fill */
+    }
 }
 
 TEST(pict_rejects_truncated_pictures) {

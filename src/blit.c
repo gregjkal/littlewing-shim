@@ -167,9 +167,6 @@ bool qd_blit(const qd_pixels *src, qd_rect sr, const qd_pixels *dst, qd_rect dr,
         return fail(err, errlen, "transfer mode %d is not supported", mode);
     if (rect_empty(sr) || rect_empty(dr))
         return true;
-    if (indexed(dst->depth) && !indexed(src->depth))
-        return fail(err, errlen, "copying %d-bit pixels to %d bits is not supported", src->depth,
-                    dst->depth);
     /* Translate source pixel values into destination pixel values once. */
     static uint32_t map[256];
     bool use_map = indexed(src->depth);
@@ -199,8 +196,8 @@ bool qd_blit(const qd_pixels *src, qd_rect sr, const qd_pixels *dst, qd_rect dr,
             uint32_t v = get_px(src, sx, sy);
             if (use_map)
                 v = map[v];
-            else if (dst->depth != src->depth)
-                v = qd_pixel_for(rgb_of(v, src->depth, NULL), dst->depth, NULL);
+            else if (dst->depth != src->depth) /* to indexed: the nearest color */
+                v = qd_pixel_for(rgb_of(v, src->depth, NULL), dst->depth, dst->pal);
             put_px(dst, x, y, v);
         }
     }

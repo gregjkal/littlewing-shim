@@ -118,17 +118,27 @@ TEST(blit_4bit_pixels_pack_two_per_byte) {
     CHECK_EQ(d[1], 0);
 }
 
-TEST(blit_rejects_unsupported_modes_and_conversions) {
+TEST(blit_rejects_unsupported_modes) {
     qd_palette p;
     qd_std_palette(8, &p);
     uint8_t s[8] = {0}, d[8] = {0};
-    qd_pixels s8 = px(s, 2, 1, 8, &p), d8 = px(d, 2, 1, 8, &p), s16 = px(s, 2, 1, 16, NULL);
+    qd_pixels s8 = px(s, 2, 1, 8, &p), d8 = px(d, 2, 1, 8, &p);
     char err[128] = "";
     CHECK(!qd_blit(&s8, s8.bounds, &d8, d8.bounds, d8.bounds, 36, BLACK, WHITE, err, sizeof err));
     CHECK_CONTAINS(err, "transfer mode 36");
-    CHECK(!qd_blit(&s16, s16.bounds, &d8, d8.bounds, d8.bounds, QD_SRC_COPY, BLACK, WHITE, err,
-                   sizeof err));
-    CHECK_CONTAINS(err, "16-bit pixels to 8 bits");
+}
+
+TEST(blit_direct_to_indexed_picks_the_nearest_color) {
+    qd_palette p;
+    qd_std_palette(8, &p);
+    uint8_t s[8] = {0x00, 0xFF, 0xFF, 0xFF, 0x00, 0xFE, 0x01, 0x02}; /* white, almost red */
+    uint8_t d[2] = {7, 7};
+    qd_pixels s32 = px(s, 2, 1, 32, NULL), d8 = px(d, 2, 1, 8, &p);
+    char err[128] = "";
+    CHECK(qd_blit(&s32, s32.bounds, &d8, d8.bounds, d8.bounds, QD_SRC_COPY, BLACK, WHITE, err,
+                  sizeof err));
+    CHECK_EQ(d[0], 0);  /* the standard palette's white */
+    CHECK_EQ(d[1], 35); /* its pure red (0xFFFF, 0, 0) */
 }
 
 TEST(blit_fill_and_rgba_conversion) {

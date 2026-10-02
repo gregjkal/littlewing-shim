@@ -41,6 +41,11 @@ int16_t mm_dispose_handle(uint32_t h);
 bool mm_is_handle(uint32_t h);
 /* Requires mm_is_handle(h). */
 uint32_t mm_handle_size(uint32_t h);
+
+/* Resizes h's data, in place if it fits, otherwise by moving it (the master
+   pointer follows); the contents are kept up to the smaller size.
+   MM_MEM_FULL_ERR if the heap is full, MM_MEM_WZ_ERR if h is not a handle. */
+int16_t mm_set_handle_size(uint32_t h, uint32_t size);
 /* The handle whose data block starts at p, or 0 if there is none. */
 uint32_t mm_recover_handle(uint32_t p);
 /* Requires mm_is_handle(h). */

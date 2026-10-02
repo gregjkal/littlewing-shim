@@ -2,7 +2,18 @@
 
 #include <stdlib.h>
 
+#include "cf.h"
+#include "dialogs.h"
+#include "events.h"
+#include "files.h"
+#include "memmgr.h"
+#include "misc.h"
 #include "pef.h"
+#include "ppc.h"
+#include "qd.h"
+#include "rsrc.h"
+#include "sound.h"
+#include "trap.h"
 #include "util.h"
 
 TEST(pef_parses_the_real_executable) {
@@ -81,4 +92,39 @@ TEST(pef_rejects_truncated_executable) {
         CHECK(err[0] != '\0');
     }
     free(buf);
+}
+
+/* Every import the game makes has a C implementation. */
+TEST(pef_every_import_has_a_handler) {
+    SKIP_UNLESS_GAME();
+    size_t len;
+    uint8_t *buf = read_file(test_game_exe_path(), &len);
+    CHECK(buf != NULL);
+    pef_file pef;
+    char err[256] = "";
+    CHECK(pef_parse(buf, len, &pef, err, sizeof err));
+    const char **names = calloc(pef.nimports, sizeof *names);
+    for (uint32_t i = 0; i < pef.nimports; i++)
+        names[i] = pef.imports[i].name;
+    fresh_machine();
+    trap_init(pef.nimports, names, GUEST_IMAGE_BASE, 0x10000);
+    mm_register();
+    rsrc_register();
+    misc_register();
+    cf_register();
+    qd_register();
+    dialogs_register();
+    events_register();
+    files_register();
+    sound_register();
+    int missing = 0;
+    for (uint32_t i = 0; i < pef.nimports; i++)
+        if (pef.imports[i].sym_class != PEF_SYM_DATA && !trap_has_handler(i)) {
+            fprintf(stderr, "  no handler: %s\n", names[i]);
+            missing++;
+        }
+    trap_shutdown();
+    free(names);
+    free(buf);
+    CHECK_EQ(missing, 0);
 }

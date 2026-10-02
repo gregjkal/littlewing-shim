@@ -190,6 +190,25 @@ int16_t mm_dispose_handle(uint32_t h) {
 
 uint32_t mm_handle_size(uint32_t h) { return logical(gm_r32(h)); }
 
+int16_t mm_set_handle_size(uint32_t h, uint32_t size) {
+    if (!mm_is_handle(h))
+        return MM_MEM_WZ_ERR;
+    uint32_t d = gm_r32(h);
+    if (size <= capacity(d)) {
+        set_header(d, MAGIC_DATA, capacity(d), size, h);
+        return MM_NO_ERR;
+    }
+    uint32_t n = alloc_block(size, MAGIC_DATA, h, false);
+    if (!n)
+        return MM_MEM_FULL_ERR;
+    uint32_t keep = logical(d);
+    if (keep)
+        memcpy(gm_ptr(n, keep), gm_ptr(d, keep), keep);
+    free_block(d);
+    gm_w32(h, n);
+    return MM_NO_ERR;
+}
+
 uint32_t mm_recover_handle(uint32_t p) {
     if (!is_block(p, MAGIC_DATA))
         return 0;

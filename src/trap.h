@@ -1,4 +1,5 @@
 #pragma once
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "cpu.h"
@@ -24,6 +25,9 @@ void trap_register(const char *name, trap_handler fn);
 uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args);
 
 const char *trap_import_name(uint32_t index);
+
+/* True if import index has a handler. */
+bool trap_has_handler(uint32_t index);
 
 /* Prints a crash report (message, registers, depth, recent imports) and exits 2. */
 _Noreturn void trap_crash(const char *fmt, ...) __attribute__((format(printf, 1, 2)));

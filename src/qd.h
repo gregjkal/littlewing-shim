@@ -80,6 +80,9 @@ void qd_bits(const char *call, uint32_t bits, qd_pixels *out, qd_palette *pal);
 /* The screen's pixels, for display. */
 void qd_screen(qd_pixels *out, qd_palette *pal);
 
+/* Notes that something drew to the screen outside QuickDraw (dialogs). */
+void qd_mark_dirty(void);
+
 /* True if anything drew to the screen since the last call. */
 bool qd_take_dirty(void);
 uint32_t qd_current_port(void);

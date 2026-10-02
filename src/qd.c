@@ -268,6 +268,8 @@ uint32_t qd_current_port(void) { return Q.cur_port; }
 
 void qd_screen(qd_pixels *out, qd_palette *pal) { qd_bits("screen", gm_r32(Q.screen_pm), out, pal); }
 
+void qd_mark_dirty(void) { Q.dirty = true; }
+
 bool qd_take_dirty(void) {
     bool d = Q.dirty;
     Q.dirty = false;
