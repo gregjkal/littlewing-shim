@@ -19,11 +19,20 @@ cmake --build build-release --target app                # build-release/Loony La
 
 ## Play
 
+The app needs an Apple Silicon Mac with macOS 26 or later. It plays the game
+from the folder `/Applications/Loony Labyrinth`, which must hold the file
+`LOONY LABYRINTH 3.0.1`. To get it, download
+[`loony_labyrinth_301a.dmg`](http://www.littlewingpinball.com/doc/en/downloads/index.html),
+open it, and drag the `Loony Labyrinth` folder onto the Applications shortcut
+next to it. Keep the folder's name.
+
 Copy `build-release/Loony Labyrinth.app` to `/Applications` (or anywhere) and
-double-click it. It plays the game in `/Applications/Loony Labyrinth`, and
-carries its own copies of Unicorn and SDL3, so Homebrew upgrades don't affect
-it. It is signed ad hoc for this Mac only; if macOS refuses to open it after
-copying it from elsewhere, right-click it and choose Open. When the app can't
+double-click it. It carries its own copies of Unicorn and SDL3, so Homebrew
+upgrades don't affect it. Built as above, it is signed ad hoc, which is enough
+on the Mac that built it. On another Mac, Gatekeeper blocks the first launch;
+open System Settings, then Privacy & Security, and click Open Anyway near the
+bottom. (Right-click and Open no longer gets past it on recent macOS.) To give
+the app to someone without that step, sign and notarize it (below). When the app can't
 start or the game crashes, it says so in a message box; its log is
 `~/Library/Logs/loony-shim/loony.log` (the run before is kept as
 `loony.previous.log`).
@@ -61,6 +70,34 @@ The game's preferences (options, keys, the high-score table and the license)
 are saved when it quits (and at any exit but a crash), in `~/Library/Application Support/loony-shim/prefs.plist`.
 Any file the game writes goes to the same folder, never into the game folder.
 Delete the folder to start over.
+
+## Giving it to someone
+
+A Developer ID signature and notarization let the app open on any Mac without
+a warning. You need a paid Apple Developer account. Once per Mac:
+
+1. Make a Developer ID Application certificate: in Xcode, open Settings, then
+   Accounts, select your team, click Manage Certificates, and add a
+   "Developer ID Application" certificate. (Only the account holder can.)
+   `security find-identity -v -p codesigning` then lists it.
+2. Make an app-specific password at [account.apple.com](https://account.apple.com)
+   (Sign-In and Security), and save it for `notarytool`:
+
+   ```bash
+   xcrun notarytool store-credentials loony-notary --apple-id you@example.com --team-id TEAMID
+   ```
+
+Then, each time:
+
+```bash
+LOONY_SIGN_ID="Developer ID Application: Your Name (TEAMID)" cmake --build build-release --target app
+tools/notarize.sh "build-release/Loony Labyrinth.app" loony-notary   # takes a few minutes
+```
+
+This sends the app to Apple for checking, staples the ticket to it, and
+leaves `build-release/Loony Labyrinth.zip` to send. The other person
+downloads the game as in [Play](#play), unzips the app into Applications,
+and double-clicks it. They need their own key code to register.
 
 ## Debugging
 

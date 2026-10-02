@@ -1,9 +1,11 @@
 #!/bin/sh
 # Builds "Loony Labyrinth.app" around a loony binary: the Unicorn and SDL3
 # libraries are copied into the bundle (so a Homebrew upgrade can't break
-# it), the icon is made from tools/AppIcon.png, and the bundle is signed ad hoc with the hardened runtime and the
-# allow-jit entitlement.
-#   tools/make_app.sh <loony binary> <output folder>
+# it), the icon is made from tools/AppIcon.png, and the bundle is signed with
+# the hardened runtime and the allow-jit entitlement: ad hoc, or with the
+# identity in LOONY_SIGN_ID (a "Developer ID Application: ..." certificate in
+# the keychain) for an app that can be notarized and given to others.
+#   [LOONY_SIGN_ID=<identity>] tools/make_app.sh <loony binary> <output folder>
 set -eu
 bin=$1
 out=$2
@@ -35,7 +37,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 	<key>CFBundleShortVersionString</key><string>3.0.1</string>
 	<key>CFBundleVersion</key><string>1</string>
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-	<key>LSMinimumSystemVersion</key><string>13.0</string>
+	<key>LSMinimumSystemVersion</key><string>26.0</string>
 	<key>LSApplicationCategoryType</key><string>public.app-category.arcade-games</string>
 	<key>NSHighResolutionCapable</key><true/>
 </dict>
@@ -74,9 +76,12 @@ if [ "$bad" != 0 ]; then
     echo "make_app.sh: the bundle isn't self-contained (build it from a Release build)" >&2
     exit 1
 fi
+# A Developer ID signature needs a secure timestamp (fetched from Apple) to be notarized.
+sign=${LOONY_SIGN_ID:--}
+if [ "$sign" = - ]; then set -- ; else set -- --timestamp; fi
 for lib in "$app"/Contents/Frameworks/*.dylib; do
-    codesign --force --sign - --options runtime "$lib"
+    codesign --force --sign "$sign" "$@" --options runtime "$lib"
 done
-codesign --force --sign - --options runtime --entitlements "$here/loony.entitlements" "$app"
+codesign --force --sign "$sign" "$@" --options runtime --entitlements "$here/loony.entitlements" "$app"
 codesign --verify --strict "$app"
 echo "built $app"

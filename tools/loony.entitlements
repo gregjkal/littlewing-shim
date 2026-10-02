@@ -6,7 +6,8 @@
 	<key>com.apple.security.cs.allow-jit</key>
 	<true/>
 	<!-- Signed ad hoc, the bundled libraries have no team ID to match the
-	     app's, so the hardened runtime would refuse to load them. -->
+	     app's, so the hardened runtime would refuse to load them. (Signed
+	     with a Developer ID, they match and this does nothing.) -->
 	<key>com.apple.security.cs.disable-library-validation</key>
 	<true/>
 </dict>
