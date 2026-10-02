@@ -1,6 +1,7 @@
 #include "test.h"
 
 #include <SDL3/SDL_scancode.h>
+#include <stdlib.h>
 
 #include "script.h"
 
@@ -62,4 +63,24 @@ TEST(script_clicks_and_typing) {
     CHECK_STR(a.path, "");
     CHECK(!script_parse("5 click 320\n", err, sizeof err));
     CHECK_CONTAINS(err, "line 1: click needs x and y");
+}
+
+/* An hour of scripted play is thousands of actions. */
+TEST(script_holds_long_scripts) {
+    size_t cap = 20000 * 16;
+    char *text = malloc(cap), *p = text;
+    for (int i = 0; i < 20000; i++)
+        p += snprintf(p, cap - (size_t)(p - text), "%d %s z\n", i, i % 2 ? "up" : "down");
+    char err[256] = "";
+    CHECK(script_parse(text, err, sizeof err));
+    free(text);
+    CHECK_EQ(script_remaining(), 20000);
+    script_action a;
+    for (int i = 0; i < 19999; i++)
+        script_next(100000, &a);
+    CHECK(script_next(100000, &a));
+    CHECK_EQ(a.tick, 19999);
+    CHECK_EQ(a.kind, SCRIPT_KEY_UP);
+    CHECK(script_parse("", err, sizeof err));
+    CHECK_EQ(script_remaining(), 0);
 }

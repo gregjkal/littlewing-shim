@@ -7,14 +7,15 @@
 #include "keymap.h"
 #include "util.h"
 
-#define MAX_ACTIONS 1024
+#define MAX_ACTIONS 1000000
 
 static struct {
-    script_action a[MAX_ACTIONS];
-    int n, next;
+    script_action *a;
+    int n, cap, next;
 } SC;
 
 bool script_parse(const char *text, char *err, size_t errlen) {
+    free(SC.a);
     memset(&SC, 0, sizeof SC);
     int line_no = 0;
     uint32_t last = 0;
@@ -51,7 +52,14 @@ bool script_parse(const char *text, char *err, size_t errlen) {
             snprintf(err, errlen, "more than %d actions", MAX_ACTIONS);
             return false;
         }
+        if (SC.n == SC.cap) {
+            SC.cap = SC.cap ? SC.cap * 2 : 256;
+            SC.a = realloc(SC.a, (size_t)SC.cap * sizeof *SC.a);
+            if (!SC.a)
+                fatal("out of memory");
+        }
         script_action *a = &SC.a[SC.n];
+        memset(a, 0, sizeof *a);
         a->tick = (uint32_t)tick;
         if (strcmp(verb, "down") == 0 || strcmp(verb, "up") == 0) {
             a->kind = verb[0] == 'd' ? SCRIPT_KEY_DOWN : SCRIPT_KEY_UP;
