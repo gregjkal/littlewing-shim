@@ -71,6 +71,30 @@ void events_set_screenshot(ev_screenshot_fn fn);
    auto-repeat). Modifier keys become kEventRawKeyModifiersChanged, others
    kEventRawKeyDown, Up or Repeat with 'kcod', 'kchr' and 'kmod'. */
 void events_post_key(int scancode, bool down, bool repeat);
+/* The left mouse button went down or up at (x, y) on the emulated screen.
+   Only a modal sink sees mouse input; the game uses none. */
+void events_post_mouse(int x, int y, bool down);
+
+/* Text to insert (Cmd-V, or a script's "type"), UTF-8. Only a modal sink
+   sees it. */
+void events_post_text(const char *utf8);
+
+/* While a modal dialog runs, it takes the input instead of the game: key
+   downs and repeats (with their Mac key code, character and modifiers),
+   mouse buttons and text go to the sink, and nothing is queued for the
+   game. Modifier and key-up state is still tracked. NULL ends modal input. */
+typedef struct {
+    void (*key)(uint32_t vkey, uint8_t chr, uint32_t modifiers);
+    void (*mouse)(int x, int y, bool down);
+    void (*text)(const char *utf8);
+} ev_modal_sink;
+void events_set_modal(const ev_modal_sink *sink);
+
+/* Called on every pump with whether the mouse pointer should show: when the
+   game hasn't hidden it (HideCursor), or while a modal dialog runs. */
+typedef void (*ev_cursor_fn)(bool visible);
+void events_set_cursor(ev_cursor_fn fn);
+
 /* The window gained or lost focus: kEventAppActivated / Deactivated. */
 void events_post_activation(bool active);
 /* The user asked to quit (window close, Cmd-Q, a script). Queues the quit

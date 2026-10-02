@@ -69,6 +69,21 @@ bool script_parse(const char *text, char *err, size_t errlen) {
             snprintf(a->path, sizeof a->path, "%s", arg);
         } else if (strcmp(verb, "quit") == 0) {
             a->kind = SCRIPT_QUIT;
+        } else if (strcmp(verb, "click") == 0) {
+            a->kind = SCRIPT_CLICK;
+            if (sscanf(s, "%*u %*s %d %d", &a->x, &a->y) != 2) {
+                snprintf(err, errlen, "line %d: click needs x and y", line_no);
+                return false;
+            }
+        } else if (strcmp(verb, "type") == 0) {
+            a->kind = SCRIPT_TYPE;
+            const char *text = strstr(s, "type") + 4;
+            if (*text == ' ')
+                text++;
+            snprintf(a->path, sizeof a->path, "%s", text);
+            size_t tl = strlen(a->path);
+            if (tl && a->path[tl - 1] == '\r')
+                a->path[tl - 1] = '\0';
         } else {
             snprintf(err, errlen, "line %d: unknown action \"%s\"", line_no, verb);
             return false;

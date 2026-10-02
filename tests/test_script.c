@@ -46,3 +46,20 @@ TEST(script_load_missing_file) {
     CHECK(!script_load("/nonexistent/loony.script", err, sizeof err));
     CHECK_CONTAINS(err, "can't read /nonexistent/loony.script");
 }
+
+TEST(script_clicks_and_typing) {
+    char err[256] = "";
+    CHECK(script_parse("5 click 320 270\n6 type me@example.com  two words\n7 type\n", err, sizeof err));
+    script_action a;
+    CHECK(script_next(5, &a));
+    CHECK_EQ(a.kind, SCRIPT_CLICK);
+    CHECK_EQ(a.x, 320);
+    CHECK_EQ(a.y, 270);
+    CHECK(script_next(6, &a));
+    CHECK_EQ(a.kind, SCRIPT_TYPE);
+    CHECK_STR(a.path, "me@example.com  two words");
+    CHECK(script_next(7, &a));
+    CHECK_STR(a.path, "");
+    CHECK(!script_parse("5 click 320\n", err, sizeof err));
+    CHECK_CONTAINS(err, "line 1: click needs x and y");
+}

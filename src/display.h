@@ -22,12 +22,19 @@ typedef struct {
     void (*key)(int scancode, bool down, bool repeat); /* SDL scancode */
     void (*focus)(bool active);
     void (*quit)(void); /* window closed or Cmd-Q */
+    void (*mouse)(int x, int y, bool down); /* left button, emulated screen coordinates */
+    void (*paste)(const char *utf8);        /* Cmd-V: the clipboard's text */
 } display_input;
 void display_set_input(const display_input *in);
 
 /* Handles pending SDL events: keys go to the input callbacks, except Cmd-Q
-   (quit) and Cmd-F (toggle full screen), which the game never sees. */
+   (quit), Cmd-F (toggle full screen) and Cmd-V (paste), which the game never
+   sees. Left-button clicks are mapped from the window to the emulated
+   screen, through the letterboxing and scaling. */
 void display_poll(void);
+
+/* Shows or hides the mouse pointer over the window. */
+void display_set_cursor(bool visible);
 
 /* Writes the current screen as a PNG. */
 bool display_write_png(const char *path);

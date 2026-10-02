@@ -17,6 +17,7 @@ static struct {
     const char *screenshot;
     display_input input;
     bool no_vsync;
+    bool cursor_hidden;
 } D;
 
 static uint8_t *screen_rgba(int *w, int *h) {
@@ -111,6 +112,16 @@ void display_set_vsync(bool on) {
         SDL_SetRenderVSync(D.renderer, on ? 1 : 0);
 }
 
+void display_set_cursor(bool visible) {
+    if (!D.sdl_ok || visible == !D.cursor_hidden)
+        return;
+    D.cursor_hidden = !visible;
+    if (visible)
+        SDL_ShowCursor();
+    else
+        SDL_HideCursor();
+}
+
 void display_poll(void) {
     if (!D.sdl_ok)
         return;
@@ -135,6 +146,15 @@ void display_poll(void) {
                     D.input.quit();
                 break;
             }
+            if ((e.key.mod & SDL_KMOD_GUI) && e.key.scancode == SDL_SCANCODE_V) {
+                if (down && D.input.paste) {
+                    char *text = SDL_GetClipboardText();
+                    if (text && *text)
+                        D.input.paste(text);
+                    SDL_free(text);
+                }
+                break;
+            }
             if ((e.key.mod & SDL_KMOD_GUI) && e.key.scancode == SDL_SCANCODE_F) {
                 if (down && !e.key.repeat) {
                     bool fs = (SDL_GetWindowFlags(D.window) & SDL_WINDOW_FULLSCREEN) != 0;
@@ -144,6 +164,15 @@ void display_poll(void) {
             }
             if (D.input.key)
                 D.input.key((int)e.key.scancode, down, e.key.repeat);
+            break;
+        }
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        case SDL_EVENT_MOUSE_BUTTON_UP: {
+            if (e.button.button != SDL_BUTTON_LEFT || !D.input.mouse)
+                break;
+            float x = e.button.x, y = e.button.y;
+            SDL_RenderCoordinatesFromWindow(D.renderer, e.button.x, e.button.y, &x, &y);
+            D.input.mouse((int)SDL_floorf(x), (int)SDL_floorf(y), e.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
             break;
         }
         default:

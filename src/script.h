@@ -8,16 +8,26 @@
      <tick> up <key>          release it
      <tick> screenshot <file> write the screen as a PNG
      <tick> quit              ask the game to quit (the quit Apple Event)
+     <tick> click <x> <y>     click the left button at (x, y) on the emulated screen
+     <tick> type <text>       type the rest of the line into a dialog, as Cmd-V would
    Blank lines and lines starting with '#' are ignored. Ticks are 1/60 s
    since launch and must not decrease. */
 
-typedef enum { SCRIPT_KEY_DOWN, SCRIPT_KEY_UP, SCRIPT_SCREENSHOT, SCRIPT_QUIT } script_kind;
+typedef enum {
+    SCRIPT_KEY_DOWN,
+    SCRIPT_KEY_UP,
+    SCRIPT_SCREENSHOT,
+    SCRIPT_QUIT,
+    SCRIPT_CLICK,
+    SCRIPT_TYPE,
+} script_kind;
 
 typedef struct {
     uint32_t tick;
     script_kind kind;
     int scancode;       /* key actions */
-    char path[256];     /* screenshot */
+    char path[256];     /* screenshot; the text to type */
+    int x, y;           /* click */
 } script_action;
 
 /* Parses a script file. On failure writes err (with the line number) and

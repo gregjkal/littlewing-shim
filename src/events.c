@@ -69,6 +69,8 @@ static struct {
     ev_present_fn present;
     ev_poll_fn poll;
     ev_screenshot_fn screenshot;
+    ev_cursor_fn cursor;
+    const ev_modal_sink *modal;
     long exit_after; /* ticks, or 0 */
     double quit_deadline; /* wall-clock seconds, or 0 */
     uint32_t ae_descs; /* guest memory for the quit AppleEvent and its reply */
@@ -163,11 +165,16 @@ void events_post_key(int scancode, bool down, bool repeat) {
         else if (!down && at >= 0)
             E.held[at] = E.held[--E.nheld];
         uint32_t after = current_modifiers();
-        if (after != before) {
+        if (after != before && !E.modal) {
             ev_event *e = post(EV_CLASS_KEYBOARD, EV_RAW_KEY_MODIFIERS_CHANGED);
             if (e)
                 e->modifiers = after;
         }
+        return;
+    }
+    if (E.modal) {
+        if (down)
+            E.modal->key((uint32_t)k.vkey, keymap_char(&k, current_modifiers()), current_modifiers());
         return;
     }
     uint32_t kind = !down ? EV_RAW_KEY_UP : repeat ? EV_RAW_KEY_REPEAT : EV_RAW_KEY_DOWN;
@@ -178,6 +185,20 @@ void events_post_key(int scancode, bool down, bool repeat) {
         e->chr = keymap_char(&k, e->modifiers);
     }
 }
+
+void events_post_mouse(int x, int y, bool down) {
+    if (E.modal)
+        E.modal->mouse(x, y, down);
+}
+
+void events_post_text(const char *utf8) {
+    if (E.modal)
+        E.modal->text(utf8);
+}
+
+void events_set_modal(const ev_modal_sink *sink) { E.modal = sink; }
+
+void events_set_cursor(ev_cursor_fn fn) { E.cursor = fn; }
 
 void events_post_activation(bool active) {
     post(EV_CLASS_APPLICATION, active ? EV_APP_ACTIVATED : EV_APP_DEACTIVATED);
@@ -353,6 +374,11 @@ static void run_script(void) {
                 log_msg("script: can't write the screenshot %s", a.path);
             break;
         case SCRIPT_QUIT: events_request_quit(); break;
+        case SCRIPT_CLICK:
+            events_post_mouse(a.x, a.y, true);
+            events_post_mouse(a.x, a.y, false);
+            break;
+        case SCRIPT_TYPE: events_post_text(a.path); break;
         }
     }
 }
@@ -364,6 +390,8 @@ void events_pump(void) {
     sound_pump();
     if (E.loop_depth > 0)
         fire_due_timers();
+    if (E.cursor)
+        E.cursor(misc_cursor_visible() || E.modal);
     if (E.present)
         E.present();
     if (E.exit_after > 0 && misc_ticks() >= (uint32_t)E.exit_after) {

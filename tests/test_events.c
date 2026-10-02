@@ -610,3 +610,87 @@ TEST(events_delay_inside_a_timer_doesnt_fire_other_timers) {
     CHECK_EQ(gm_r32(SEEN), 0);    /* it didn't run during the Delay */
     CHECK_EQ(gm_r32(COUNTER), 1); /* it ran once the waiting proc returned */
 }
+
+/* ---- modal input (dialogs) ---- */
+
+static struct {
+    int keys, downs, texts;
+    uint32_t vkey, mods;
+    uint8_t chr;
+    int x, y;
+    char text[64];
+} sunk;
+
+static void sink_key(uint32_t vkey, uint8_t chr, uint32_t mods) {
+    sunk.keys++;
+    sunk.vkey = vkey;
+    sunk.chr = chr;
+    sunk.mods = mods;
+}
+static void sink_mouse(int x, int y, bool down) {
+    sunk.downs += down;
+    sunk.x = x;
+    sunk.y = y;
+}
+static void sink_text(const char *t) {
+    sunk.texts++;
+    snprintf(sunk.text, sizeof sunk.text, "%s", t);
+}
+static const ev_modal_sink sink = {sink_key, sink_mouse, sink_text};
+
+TEST(events_modal_input_goes_to_the_sink_not_the_game) {
+    setup();
+    next_event(EV_CLASS_APPLICATION, EV_APP_ACTIVATED);
+    memset(&sunk, 0, sizeof sunk);
+    events_post_mouse(1, 2, true); /* not modal: dropped */
+    events_post_text("x");
+    events_set_modal(&sink);
+    events_post_key(SDL_SCANCODE_LSHIFT, true, false);
+    events_post_key(SDL_SCANCODE_A, true, false);
+    events_post_key(SDL_SCANCODE_A, true, true); /* a repeat types again */
+    events_post_key(SDL_SCANCODE_A, false, false);
+    events_post_mouse(30, 40, true);
+    events_post_mouse(30, 40, false);
+    events_post_text("hi");
+    CHECK_EQ(events_queued(), 0);
+    CHECK_EQ(sunk.keys, 2);
+    CHECK_EQ(sunk.vkey, 0x00); /* kVK_ANSI_A */
+    CHECK_EQ(sunk.chr, 'A');
+    CHECK_EQ(sunk.mods, KM_SHIFT);
+    CHECK_EQ(sunk.downs, 1);
+    CHECK_EQ(sunk.x, 30);
+    CHECK_EQ(sunk.texts, 1);
+    CHECK_STR(sunk.text, "hi");
+    events_set_modal(NULL);
+    events_post_key(SDL_SCANCODE_LSHIFT, false, false); /* shift was tracked while modal */
+    uint32_t ev = next_event(EV_CLASS_KEYBOARD, EV_RAW_KEY_MODIFIERS_CHANGED);
+    CHECK(ev != 0);
+    CHECK_EQ(param32(ev, 0x6B6D6F64u), 0);
+    call_import("ReleaseEvent", 1, ev);
+}
+
+static int cursor_calls;
+static bool cursor_shown;
+static void on_cursor(bool visible) {
+    cursor_calls++;
+    cursor_shown = visible;
+}
+
+TEST(events_pump_shows_the_cursor_for_dialogs) {
+    setup();
+    events_set_cursor(on_cursor);
+    char err[256];
+    CHECK(script_parse("0 click 7 8\n0 type abc\n", err, sizeof err));
+    memset(&sunk, 0, sizeof sunk);
+    events_set_modal(&sink);
+    events_pump();
+    CHECK(cursor_shown);
+    CHECK_EQ(sunk.downs, 1);
+    CHECK_EQ(sunk.y, 8);
+    CHECK_STR(sunk.text, "abc");
+    events_set_modal(NULL);
+    events_pump();
+    CHECK(cursor_shown); /* the game hasn't hidden it */
+    events_set_cursor(NULL);
+    CHECK(cursor_calls >= 2);
+}

@@ -82,8 +82,9 @@ int main(int argc, char **argv) {
     events_set_present(display_present_if_dirty);
     events_set_poll(display_poll);
     events_set_screenshot(display_write_png);
+    events_set_cursor(display_set_cursor);
     static const display_input input = {events_post_key, events_post_activation,
-                                        events_request_quit};
+                                        events_request_quit, events_post_mouse, events_post_text};
     display_set_input(&input);
     display_set_vsync(!misc_fixed_clock());
     sound_start_output();
