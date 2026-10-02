@@ -255,7 +255,7 @@ Used for: the init and main entry points, Carbon event handlers, event loop time
 | 4 | Events and input | Event loop, timers, keyboard. The table plays silently (user playtest) |
 | 5 | Sound | Sound Manager and mixer. Effects and music are correct (user playtest) |
 | 6 | Dialogs, files, prefs | High scores and preferences persist across launches (user playtest) |
-| 7 | Finish | One-hour run with no crash. `.app` bundle, ad-hoc signed, with the `allow-jit` entitlement. Headless regression test recorded |
+| 7 | Finish | One-hour run with no crash. `.app` bundle, ad-hoc signed, with the `allow-jit` entitlement. Headless regression test recorded (three minutes of scripted play, `run_three_minutes_of_play_match_the_recording`) |
 
 Milestones 1–3 have the most unknowns. Each later milestone's details may be adjusted based on what the import trace shows the game actually does.
 
@@ -275,3 +275,4 @@ Milestones 1–3 have the most unknowns. Each later milestone's details may be a
 - `~/dev/loony-shim`, a git repo on `main`. C11, `-Wall -Wextra -Werror` in all builds. `Debug` adds the sanitizers, and `Release` is `-O2`.
 - `.gitignore` excludes build output, PNG dumps and anything copied from the game folder.
 - Dependencies come from Homebrew: `unicorn`, `sdl3`, `cmake`, `pkg-config`. The preferences file also uses macOS's own CoreFoundation framework.
+- **The app** (`cmake --build build-release --target app`, `tools/make_app.sh`): `Loony Labyrinth.app`, with `libunicorn` and `libSDL3` copied into `Contents/Frameworks` and referenced through `@rpath`, signed ad hoc with the hardened runtime and the entitlements `allow-jit` (Unicorn's translated code) and `disable-library-validation` (ad-hoc signatures carry no team ID, so the hardened runtime would otherwise refuse the bundled libraries). Launched as the app, with no terminal, the log goes to `~/Library/Logs/loony-shim/loony.log` and startup failures and crashes appear in a message box. (Revised during Plan 7.)

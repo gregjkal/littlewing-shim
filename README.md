@@ -14,9 +14,21 @@ cmake --build build
 
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release  # for playing
 cmake --build build-release
+cmake --build build-release --target app                # build-release/Loony Labyrinth.app
 ```
 
 ## Play
+
+Copy `build-release/Loony Labyrinth.app` to `/Applications` (or anywhere) and
+double-click it. It plays the game in `/Applications/Loony Labyrinth`, and
+carries its own copies of Unicorn and SDL3, so Homebrew upgrades don't affect
+it. It is signed ad hoc for this Mac only; if macOS refuses to open it after
+copying it from elsewhere, right-click it and choose Open. When the app can't
+start or the game crashes, it says so in a message box; its log is
+`~/Library/Logs/loony-shim/loony.log` (the run before is kept as
+`loony.previous.log`).
+
+From a terminal:
 
 ```bash
 ./build-release/loony                       # uses /Applications/Loony Labyrinth
@@ -83,7 +95,15 @@ action per line:
 ```
 
 Scripts can also click (`20 click 460 270`, in emulated-screen pixels) and type
-into a dialog (`50 type me@example.com`, the rest of the line).
+into a dialog (`50 type me@example.com`, the rest of the line), and may be any
+length. `tools/soak_script.py` writes one that keeps playing for an hour (game
+starts, plunger, flippers, nudges, a screenshot every 5 minutes):
+
+```bash
+python3 tools/soak_script.py 216000 /tmp/soak > /tmp/soak.txt
+LOONY_DATA_DIR=$(mktemp -d) LOONY_AUTO_ALERTS=1 LOONY_FIXED_CLOCK=1 LOONY_SCRIPT=/tmp/soak.txt \
+  SDL_VIDEO_DRIVER=dummy SDL_AUDIO_DRIVER=dummy ./build-release/loony
+```
 
 Key names are those in `src/keymap.c` (`z`, `slash`, `return`, `space`, `esc`,
 `lshift`, `rshift`, ...).
