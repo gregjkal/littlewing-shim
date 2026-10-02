@@ -33,8 +33,8 @@
 | Libraries the binary links from Homebrew | `libunicorn.2.dylib` and `libSDL3.0.dylib`, neither of which links anything else outside the system |
 | Hardened runtime with ad-hoc signatures | Library validation refuses the bundled libraries ("different Team IDs"), so the app needs `com.apple.security.cs.disable-library-validation` as well as `allow-jit` |
 | The bundled, hardened binary | Reproduces the approved menu frame (`0xADE78151`) |
-| Fixed-clock soak (`tools/soak_script.py 216000`, Release, about 12,700 actions, a game started every minute) | See the result in Task 5 |
-| Real-time soak (the signed app, SDL's dummy video and audio drivers, so the audio thread runs, about one wall-clock hour) | See the result in Task 5 |
+| Fixed-clock soak (`tools/soak_script.py 216000`, Release, about 12,700 actions, a game started every minute) | The full hour in 19.5 minutes, no crash, RSS flat at 117.9 MB after warm-up. At the end the game took longer than the 3-second grace to quit (Task 5) |
+| Real-time soak (the signed app, SDL's dummy video and audio drivers, so the audio thread runs, about one wall-clock hour) | 3,601 seconds, no crash, a clean quit at the end, RSS 107-119 MB |
 | `leaks` on the soak process, after 15 minutes | 0 leaks. RSS rose from 115 MB to 118 MB in the first 13 minutes, then stayed flat (Unicorn's translation cache filling) |
 | Regression run (fixed clock, 10,800 ticks) | Frames `0xAAD1E97F` (minute 1, ball 1), `0x015482C8` (minute 2, ball 3), `0x66E6FBF1` (minute 3, a new game), recording `0x3663C0FE`. The same in Debug and Release. Release takes about 1 minute, Debug with the sanitizers about 4 |
 
@@ -848,4 +848,439 @@ git commit -m "README and spec: the app, its log, and the soak script"
 
 ### Task 5: The one-hour runs
 
-(results pending)
+Both runs use `tools/soak_script.py 216000`: about 12,700 actions, starting a game every minute and working the plunger, the flippers and the nudge in between.
+
+- [ ] **Step 1: The fixed-clock hour** (Release, `LOONY_FIXED_CLOCK=1`, dummy drivers, a fresh `LOONY_DATA_DIR`)
+
+Result (2026-10-02):
+- All 216,000 ticks ran in 19.5 minutes of wall time.
+- No crash, no sanitizer or sound messages.
+- RSS rose from 113.6 MB to 117.9 MB in the first 15 minutes, then stayed flat. `leaks` reported 0 leaks.
+- The screenshots every 5 minutes show attract mode, menus and games in play.
+
+At the end, the game didn't quit within the 3-second grace period, which is about 550 fixed-clock ticks. A replay with tracing switched on near the end (deterministic, so the same state) showed why. The game's quit handler ran and called `QuitApplicationEventLoop`, but the game was inside an inner frame loop that waits for a sound channel to go idle, calling `ReceiveNextEvent` with timeout 0 and `SndChannelStatus` many times a frame. It reaches the application loop only when that ends. The forced exit then skipped `CFPreferencesAppSynchronize`, and with it anything changed since launch.
+
+Quits mid-game, from the menu, from the pause screen and from attract mode all take effect at once. Task 7 fixes the lost preferences.
+
+- [ ] **Step 2: The real-time hour** (the signed `Loony Labyrinth.app`, dummy video and audio drivers, so the audio thread and the clock-driven timers run as for the user)
+
+Result (2026-10-02):
+- 3,601 seconds. The script's quit at the end went through the game's own handler (`ExitToShell`).
+- No crash and no errors.
+- RSS stayed between 107 and 119 MB.
+- At minute 56 a game was in play: ball 2, 3,176,000 points.
+
+---
+
+### Task 6: Review fixes
+
+A review of Tasks 1-4 found these defects:
+- **The bundle test let the app log into the real `~/Library/Logs`.** The bundled binary's path makes it an app, and its stderr is a pipe. The test now gives it a temporary HOME.
+- **A sanitizer build could be bundled though it needs the compiler's runtime.** `make_app.sh` now allows only system libraries and libraries in Frameworks, checks every search path, and fails with "build it from a Release build". It also deletes the `/opt/homebrew/lib` search path the link adds. The bundle test expects that refusal from a Debug binary.
+- **Smaller fixes:**
+  - The failure hook is set even when the log folder can't be made, and then the message box doesn't name a log.
+  - A usage error is reported as a startup error.
+  - A script with an error keeps none of its actions.
+  - The soak script's last screenshot comes before its quit.
+
+- [ ] **Step 1: Apply**
+
+```diff
+diff --git a/src/main.c b/src/main.c
+index d5b7daa..93b3357 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -37,7 +37,10 @@ static void show_failure(const char *msg) {
+     if (video && strcmp(video, "dummy") == 0) /* headless: nobody to click it */
+         return;
+     char text[2048];
+-    snprintf(text, sizeof text, "%s\n\nThe log is in %s", msg, log_path);
++    if (log_path[0])
++        snprintf(text, sizeof text, "%s\n\nThe log is in %s", msg, log_path);
++    else
++        snprintf(text, sizeof text, "%s", msg);
+     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Loony Labyrinth", text, NULL);
+ }
+ 
+@@ -49,12 +52,16 @@ static void log_to_file_if_app(const char *argv0) {
+     snprintf(dir, sizeof dir, "%s/Library/Logs/loony-shim", home);
+     snprintf(log_path, sizeof log_path, "%s/loony.log", dir);
+     snprintf(prev, sizeof prev, "%s/loony.previous.log", dir);
+-    if (!make_dirs(dir))
++    util_set_failure_hook(show_failure);
++    if (!make_dirs(dir)) {
++        log_path[0] = '\0';
+         return;
++    }
+     rename(log_path, prev);
+     if (freopen(log_path, "w", stderr))
+         setvbuf(stderr, NULL, _IOLBF, 0);
+-    util_set_failure_hook(show_failure);
++    else
++        log_path[0] = '\0';
+ }
+ 
+ /* An error before the game starts: printed, and shown when running as the app. */
+@@ -80,10 +87,8 @@ int main(int argc, char **argv) {
+         dir = argv[i];
+         nargs++;
+     }
+-    if (nargs > 1) {
+-        fprintf(stderr, "usage: loony [game-folder]\n");
+-        return 1;
+-    }
++    if (nargs > 1)
++        return startup_error("usage: loony [game-folder]");
+ 
+     char path[PATH_MAX];
+     snprintf(path, sizeof path, "%s/%s", dir, GAME_EXE_NAME);
+diff --git a/src/script.c b/src/script.c
+index 2470cf5..7866b17 100644
+--- a/src/script.c
++++ b/src/script.c
+@@ -14,9 +14,7 @@ static struct {
+     int n, cap, next;
+ } SC;
+ 
+-bool script_parse(const char *text, char *err, size_t errlen) {
+-    free(SC.a);
+-    memset(&SC, 0, sizeof SC);
++static bool parse(const char *text, char *err, size_t errlen) {
+     int line_no = 0;
+     uint32_t last = 0;
+     const char *p = text;
+@@ -102,6 +100,15 @@ bool script_parse(const char *text, char *err, size_t errlen) {
+     return true;
+ }
+ 
++bool script_parse(const char *text, char *err, size_t errlen) {
++    free(SC.a);
++    memset(&SC, 0, sizeof SC);
++    if (parse(text, err, errlen))
++        return true;
++    SC.n = 0; /* nothing from a script with an error */
++    return false;
++}
++
+ bool script_load(const char *path, char *err, size_t errlen) {
+     size_t len;
+     uint8_t *text = read_file(path, &len);
+diff --git a/tests/test_run.c b/tests/test_run.c
+index e0bebb8..bc3fa35 100644
+--- a/tests/test_run.c
++++ b/tests/test_run.c
+@@ -391,6 +391,7 @@ TEST(run_as_the_app_logs_to_library_logs) {
+ static char bundle_bin[1300];
+ 
+ static void run_bundle_scripted(void *dir) {
++    setenv("HOME", run_data, 1); /* as an app it logs under HOME */
+     setenv("LOONY_FIXED_CLOCK", "1", 1);
+     setenv("LOONY_SCRIPT", script_path, 1);
+     setenv("LOONY_AUTO_ALERTS", "1", 1);
+@@ -401,14 +402,27 @@ static void run_bundle_scripted(void *dir) {
+ 
+ /* tools/make_app.sh: the bundle carries its own libraries, is signed with
+    the hardened runtime and allow-jit, and still emulates the game exactly
+-   (the approved menu frame). */
++   (the approved menu frame). A sanitizer build (Debug) can't be bundled:
++   it needs the compiler's runtime, and the script says so. */
+ TEST(run_the_app_bundle_is_self_contained_and_plays) {
+     SKIP_UNLESS_GAME();
+     char out_dir[1024], cmd[3000], text[8192];
+     test_tmp_dir(out_dir, sizeof out_dir);
+-    snprintf(cmd, sizeof cmd, "'%s/tools/make_app.sh' '%s' '%s' >/dev/null 2>&1", LOONY_SRC_DIR,
+-             LOONY_BIN, out_dir);
+-    CHECK(system(cmd) == 0);
++    snprintf(cmd, sizeof cmd, "'%s/tools/make_app.sh' '%s' '%s' 2>&1", LOONY_SRC_DIR, LOONY_BIN, out_dir);
++    FILE *mk = popen(cmd, "r");
++    CHECK(mk != NULL);
++    size_t got = fread(text, 1, sizeof text - 1, mk);
++    text[got] = '\0';
++    int made = pclose(mk);
++    snprintf(cmd, sizeof cmd, "otool -L '%s' | grep -q libclang_rt", LOONY_BIN);
++    if (system(cmd) == 0) {
++        test_remove_tree(out_dir);
++        CHECK(made != 0);
++        CHECK_CONTAINS(text, "libclang_rt");
++        CHECK_CONTAINS(text, "isn't self-contained");
++        return;
++    }
++    CHECK(made == 0);
+     snprintf(bundle_bin, sizeof bundle_bin, "%s/Loony Labyrinth.app/Contents/MacOS/loony", out_dir);
+     snprintf(cmd, sizeof cmd, "otool -L '%s' && codesign -d --entitlements - '%s/Loony Labyrinth.app' 2>&1",
+              bundle_bin, out_dir);
+diff --git a/tests/test_script.c b/tests/test_script.c
+index 83162db..0e3056c 100644
+--- a/tests/test_script.c
++++ b/tests/test_script.c
+@@ -40,6 +40,8 @@ TEST(script_reports_errors_with_line_numbers) {
+     CHECK(!script_parse("down z\n", err, sizeof err));
+     CHECK_CONTAINS(err, "line 1: expected");
+     CHECK_EQ(script_remaining(), 0);
++    CHECK(!script_parse("1 down z\n2 jump\n", err, sizeof err)); /* the good line isn't kept */
++    CHECK_EQ(script_remaining(), 0);
+ }
+ 
+ TEST(script_load_missing_file) {
+diff --git a/tools/make_app.sh b/tools/make_app.sh
+index 7d01810..2796e21 100755
+--- a/tools/make_app.sh
++++ b/tools/make_app.sh
+@@ -32,16 +32,36 @@ cat > "$app/Contents/Info.plist" <<PLIST
+ </plist>
+ PLIST
+ # Copy each Homebrew library the binary links and point the binary at the copy.
+-for lib in $(otool -L "$bin" | awk '/\/opt\/homebrew\// {print $1}'); do
++for lib in $(otool -L "$bin" | awk '/\/opt\/homebrew\// {print $1}'); do  # paths without spaces
+     name=$(basename "$lib")
+     cp "$lib" "$app/Contents/Frameworks/$name"
+     chmod u+w "$app/Contents/Frameworks/$name"
+     install_name_tool -id "@rpath/$name" "$app/Contents/Frameworks/$name"
+     install_name_tool -change "$lib" "@rpath/$name" "$app/Contents/MacOS/loony"
+ done
++# Search only Frameworks (the link adds /opt/homebrew/lib).
++for rp in $(otool -l "$app/Contents/MacOS/loony" | awk '/cmd LC_RPATH/ {getline; getline; print $2}'); do
++    install_name_tool -delete_rpath "$rp" "$app/Contents/MacOS/loony"
++done
+ install_name_tool -add_rpath "@executable_path/../Frameworks" "$app/Contents/MacOS/loony"
+-if otool -L "$app/Contents/MacOS/loony" "$app"/Contents/Frameworks/*.dylib | grep -q /opt/homebrew/; then
+-    echo "make_app.sh: the bundle still refers to Homebrew libraries" >&2
++# Self-contained: every library is the system's or in Frameworks, and the
++# only search path is Frameworks. (A sanitizer build fails here: it needs
++# the compiler's runtime library.)
++bad=0
++for f in "$app/Contents/MacOS/loony" "$app"/Contents/Frameworks/*.dylib; do
++    for dep in $(otool -L "$f" | tail -n +2 | awk '{print $1}'); do
++        case "$dep" in
++        /usr/lib/* | /System/*) ;;
++        @rpath/*) [ -f "$app/Contents/Frameworks/${dep#@rpath/}" ] || { echo "make_app.sh: $f needs $dep, which isn't bundled" >&2; bad=1; } ;;
++        *) echo "make_app.sh: $f needs $dep, outside the bundle" >&2; bad=1 ;;
++        esac
++    done
++    for rp in $(otool -l "$f" | awk '/cmd LC_RPATH/ {getline; getline; print $2}'); do
++        [ "$rp" = "@executable_path/../Frameworks" ] || { echo "make_app.sh: $f searches $rp" >&2; bad=1; }
++    done
++done
++if [ "$bad" != 0 ]; then
++    echo "make_app.sh: the bundle isn't self-contained (build it from a Release build)" >&2
+     exit 1
+ fi
+ for lib in "$app"/Contents/Frameworks/*.dylib; do
+diff --git a/tools/soak_script.py b/tools/soak_script.py
+index 29ce1c8..5e5ede8 100755
+--- a/tools/soak_script.py
++++ b/tools/soak_script.py
+@@ -25,7 +25,7 @@ while t < ticks - 600:
+         if (t // 1000) % 7 == 0:
+             lines += [(t, 'down space'), (t + 5, 'up space')]
+             t += 20
+-for minute in range(1, ticks // 3600 + 1, 5):
++for minute in range(1, (ticks - 61) // 3600 + 1, 5):  # all before the quit
+     lines.append((minute * 3600, f'screenshot {prefix}{minute:02d}.png'))
+ lines.append((ticks - 60, 'quit'))
+ lines.sort(key=lambda a: a[0])
+```
+
+- [ ] **Step 2: Run the tests** (`./build/loony_tests` and `./build-release/loony_tests`): 292 passed, 1 skipped. `~/Library/Logs` holds nothing from the tests.
+
+- [ ] **Step 3: Commit** ("Review fixes: the bundle test keeps out of ~/Library; make_app.sh allows only system and bundled libraries and drops foreign rpaths; app failures reported even without a log")
+
+---
+
+### Task 7: Preferences saved at any exit but a crash
+
+The finding from Task 5:
+- On macOS, preference values an application has set are kept even if it never synchronizes.
+- `main` now registers an exit handler that calls `cf_save_prefs` unless `util_failed()`, which `fatal` and `trap_crash` set.
+- `cf_save_prefs` leaves out a key whose value the game released too often, rather than crashing during exit.
+
+- [ ] **Step 1: Apply**
+
+```diff
+diff --git a/README.md b/README.md
+index 81d3af8..e2e88cd 100644
+--- a/README.md
++++ b/README.md
+@@ -58,7 +58,7 @@ The keys can be changed from the game's OPTIONS menu. Unregistered, games are
+ time-limited.
+ 
+ The game's preferences (options, keys, the high-score table and the license)
+-are saved when it quits, in `~/Library/Application Support/loony-shim/prefs.plist`.
++are saved when it quits (and at any exit but a crash), in `~/Library/Application Support/loony-shim/prefs.plist`.
+ Any file the game writes goes to the same folder, never into the game folder.
+ Delete the folder to start over.
+ 
+diff --git a/docs/superpowers/specs/2026-09-30-loony-shim-design.md b/docs/superpowers/specs/2026-09-30-loony-shim-design.md
+index 7372d4c..d06459b 100644
+--- a/docs/superpowers/specs/2026-09-30-loony-shim-design.md
++++ b/docs/superpowers/specs/2026-09-30-loony-shim-design.md
+@@ -210,7 +210,7 @@ Used for: the init and main entry points, Carbon event handlers, event loop time
+ - **Reading:** looks in the writable folder first, then the game folder.
+ - **Writing:** writes to any path inside the game folder go to the matching path in the writable folder, copying the file there at its first write (not when it is opened) if it exists. This keeps the original files untouched while the game believes it saved in place. `LOONY_DATA_DIR` names another writable folder (the tests use temporary ones); one that is, contains or is inside the game folder is refused, and nothing is saved. A copy is made under a temporary name and renamed when complete, so a failed copy never hides the original. Names `.` and `..` are refused, and `::` goes up one folder but never above the game folder. (Measured in Plan 6: the game writes no files in normal play; everything it saves is a preference.)
+ - **FSSpec calls:** `FSMakeFSSpec` resolves vRefNum/dirID/name to a host path, using a small table of fake volume and directory IDs. `FSpCreate`, `FSpOpenDF`, `PBReadSync`, `FSWrite`, `GetEOF`, `SetEOF`, `GetFPos`, `SetFPos`, `FSClose` and `PBFlushFileSync` map to POSIX calls. Mac-Roman file names are converted to UTF-8, and `:` becomes `/`.
+-- **CFPreferences:** stored in `prefs.plist` in the writable folder, an XML property list of strings and integers written with the host's CoreFoundation, read at startup and written on `CFPreferencesAppSynchronize` (the game calls it as it quits). A file that can't be read is moved to `prefs.plist.bad`. CFString and CFNumber are host objects referred to by tag-space IDs, with reference counts. `kCFPreferencesCurrentApplication` is a pre-made CFString ID. (Measured in Plan 6: the game keeps its options, key assignments, the four-entry high-score table with a checksum, "highscore id", and the license, "user email" and "user id", in the preferences.)
++- **CFPreferences:** stored in `prefs.plist` in the writable folder, an XML property list of strings and integers written with the host's CoreFoundation, read at startup and written on `CFPreferencesAppSynchronize` (the game calls it as it quits) and at any other exit but a crash, as macOS keeps values an application set without synchronizing. (Revised during Plan 7: a quit during a sequence that outlasted the 3-second quit grace lost the game's unsaved changes.) A file that can't be read is moved to `prefs.plist.bad`. CFString and CFNumber are host objects referred to by tag-space IDs, with reference counts. `kCFPreferencesCurrentApplication` is a pre-made CFString ID. (Measured in Plan 6: the game keeps its options, key assignments, the four-entry high-score table with a checksum, "highscore id", and the license, "user email" and "user id", in the preferences.)
+ 
+ ### Miscellaneous (`misc.c`)
+ 
+diff --git a/src/cf.c b/src/cf.c
+index e79a27f..b47a299 100644
+--- a/src/cf.c
++++ b/src/cf.c
+@@ -327,15 +327,21 @@ bool cf_save_prefs(void) {
+     plist_entry *e = calloc(C.nprefs + 1, sizeof *e);
+     if (!e)
+         fatal("out of memory");
++    uint32_t n = 0;
+     for (uint32_t i = 0; i < C.nprefs; i++) {
+-        cf_obj *o = need("CFPreferencesAppSynchronize", C.prefs[i].value);
+-        e[i].key = C.prefs[i].key;
+-        e[i].is_number = o->type_id == CF_NUMBER_TYPE_ID;
+-        e[i].num = o->num;
+-        e[i].str = o->str;
++        cf_obj *o = lookup(C.prefs[i].value);
++        if (!o) { /* the game released a stored value too often; leave the key out */
++            log_msg("preferences: \"%s\" no longer has a value; not saving it", C.prefs[i].key);
++            continue;
++        }
++        e[n].key = C.prefs[i].key;
++        e[n].is_number = o->type_id == CF_NUMBER_TYPE_ID;
++        e[n].num = o->num;
++        e[n].str = o->str;
++        n++;
+     }
+     char err[512];
+-    bool ok = plist_write(C.prefs_path, e, C.nprefs, err, sizeof err);
++    bool ok = plist_write(C.prefs_path, e, n, err, sizeof err);
+     free(e); /* the strings belong to the preferences */
+     if (!ok)
+         log_msg("preferences: %s", err);
+diff --git a/src/cf.h b/src/cf.h
+index ee7650f..d7c6541 100644
+--- a/src/cf.h
++++ b/src/cf.h
+@@ -7,7 +7,8 @@
+    (CF_TAG_BASE + 16 * index), which it never dereferences. Preferences live
+    in memory; with a preferences file (cf_load_prefs) they are read from it
+    at startup and written back by CFPreferencesAppSynchronize, which the game
+-   calls as it quits. */
++   calls as it quits. main also saves them at any exit but a crash, as macOS
++   keeps values an application set without synchronizing. */
+ 
+ #define CF_TAG_BASE       0x08000000u
+ #define CF_TAG_LIMIT      0x09000000u
+@@ -27,7 +28,8 @@ void cf_init(void);
+ void cf_load_prefs(const char *path);
+ 
+ /* Writes the preferences to the file named by cf_load_prefs. False (logged)
+-   if that fails. True, doing nothing, if there's no file. */
++   if that fails. True, doing nothing, if there's no file. A key whose value
++   is no longer a live object is left out (logged). */
+ bool cf_save_prefs(void);
+ 
+ /* The CFStringRef stored in the kCFPreferencesCurrentApplication data import. */
+diff --git a/src/main.c b/src/main.c
+index 93b3357..98718d5 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -64,6 +64,15 @@ static void log_to_file_if_app(const char *argv0) {
+         log_path[0] = '\0';
+ }
+ 
++/* At exit, save what the game put in its preferences, unless it crashed:
++   macOS would have kept those values even if the game never called
++   CFPreferencesAppSynchronize (say, quit during a sequence that outlasted
++   the quit grace period). */
++static void save_prefs_at_exit(void) {
++    if (!util_failed())
++        cf_save_prefs();
++}
++
+ /* An error before the game starts: printed, and shown when running as the app. */
+ static int startup_error(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+ static int startup_error(const char *fmt, ...) {
+@@ -124,6 +133,7 @@ int main(int argc, char **argv) {
+         char prefs[PATH_MAX + 16];
+         snprintf(prefs, sizeof prefs, "%s/prefs.plist", data_dir);
+         cf_load_prefs(prefs);
++        atexit(save_prefs_at_exit);
+     }
+     qd_init(800, 600, 8);
+     dialogs_init();
+diff --git a/src/util.c b/src/util.c
+index 6ffe138..8cedb55 100644
+--- a/src/util.c
++++ b/src/util.c
+@@ -8,10 +8,14 @@
+ #include <sys/stat.h>
+ 
+ static util_failure_fn failure_hook;
++static bool failed;
+ 
+ void util_set_failure_hook(util_failure_fn fn) { failure_hook = fn; }
+ 
++bool util_failed(void) { return failed; }
++
+ void util_report_failure(const char *msg) {
++    failed = true;
+     util_failure_fn fn = failure_hook;
+     failure_hook = NULL; /* once, even if the hook itself fails */
+     if (fn)
+diff --git a/src/util.h b/src/util.h
+index 5bc8774..381f0af 100644
+--- a/src/util.h
++++ b/src/util.h
+@@ -12,6 +12,9 @@ typedef void (*util_failure_fn)(const char *msg);
+ void util_set_failure_hook(util_failure_fn fn);
+ void util_report_failure(const char *msg);
+ 
++/* True once util_report_failure has run (a crash or a fatal error). */
++bool util_failed(void);
++
+ /* Prints "loony: <msg>" to stderr. */
+ void log_msg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+ 
+diff --git a/tests/test_run.c b/tests/test_run.c
+index bc3fa35..e06a56a 100644
+--- a/tests/test_run.c
++++ b/tests/test_run.c
+@@ -329,6 +329,28 @@ TEST(run_a_key_code_registers_and_survives_a_relaunch) {
+     CHECK(!strstr(out, key));
+ }
+ 
++/* A run that ends without the game synchronizing (here LOONY_EXIT_AFTER;
++   for the user, a quit during a sequence that outlasts the 3-second grace)
++   still saves what the game set, as macOS would. */
++TEST(run_preferences_are_saved_even_without_synchronize) {
++    SKIP_UNLESS_GAME();
++    test_tmp_dir(run_data, sizeof run_data);
++    char prefs[1100];
++    snprintf(prefs, sizeof prefs, "%s/prefs.plist", run_data);
++    setenv("LOONY_EXIT_AFTER", "300", 1);
++    char out[32768];
++    int status = run_script("", NULL, NULL, 0, out, sizeof out);
++    unsetenv("LOONY_EXIT_AFTER");
++    char *xml = read_text(prefs);
++    test_remove_tree(run_data);
++    run_data[0] = '\0';
++    CHECK_EQ(status, 0);
++    CHECK(!strstr(out, "sending the quit Apple Event")); /* the game never quit */
++    CHECK(xml != NULL);
++    CHECK_CONTAINS(xml, "<string>SNOWMAN</string>");
++    free(xml);
++}
++
+ static void run_loony_bad_script(void *dir) {
+     setenv("LOONY_SCRIPT", "/nonexistent/loony.script", 1);
+     run_loony(dir);
+```
+
+- [ ] **Step 2: Run the tests:** 293 passed, 1 skipped, in Debug and Release.
+
+- [ ] **Step 3: Commit** ("Save the game's preferences at any exit but a crash, as macOS would; a quit that outlasts the grace period no longer loses them")
+
+---
+
+## Done
+
+All seven milestones are complete. Spec success criteria 1-5 were confirmed by the user on 2026-10-02. Criterion 6 (an hour with no crash) is met by Task 5.
