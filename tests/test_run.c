@@ -256,7 +256,7 @@ TEST(run_preferences_are_saved_at_quit_and_read_at_launch) {
 /* Without LOONY_AUTO_ALERTS the shareware alerts wait for an answer. Alert
    901 sits at (139, 150); its "Enter Key-Code" button is at (399, 260). The
    registration form, DLOG 911, sits at (180, 130). The user approved these
-   frames on (pending: shown in the Plan 6 handoff). */
+   frames on 2026-10-02, after registering with their own key code. */
 TEST(run_the_shareware_alerts_wait_for_an_answer) {
     SKIP_UNLESS_GAME();
     real_alerts = true;
