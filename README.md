@@ -49,7 +49,9 @@ Until it is registered, the game first shows two alerts: the shareware screen
 press Return for the outlined one. To register, click **Enter Key-Code**, type
 or paste (Cmd-V) your e-mail address and key code, using Tab to move between
 the fields, and click **Register** (or press Return). The license is saved with
-the preferences, so later launches go straight to the game.
+the preferences, so later launches go straight to the game. For testing,
+`docs/test_key.txt` has an e-mail address and key code that were posted
+publicly on [archive.org](https://archive.org/details/littlewing-pinball/).
 
 The game then plays its opening and a self-playing demo. To play:
 

@@ -1,0 +1,6 @@
+# From https://archive.org/details/littlewing-pinball/
+
+# Loony Labyrinth, Unknown Platform
+# V2.5.1-ie
+Email = nowhereman@nowhere.co.jp
+Code = 761956149062368478713072
