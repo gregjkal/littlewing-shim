@@ -3,9 +3,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* File Manager, read side: FSSpecs and data-fork reads from the game folder.
-   Writing files arrives with milestone 6; until then calls that would write
-   crash with a report.
+/* File Manager: FSSpecs and data-fork reads and writes.
+
+   Two folders back one fake volume: the game folder, which is never
+   modified, and a writable data folder that overlays it. A path is looked up
+   in the data folder first, then in the game folder. FSpCreate makes new
+   files in the data folder, and the first write to a game-folder file copies
+   it to the matching path there, so the game believes it saved in place.
 
    There is one fake volume (FILES_VREFNUM). Directory IDs are handed out per
    folder: FILES_ROOT_DIRID is the game folder, which is also the default
@@ -20,6 +24,9 @@
 #define FILES_RF_NUM_ERR (-51)
 #define FILES_POS_ERR    (-40)
 #define FILES_BD_NAM_ERR (-37)
+#define FILES_DUP_FN_ERR (-48)
+#define FILES_WR_PERM_ERR (-61)
+#define FILES_IO_ERR     (-36)
 
 /* FSSpec: vRefNum (2), parID (4), name (Str63, 64 bytes). */
 #define FSSPEC_SIZE 70
@@ -28,11 +35,14 @@
    Support/loony-shim. False if neither LOONY_DATA_DIR nor HOME is set. */
 bool files_data_dir(char *out, size_t cap);
 
-/* Sets the game folder (read-only). Closes open files and forgets directory IDs. */
-void files_init(const char *game_dir);
+/* Sets the game folder (read-only) and the writable folder (created when
+   first needed; NULL means writes fail with wrPermErr). Closes open files
+   and forgets directory IDs. */
+void files_init(const char *game_dir, const char *data_dir);
 
 /* Converts a Mac Roman name to UTF-8, with '/' (legal in Mac names) becoming ':'. */
 void files_mac_to_utf8(const char *mac, char *out, size_t cap);
 
-/* Registers FSMakeFSSpec, FSpOpenDF, PBReadSync, GetEOF, SetFPos, GetFPos and FSClose. */
+/* Registers FSMakeFSSpec, FSpCreate, FSpOpenDF, PBReadSync, FSWrite, GetEOF,
+   SetEOF, SetFPos, GetFPos, PBFlushFileSync and FSClose. */
 void files_register(void);

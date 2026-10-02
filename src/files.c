@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "guest_mem.h"
 #include "trap.h"
@@ -13,6 +14,9 @@
 #define MAX_DIRS 64
 #define MAX_FILES 16
 #define FIRST_REFNUM 20
+#define REL_CAP 1024  /* a path relative to the game folder */
+#define PATH_CAP 2100 /* a host path */
+#define FILES_PARAM_ERR (-50)
 
 /* ParamBlockRec (IOParam) offsets. */
 #define PB_RESULT     16
@@ -29,14 +33,21 @@
 #define FS_FROM_LEOF  2
 #define FS_FROM_MARK  3
 
+typedef struct {
+    FILE *f;
+    long eof;
+    bool writable; /* opened with a permission that allows writing */
+    bool in_data;  /* f is the copy in the data folder */
+    char rel[REL_CAP];
+} open_file;
+
 static struct {
     char game_dir[1024];
-    char dirs[MAX_DIRS][512]; /* relative host path of each directory ID - 2 ("" = game folder) */
+    char data_dir[1024]; /* "" = none */
+    char dirs[MAX_DIRS][REL_CAP]; /* relative host path of each directory ID - 2 ("" = game folder) */
     int ndirs;
-    struct {
-        FILE *f;
-        long eof;
-    } files[MAX_FILES];
+    open_file files[MAX_FILES];
+    bool warned_no_data;
 } F;
 
 /* Unicode code points for Mac Roman 0x80-0xFF. */
@@ -85,12 +96,14 @@ bool files_data_dir(char *out, size_t cap) {
     return true;
 }
 
-void files_init(const char *game_dir) {
+void files_init(const char *game_dir, const char *data_dir) {
     for (int i = 0; i < MAX_FILES; i++)
         if (F.files[i].f)
             fclose(F.files[i].f);
     memset(&F, 0, sizeof F);
     snprintf(F.game_dir, sizeof F.game_dir, "%s", game_dir);
+    if (data_dir)
+        snprintf(F.data_dir, sizeof F.data_dir, "%s", data_dir);
     F.ndirs = 1; /* ID 2: the game folder */
 }
 
@@ -110,23 +123,43 @@ static uint32_t dir_id(const char *rel) {
     return FILES_ROOT_DIRID + (uint32_t)F.ndirs++;
 }
 
-static void host_path(const char *rel, char *out, size_t cap) {
-    snprintf(out, cap, "%s%s%s", F.game_dir, *rel ? "/" : "", rel);
+/* rel inside root (the game or data folder). */
+static void under(const char *root, const char *rel, char *out, size_t cap) {
+    if (snprintf(out, cap, "%s%s%s", root, *rel ? "/" : "", rel) >= (int)cap)
+        trap_crash("the path %s/%s is too long", root, rel);
+}
+
+static bool exists(const char *path, bool want_dir) {
+    struct stat st;
+    return stat(path, &st) == 0 && (want_dir ? S_ISDIR(st.st_mode) : S_ISREG(st.st_mode));
+}
+
+/* Where rel is on the host: in the data folder if it's there, otherwise in
+   the game folder (whether or not it exists). */
+static void locate(const char *rel, bool want_dir, char *out, size_t cap) {
+    if (F.data_dir[0]) {
+        under(F.data_dir, rel, out, cap);
+        if (exists(out, want_dir))
+            return;
+    }
+    under(F.game_dir, rel, out, cap);
 }
 
 static bool is_dir(const char *rel) {
-    char p[1600];
-    host_path(rel, p, sizeof p);
-    struct stat st;
-    return stat(p, &st) == 0 && S_ISDIR(st.st_mode);
+    char p[PATH_CAP];
+    locate(rel, true, p, sizeof p);
+    return exists(p, true);
 }
 
 /* Joins a relative directory and a UTF-8 component. */
 static void join(const char *dir, const char *name, char *out, size_t cap) {
-    snprintf(out, cap, "%s%s%s", dir, *dir ? "/" : "", name);
+    if (snprintf(out, cap, "%s%s%s", dir, *dir ? "/" : "", name) >= (int)cap)
+        trap_crash("the path %s/%s is too long", dir, name);
 }
 
-/* FSMakeFSSpec(vRefNum, dirID, fileName, FSSpec *spec) -> OSErr */
+/* FSMakeFSSpec(vRefNum, dirID, fileName, FSSpec *spec) -> OSErr. A leading
+   ':' means relative; each further empty component ("::") goes up one
+   folder, but never above the game folder. */
 static void h_fs_make_fsspec(void) {
     int16_t vref = (int16_t)trap_arg(0);
     uint32_t dir = trap_arg(1), name_p = trap_arg(2), spec = trap_arg(3);
@@ -139,8 +172,7 @@ static void h_fs_make_fsspec(void) {
         trap_crash("FSMakeFSSpec: unknown directory ID %u", dir);
     char mac[256];
     gm_read_pstr(name_p, mac);
-    /* Walk ':'-separated components; a leading ':' means relative. */
-    char rel[512], comp[256], utf[512];
+    char rel[REL_CAP], comp[256], utf[REL_CAP];
     snprintf(rel, sizeof rel, "%s", base);
     const char *p = mac[0] == ':' ? mac + 1 : mac;
     if (strchr(mac, ':') && mac[0] != ':')
@@ -148,14 +180,34 @@ static void h_fs_make_fsspec(void) {
     for (;;) {
         const char *colon = strchr(p, ':');
         size_t n = colon ? (size_t)(colon - p) : strlen(p);
-        if (n == 0 || n > 63)
-            trap_crash("FSMakeFSSpec: bad path \"%s\"", mac);
+        if (n > 63) {
+            trap_return((uint32_t)FILES_BD_NAM_ERR);
+            return;
+        }
+        if (n == 0 && colon) { /* "::": the parent folder */
+            char *slash = strrchr(rel, '/');
+            if (!*rel) {
+                trap_return((uint32_t)FILES_DIR_NF_ERR);
+                return;
+            }
+            if (slash)
+                *slash = '\0';
+            else
+                rel[0] = '\0';
+            p = colon + 1;
+            continue;
+        }
         memcpy(comp, p, n);
         comp[n] = '\0';
+        /* "." and ".." are ordinary Mac names but would move around on the host. */
+        if (n == 0 || strcmp(comp, ".") == 0 || strcmp(comp, "..") == 0) {
+            trap_return((uint32_t)FILES_BD_NAM_ERR);
+            return;
+        }
         if (!colon)
             break;
         files_mac_to_utf8(comp, utf, sizeof utf);
-        char next[512];
+        char next[REL_CAP];
         join(rel, utf, next, sizeof next);
         if (!is_dir(next)) {
             trap_return((uint32_t)FILES_DIR_NF_ERR);
@@ -169,39 +221,80 @@ static void h_fs_make_fsspec(void) {
     memset(gm_ptr(spec + 6, 64), 0, 64);
     gm_write_pstr(spec + 6, comp);
     files_mac_to_utf8(comp, utf, sizeof utf);
-    char file_rel[1024], hp[1600];
+    char file_rel[REL_CAP], hp[PATH_CAP];
     join(rel, utf, file_rel, sizeof file_rel);
-    host_path(file_rel, hp, sizeof hp);
-    struct stat st;
-    trap_return(stat(hp, &st) == 0 ? 0 : (uint32_t)FILES_FNF_ERR);
+    locate(file_rel, false, hp, sizeof hp);
+    trap_return(exists(hp, false) ? 0 : (uint32_t)FILES_FNF_ERR);
 }
 
-static void spec_host_path(uint32_t spec, char *out, size_t cap) {
+/* The path of spec's file relative to the game folder. */
+static void spec_rel_path(uint32_t spec, char *out, size_t cap) {
     uint32_t dir = gm_r32(spec + 2);
     const char *base = dir_path(dir);
     if (!base)
         trap_crash("FSSpec has an unknown directory ID %u", dir);
-    char mac[256], utf[512], rel[1024];
+    char mac[256], utf[REL_CAP];
     gm_read_pstr(spec + 6, mac);
+    if (!mac[0] || strcmp(mac, ".") == 0 || strcmp(mac, "..") == 0 || strchr(mac, ':'))
+        trap_crash("FSSpec has a bad name \"%s\"", mac);
     files_mac_to_utf8(mac, utf, sizeof utf);
-    join(base, utf, rel, sizeof rel);
-    host_path(rel, out, cap);
+    join(base, utf, out, cap);
 }
 
-/* FSpOpenDF(const FSSpec *spec, SInt8 permission, short *refNum) -> OSErr */
+/* Logs (once) that there's nowhere to write. */
+static int16_t no_data_dir(const char *call) {
+    if (!F.warned_no_data)
+        log_msg("%s: there is no writable folder; the game can't save files", call);
+    F.warned_no_data = true;
+    return FILES_WR_PERM_ERR;
+}
+
+/* FSpCreate(const FSSpec *spec, OSType creator, OSType fileType, ScriptCode) -> OSErr */
+static void h_fsp_create(void) {
+    char rel[REL_CAP], path[PATH_CAP];
+    spec_rel_path(trap_arg(0), rel, sizeof rel);
+    locate(rel, false, path, sizeof path);
+    if (exists(path, false)) {
+        trap_return((uint32_t)FILES_DUP_FN_ERR);
+        return;
+    }
+    if (!F.data_dir[0]) {
+        trap_return((uint32_t)no_data_dir("FSpCreate"));
+        return;
+    }
+    under(F.data_dir, rel, path, sizeof path);
+    char parent[PATH_CAP];
+    snprintf(parent, sizeof parent, "%s", path);
+    *strrchr(parent, '/') = '\0';
+    FILE *f = make_dirs(parent) ? fopen(path, "wb") : NULL;
+    if (!f || fclose(f) != 0) {
+        log_msg("FSpCreate: can't create %s: %s", path, strerror(errno));
+        trap_return((uint32_t)FILES_IO_ERR);
+        return;
+    }
+    trap_return(0);
+}
+
+/* FSpOpenDF(const FSSpec *spec, SInt8 permission, short *refNum) -> OSErr.
+   Every permission but fsRdPerm (1) allows writing; the file is opened for
+   reading either way and copied to the data folder at its first write. */
 static void h_fsp_open_df(void) {
     uint32_t spec = trap_arg(0), out = trap_arg(2);
     int perm = (int8_t)trap_arg(1);
-    if (perm != 0 && perm != 1)
-        trap_crash("FSpOpenDF: opening files for writing (permission %d) is not supported yet", perm);
-    char path[1600];
-    spec_host_path(spec, path, sizeof path);
+    if (perm < 0 || perm > 4)
+        trap_crash("FSpOpenDF: unknown permission %d", perm);
+    char rel[REL_CAP], path[PATH_CAP];
+    spec_rel_path(spec, rel, sizeof rel);
+    locate(rel, false, path, sizeof path);
     int slot = 0;
     while (slot < MAX_FILES && F.files[slot].f)
         slot++;
     if (slot == MAX_FILES)
         trap_crash("FSpOpenDF: more than %d open files", MAX_FILES);
-    FILE *f = fopen(path, "rb");
+    bool in_data = F.data_dir[0] && strncmp(path, F.data_dir, strlen(F.data_dir)) == 0 &&
+                   path[strlen(F.data_dir)] == '/';
+    bool writable = perm != 1;
+    FILE *f = exists(path, false) ? fopen(path, in_data && writable ? "r+b" : "rb") : NULL;
     if (!f) {
         trap_return((uint32_t)FILES_FNF_ERR);
         return;
@@ -209,24 +302,64 @@ static void h_fsp_open_df(void) {
     fseek(f, 0, SEEK_END);
     F.files[slot].f = f;
     F.files[slot].eof = ftell(f);
+    F.files[slot].writable = writable;
+    F.files[slot].in_data = in_data;
+    snprintf(F.files[slot].rel, sizeof F.files[slot].rel, "%s", rel);
     fseek(f, 0, SEEK_SET);
     gm_w16(out, (uint16_t)(FIRST_REFNUM + slot));
     trap_return(0);
 }
 
-static FILE *file_of(int16_t ref, long *eof) {
+static open_file *file_of(int16_t ref) {
     int slot = ref - FIRST_REFNUM;
     if (slot < 0 || slot >= MAX_FILES || !F.files[slot].f)
         return NULL;
-    *eof = F.files[slot].eof;
-    return F.files[slot].f;
+    return &F.files[slot];
+}
+
+/* Makes an open file writable: copies a game-folder file into the data
+   folder and reopens the copy at the same mark. Returns an OSErr. */
+static int16_t make_writable(const char *call, open_file *o) {
+    if (!o->writable)
+        return FILES_WR_PERM_ERR;
+    if (o->in_data)
+        return 0;
+    if (!F.data_dir[0])
+        return no_data_dir(call);
+    char src[PATH_CAP], dst[PATH_CAP], parent[PATH_CAP];
+    under(F.game_dir, o->rel, src, sizeof src);
+    under(F.data_dir, o->rel, dst, sizeof dst);
+    snprintf(parent, sizeof parent, "%s", dst);
+    *strrchr(parent, '/') = '\0';
+    long mark = ftell(o->f);
+    FILE *out = make_dirs(parent) ? fopen(dst, "wb") : NULL;
+    bool ok = out != NULL;
+    fseek(o->f, 0, SEEK_SET);
+    char buf[65536];
+    size_t n;
+    while (ok && (n = fread(buf, 1, sizeof buf, o->f)) > 0)
+        ok = fwrite(buf, 1, n, out) == n;
+    ok = ok && !ferror(o->f);
+    if (out && fclose(out) != 0)
+        ok = false;
+    FILE *f = ok ? fopen(dst, "r+b") : NULL;
+    if (!f) {
+        log_msg("%s: can't copy %s to %s: %s", call, src, dst, strerror(errno));
+        fseek(o->f, mark, SEEK_SET);
+        return FILES_IO_ERR;
+    }
+    fclose(o->f);
+    o->f = f;
+    o->in_data = true;
+    fseek(f, mark, SEEK_SET);
+    return 0;
 }
 
 /* Moves the mark; returns an OSErr. */
 static int16_t set_pos(FILE *f, long eof, int mode, int32_t off) {
     long base;
     switch (mode & 3) {
-    case FS_AT_MARK: return 0;
+    case FS_AT_MARK: fseek(f, 0, SEEK_CUR); return 0; /* C needs a seek between writes and reads */
     case FS_FROM_START: base = 0; break;
     case FS_FROM_LEOF: base = eof; break;
     default: base = ftell(f); break;
@@ -245,81 +378,141 @@ static int16_t set_pos(FILE *f, long eof, int mode, int32_t off) {
 /* PBReadSync(ParmBlkPtr) -> OSErr */
 static void h_pb_read_sync(void) {
     uint32_t pb = trap_arg(0);
-    long eof;
-    FILE *f = file_of((int16_t)gm_r16(pb + PB_REFNUM), &eof);
+    open_file *o = file_of((int16_t)gm_r16(pb + PB_REFNUM));
     int16_t err = 0;
     uint32_t got = 0;
-    if (!f) {
+    if (!o) {
         err = FILES_RF_NUM_ERR;
     } else {
         int mode = (int16_t)gm_r16(pb + PB_POS_MODE);
         if (mode & 0x80)
             trap_crash("PBReadSync: newline mode is not supported");
-        err = set_pos(f, eof, mode, (int32_t)gm_r32(pb + PB_POS_OFFSET));
+        err = set_pos(o->f, o->eof, mode, (int32_t)gm_r32(pb + PB_POS_OFFSET));
         int32_t want = (int32_t)gm_r32(pb + PB_REQ_COUNT);
         if (!err && want > 0) {
             uint8_t *buf = gm_ptr(gm_r32(pb + PB_BUFFER), (uint32_t)want);
-            got = (uint32_t)fread(buf, 1, (size_t)want, f);
+            got = (uint32_t)fread(buf, 1, (size_t)want, o->f);
             if (got < (uint32_t)want)
                 err = FILES_EOF_ERR;
         }
-        gm_w32(pb + PB_POS_OFFSET, (uint32_t)ftell(f));
+        gm_w32(pb + PB_POS_OFFSET, (uint32_t)ftell(o->f));
     }
     gm_w32(pb + PB_ACT_COUNT, got);
     gm_w16(pb + PB_RESULT, (uint16_t)err);
     trap_return((uint32_t)(int32_t)err);
 }
 
-static void h_get_eof(void) {
-    long eof;
-    FILE *f = file_of((int16_t)trap_arg(0), &eof);
-    if (!f) {
+/* FSWrite(short refNum, long *count, const void *buffer) -> OSErr: writes at
+   the mark, extending the file as needed. *count becomes the bytes written. */
+static void h_fs_write(void) {
+    open_file *o = file_of((int16_t)trap_arg(0));
+    uint32_t count_p = trap_arg(1);
+    if (!o) {
         trap_return((uint32_t)FILES_RF_NUM_ERR);
         return;
     }
-    gm_w32(trap_arg(1), (uint32_t)eof);
+    int32_t want = (int32_t)gm_r32(count_p);
+    int16_t err = want < 0 ? FILES_PARAM_ERR : make_writable("FSWrite", o);
+    size_t put = 0;
+    if (!err && want > 0) {
+        fseek(o->f, 0, SEEK_CUR);
+        put = fwrite(gm_ptr(trap_arg(2), (uint32_t)want), 1, (size_t)want, o->f);
+        if (put < (size_t)want)
+            err = FILES_IO_ERR;
+        long mark = ftell(o->f);
+        if (mark > o->eof)
+            o->eof = mark;
+    }
+    gm_w32(count_p, (uint32_t)put);
+    trap_return((uint32_t)(int32_t)err);
+}
+
+static void h_get_eof(void) {
+    open_file *o = file_of((int16_t)trap_arg(0));
+    if (!o) {
+        trap_return((uint32_t)FILES_RF_NUM_ERR);
+        return;
+    }
+    gm_w32(trap_arg(1), (uint32_t)o->eof);
     trap_return(0);
+}
+
+/* SetEOF(short refNum, long logEOF) -> OSErr: truncates or extends with
+   zeros. A mark past the new end moves to it. */
+static void h_set_eof(void) {
+    open_file *o = file_of((int16_t)trap_arg(0));
+    int32_t eof = (int32_t)trap_arg(1);
+    if (!o) {
+        trap_return((uint32_t)FILES_RF_NUM_ERR);
+        return;
+    }
+    if (eof < 0) {
+        trap_return((uint32_t)FILES_PARAM_ERR);
+        return;
+    }
+    int16_t err = make_writable("SetEOF", o);
+    if (!err) {
+        long mark = ftell(o->f);
+        fflush(o->f);
+        if (ftruncate(fileno(o->f), eof) != 0) {
+            err = FILES_IO_ERR;
+        } else {
+            o->eof = eof;
+            fseek(o->f, mark > eof ? eof : mark, SEEK_SET);
+        }
+    }
+    trap_return((uint32_t)(int32_t)err);
 }
 
 static void h_set_fpos(void) {
-    long eof;
-    FILE *f = file_of((int16_t)trap_arg(0), &eof);
-    if (!f) {
+    open_file *o = file_of((int16_t)trap_arg(0));
+    if (!o) {
         trap_return((uint32_t)FILES_RF_NUM_ERR);
         return;
     }
-    trap_return((uint32_t)(int32_t)set_pos(f, eof, (int16_t)trap_arg(1), (int32_t)trap_arg(2)));
+    trap_return((uint32_t)(int32_t)set_pos(o->f, o->eof, (int16_t)trap_arg(1), (int32_t)trap_arg(2)));
 }
 
 static void h_get_fpos(void) {
-    long eof;
-    FILE *f = file_of((int16_t)trap_arg(0), &eof);
-    if (!f) {
+    open_file *o = file_of((int16_t)trap_arg(0));
+    if (!o) {
         trap_return((uint32_t)FILES_RF_NUM_ERR);
         return;
     }
-    gm_w32(trap_arg(1), (uint32_t)ftell(f));
+    gm_w32(trap_arg(1), (uint32_t)ftell(o->f));
     trap_return(0);
+}
+
+/* PBFlushFileSync(ParmBlkPtr) -> OSErr: pushes buffered writes to the host. */
+static void h_pb_flush_file_sync(void) {
+    uint32_t pb = trap_arg(0);
+    open_file *o = file_of((int16_t)gm_r16(pb + PB_REFNUM));
+    int16_t err = !o ? FILES_RF_NUM_ERR : fflush(o->f) != 0 ? FILES_IO_ERR : 0;
+    gm_w16(pb + PB_RESULT, (uint16_t)err);
+    trap_return((uint32_t)(int32_t)err);
 }
 
 static void h_fs_close(void) {
     int16_t ref = (int16_t)trap_arg(0);
-    long eof;
-    FILE *f = file_of(ref, &eof);
-    if (!f) {
+    open_file *o = file_of(ref);
+    if (!o) {
         trap_return((uint32_t)FILES_RF_NUM_ERR);
         return;
     }
-    fclose(f);
-    F.files[ref - FIRST_REFNUM].f = NULL;
-    trap_return(0);
+    int failed = fclose(o->f);
+    memset(o, 0, sizeof *o);
+    trap_return(failed ? (uint32_t)FILES_IO_ERR : 0);
 }
 
 void files_register(void) {
     trap_register("FSMakeFSSpec", h_fs_make_fsspec);
+    trap_register("FSpCreate", h_fsp_create);
     trap_register("FSpOpenDF", h_fsp_open_df);
     trap_register("PBReadSync", h_pb_read_sync);
+    trap_register("FSWrite", h_fs_write);
     trap_register("GetEOF", h_get_eof);
+    trap_register("SetEOF", h_set_eof);
+    trap_register("PBFlushFileSync", h_pb_flush_file_sync);
     trap_register("SetFPos", h_set_fpos);
     trap_register("GetFPos", h_get_fpos);
     trap_register("FSClose", h_fs_close);

@@ -65,17 +65,18 @@ int main(int argc, char **argv) {
     misc_init();
     cf_init();
     char data_dir[PATH_MAX];
-    if (files_data_dir(data_dir, sizeof data_dir)) {
+    bool have_data = files_data_dir(data_dir, sizeof data_dir);
+    if (have_data) {
         char prefs[PATH_MAX + 16];
         snprintf(prefs, sizeof prefs, "%s/prefs.plist", data_dir);
         cf_load_prefs(prefs);
     } else {
-        log_msg("neither LOONY_DATA_DIR nor HOME is set: preferences won't be saved");
+        log_msg("neither LOONY_DATA_DIR nor HOME is set: nothing will be saved");
     }
     qd_init(800, 600, 8);
     dialogs_init();
     events_init();
-    files_init(dir);
+    files_init(dir, have_data ? data_dir : NULL);
     sound_init();
     display_init();
     events_set_present(display_present_if_dirty);
