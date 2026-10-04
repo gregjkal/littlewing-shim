@@ -1,5 +1,6 @@
 #include "picker.h"
 
+#include <SDL3/SDL.h>
 #include <SDL3/SDL_scancode.h>
 #include <ctype.h>
 #include <limits.h>
@@ -8,8 +9,12 @@
 #include <string.h>
 
 #include "blit.h"
+#include "display.h"
+#include "files.h"
 #include "font.h"
 #include "pict.h"
+#include "plist.h"
+#include "png.h"
 #include "rsrc.h"
 #include "util.h"
 
@@ -158,4 +163,137 @@ bool picker_load_art(const char *exe_path, uint8_t *art, char *err, size_t errle
     rsrc_close();
     free(fork);
     return ok;
+}
+
+static struct {
+    int n, selected;
+    bool choose, quit, dirty;
+} P;
+
+static void on_key(int scancode, bool down, bool repeat) {
+    (void)repeat;
+    if (!down)
+        return;
+    int before = P.selected;
+    P.selected = picker_key(P.n, P.selected, scancode, &P.choose);
+    P.dirty |= P.selected != before;
+}
+
+static void on_mouse(int x, int y, bool down) {
+    int i = picker_hit(P.n, x, y);
+    if (!down || i < 0)
+        return;
+    P.selected = i;
+    P.choose = true;
+}
+
+static void on_quit(void) { P.quit = true; }
+
+static void last_path(char *out, size_t cap, bool *ok) {
+    char root[PATH_MAX];
+    *ok = files_data_root(root, sizeof root);
+    if (*ok)
+        snprintf(out, cap, "%s/" GAME_PICKER_FILE, root);
+}
+
+static void load_last(char *id, size_t cap) {
+    id[0] = '\0';
+    char path[PATH_MAX], err[256];
+    bool ok;
+    last_path(path, sizeof path, &ok);
+    plist_entry *e;
+    uint32_t n;
+    if (!ok || plist_read(path, &e, &n, err, sizeof err) != PLIST_OK)
+        return;
+    for (uint32_t i = 0; i < n; i++)
+        if (strcmp(e[i].key, "last game") == 0 && !e[i].is_number)
+            snprintf(id, cap, "%s", e[i].str);
+    plist_free(e, n);
+}
+
+static void save_last(const char *id) {
+    char path[PATH_MAX], err[256];
+    bool ok;
+    last_path(path, sizeof path, &ok);
+    plist_entry e = {.key = "last game", .str = (char *)id};
+    if (ok && !plist_write(path, &e, 1, err, sizeof err))
+        log_msg("picker: can't remember the last game: %s", err);
+}
+
+/* The next LOONY_PICK item into item ("" if none), passing the rest on. */
+static void next_scripted_pick(char *item, size_t cap) {
+    item[0] = '\0';
+    const char *s = getenv("LOONY_PICK");
+    if (!s || !*s)
+        return;
+    const char *comma = strchr(s, ',');
+    snprintf(item, cap, "%.*s", (int)(comma ? (size_t)(comma - s) : strlen(s)), s);
+    if (comma)
+        setenv("LOONY_PICK", comma + 1, 1);
+    else
+        unsetenv("LOONY_PICK");
+}
+
+const game_info *picker_run(const game_info *const *games, int n) {
+    if (n > PICKER_MAX)
+        n = PICKER_MAX;
+    picker_entry e[PICKER_MAX];
+    for (int i = 0; i < n; i++) {
+        e[i].game = games[i];
+        e[i].art = malloc(PICKER_ART_W * PICKER_ART_H * 4);
+        char dir[PATH_MAX], exe[PATH_MAX + 64], err[512];
+        game_folder(games[i], dir, sizeof dir);
+        snprintf(exe, sizeof exe, "%s/%s", dir, games[i]->exe);
+        if (!e[i].art || !picker_load_art(exe, e[i].art, err, sizeof err)) {
+            log_msg("picker: %s", e[i].art ? err : "out of memory");
+            free(e[i].art);
+            e[i].art = NULL;
+        }
+    }
+    char last[64];
+    load_last(last, sizeof last);
+    memset(&P, 0, sizeof P);
+    P.n = n;
+    P.selected = picker_initial(e, n, last);
+    P.dirty = true;
+    static const display_input input = {on_key, NULL, on_quit, on_mouse, NULL};
+    display_set_input(&input);
+    display_set_title("LittleWing");
+    static uint8_t screen[PICKER_W * PICKER_H * 4], rgba[PICKER_W * PICKER_H * 4];
+    char scripted[64] = "";
+    bool first = true;
+    while (!P.choose && !P.quit) {
+        if (P.dirty) {
+            picker_draw(e, n, P.selected, screen);
+            qd_pixels s = {screen, PICKER_W * 4, {0, 0, PICKER_H, PICKER_W}, 32, NULL};
+            qd_to_rgba(&s, rgba);
+            P.dirty = false;
+        }
+        display_present_rgba(rgba, PICKER_W, PICKER_H); /* waits for the display's refresh */
+        if (first) {
+            first = false;
+            const char *shot = getenv("LOONY_PICKER_SHOT");
+            if (shot && *shot && !png_write_rgba(shot, rgba, PICKER_W, PICKER_H))
+                log_msg("picker: can't write %s", shot);
+            next_scripted_pick(scripted, sizeof scripted);
+            if (strcmp(scripted, "quit") == 0)
+                P.quit = true;
+            for (int i = 0; i < n; i++)
+                if (strcmp(scripted, e[i].game->id) == 0) {
+                    P.selected = i;
+                    P.choose = true;
+                }
+        }
+        display_poll();
+        SDL_Delay(1); /* without vsync (the dummy driver), don't spin */
+    }
+    for (int i = 0; i < n; i++)
+        free(e[i].art);
+    if (P.quit) {
+        log_msg("picker: quit");
+        exit(0);
+    }
+    log_msg("picker: %s", e[P.selected].game->id);
+    save_last(e[P.selected].game->id);
+    return e[P.selected].game;
 }

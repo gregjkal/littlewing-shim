@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include "plist.h"
 #include "util.h"
 
 /* LOONY_DATA_DIR for the runs that follow: each scripted run gets a fresh
@@ -520,6 +521,163 @@ TEST(run_each_game_saves_in_its_own_folder) {
     snprintf(path, sizeof path, "%s/prefs.plist", root);
     CHECK(access(path, F_OK) != 0);
     test_remove_tree(save_home);
+}
+
+/* The game's own QUIT (Facts measured): Esc ends the demo, Esc opens the
+   menu, Up wraps to its quit item, Return. */
+static const char menu_quit_script[] = "1720 down esc\n1724 up esc\n1800 down esc\n1804 up esc\n"
+                                       "1900 down up\n1904 up up\n2000 down return\n2004 up return\n";
+
+static char pick[256], pick_shot[1024];
+
+static void run_picker(void *unused) {
+    setenv("LOONY_PICK", pick, 1);
+    setenv("LOONY_FIXED_CLOCK", "1", 1);
+    if (pick_shot[0])
+        setenv("LOONY_PICKER_SHOT", pick_shot, 1);
+    if (script_path[0])
+        setenv("LOONY_SCRIPT", script_path, 1);
+    run_loony_no_folder(unused);
+}
+
+static bool both_games(void) {
+    return test_game_present() && test_cc_present() && link_game("Loony Labyrinth", test_game_dir()) &&
+           link_game("Crystal Caliburn", test_cc_dir());
+}
+
+static int run_picker_with(const char *picks, const char *script, char *out, size_t outlen) {
+    snprintf(pick, sizeof pick, "%s", picks);
+    script_path[0] = '\0';
+    if (script) {
+        tmp_name(script_path, sizeof script_path, "script");
+        FILE *f = fopen(script_path, "w");
+        fputs(script, f);
+        fclose(f);
+    }
+    int status = test_run_child(run_picker, NULL, out, outlen);
+    if (script)
+        unlink(script_path);
+    script_path[0] = '\0';
+    return status;
+}
+
+/* Review Focus 2 and 3: the game's own QUIT goes back to the picker; the
+   log carries on across the restart. */
+TEST(run_quitting_from_the_game_menu_returns_to_the_picker) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_CC();
+    test_tmp_dir(apps_dir, sizeof apps_dir);
+    CHECK(both_games());
+    test_tmp_dir(run_data, sizeof run_data);
+    char out[65536];
+    int status = run_picker_with("crystal-caliburn,quit", menu_quit_script, out, sizeof out);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    test_remove_tree(apps_dir);
+    CHECK_EQ(status, 0);
+    const char *a = strstr(out, "picker: crystal-caliburn");
+    const char *b = a ? strstr(a, "playing Crystal Caliburn from") : NULL;
+    const char *c = b ? strstr(b, "ExitToShell") : NULL;
+    const char *d = c ? strstr(c, "back to the picker") : NULL;
+    const char *e = d ? strstr(d, "picker: quit") : NULL;
+    CHECK(a && b && c && d && e);
+    CHECK(!strstr(out, "quit Apple Event"));
+}
+
+/* Review Focus 2: Cmd-Q (here a script quit, which takes the same path)
+   during a picked game quits the app; the second pick is never used. */
+TEST(run_cmd_q_in_a_picked_game_quits_the_app) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_CC();
+    test_tmp_dir(apps_dir, sizeof apps_dir);
+    CHECK(both_games());
+    test_tmp_dir(run_data, sizeof run_data);
+    char out[65536];
+    int status = run_picker_with("loony-labyrinth,crystal-caliburn", "300 quit\n", out, sizeof out);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    test_remove_tree(apps_dir);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "picker: loony-labyrinth");
+    CHECK_CONTAINS(out, "sending the quit Apple Event");
+    CHECK(!strstr(out, "back to the picker"));
+    CHECK(!strstr(out, "picker: crystal-caliburn"));
+}
+
+TEST(run_the_picker_frame_shows_both_games) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_CC();
+    test_tmp_dir(apps_dir, sizeof apps_dir);
+    CHECK(both_games());
+    test_tmp_dir(run_data, sizeof run_data);
+    tmp_name(pick_shot, sizeof pick_shot, "picker");
+    char out[16384];
+    int status = run_picker_with("quit", NULL, out, sizeof out);
+    size_t len = 0;
+    uint8_t *png = read_file(pick_shot, &len);
+    unlink(pick_shot);
+    pick_shot[0] = '\0';
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    test_remove_tree(apps_dir);
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "can't read")); /* both pictures loaded */
+    CHECK(png != NULL);
+    CHECK_EQ(rd_be32(png + 16), 800);
+    CHECK_EQ(rd_be32(png + 20), 600);
+    char got[16];
+    snprintf(got, sizeof got, "%08x", fnv1a32(png, len));
+    free(png);
+    CHECK_STR(got, ""); /* recorded in Task 8, after the user approves the picker */
+}
+
+/* Review Focus 1: the picker remembers the last game in the save root,
+   and each game's preferences land in its own folder. */
+static void run_picker_home(void *unused) {
+    setenv("HOME", save_home, 1);
+    unsetenv("LOONY_DATA_DIR");
+    run_data[0] = '\0';
+    run_picker(unused);
+}
+
+TEST(run_the_picker_remembers_and_each_game_saves_apart) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_CC();
+    test_tmp_dir(apps_dir, sizeof apps_dir);
+    CHECK(both_games());
+    test_tmp_dir(save_home, sizeof save_home);
+    snprintf(pick, sizeof pick, "crystal-caliburn,quit");
+    tmp_name(script_path, sizeof script_path, "script");
+    FILE *f = fopen(script_path, "w");
+    fputs(menu_quit_script, f);
+    fclose(f);
+    char out[65536];
+    int status = test_run_child(run_picker_home, NULL, out, sizeof out);
+    unlink(script_path);
+    script_path[0] = '\0';
+    char root[1100], path[1300];
+    snprintf(root, sizeof root, "%s/Library/Application Support/loony-shim", save_home);
+    snprintf(path, sizeof path, "%s/picker.plist", root);
+    plist_entry *e = NULL;
+    uint32_t n = 0;
+    char err[256];
+    plist_status ps = plist_read(path, &e, &n, err, sizeof err);
+    bool remembered = false;
+    for (uint32_t i = 0; ps == PLIST_OK && i < n; i++)
+        remembered |= strcmp(e[i].key, "last game") == 0 && !e[i].is_number &&
+                      strcmp(e[i].str, "crystal-caliburn") == 0;
+    if (ps == PLIST_OK)
+        plist_free(e, n);
+    snprintf(path, sizeof path, "%s/crystal-caliburn/prefs.plist", root);
+    bool cc_saved = access(path, R_OK) == 0;
+    snprintf(path, sizeof path, "%s/prefs.plist", root);
+    bool none_at_root = access(path, F_OK) != 0;
+    test_remove_tree(save_home);
+    test_remove_tree(apps_dir);
+    CHECK_EQ(status, 0);
+    CHECK(remembered);
+    CHECK(cc_saved);
+    CHECK(none_at_root);
 }
 
 /* Launched as the app, the log goes to ~/Library/Logs/loony-shim instead

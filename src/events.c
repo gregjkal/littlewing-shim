@@ -221,6 +221,8 @@ void events_request_quit(void) {
     }
 }
 
+bool events_quit_requested(void) { return E.quit_deadline > 0; }
+
 /* ---- setup ---- */
 
 void events_init(void) {

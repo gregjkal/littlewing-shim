@@ -1,6 +1,7 @@
 #include <SDL3/SDL.h>
 #include <errno.h>
 #include <limits.h>
+#include <mach-o/dyld.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +19,7 @@
 #include "loader.h"
 #include "memmgr.h"
 #include "misc.h"
+#include "picker.h"
 #include "qd.h"
 #include "rsrc.h"
 #include "script.h"
@@ -27,7 +29,8 @@
 
 /* Launched as the app (from Finder or `open`), there is no terminal: the
    log goes to ~/Library/Logs/loony-shim/loony.log (the one before it is kept
-   as loony.previous.log), and failures are shown in a message box. */
+   as loony.previous.log; after a restart for the picker, the same log
+   carries on), and failures are shown in a message box. */
 static char log_path[PATH_MAX];
 
 static void show_failure(const char *msg) {
@@ -51,6 +54,9 @@ static void log_to_file_if_app(const char *argv0) {
     snprintf(log_path, sizeof log_path, "%s/loony.log", dir);
     snprintf(prev, sizeof prev, "%s/loony.previous.log", dir);
     util_set_failure_hook(show_failure);
+    const char *inherited = getenv("LOONY_LOG_INHERITED");
+    if (inherited && strcmp(inherited, "1") == 0) /* restarted for the picker: stderr is already the log */
+        return;
     if (!make_dirs(dir)) {
         log_path[0] = '\0';
         return;
@@ -96,6 +102,32 @@ static int no_game_error(void) {
     return startup_error("%s", msg);
 }
 
+/* Set when the picker chose the game: its own quit goes back to the picker. */
+static bool return_to_picker;
+
+/* The game ended by itself (ExitToShell, or its main returned). After a
+   pick, and unless the host asked to quit or something failed, the
+   preferences are saved and the process restarts itself to show the picker
+   again: the emulator's state can't be reset in place. */
+static void back_to_picker(void) {
+    if (!return_to_picker || events_quit_requested() || util_failed())
+        return;
+    cf_save_prefs();
+    char self[PATH_MAX];
+    uint32_t size = sizeof self;
+    if (_NSGetExecutablePath(self, &size) != 0) {
+        log_msg("can't find this program to go back to the picker");
+        return;
+    }
+    setenv("LOONY_FULLSCREEN", display_fullscreen() ? "1" : "0", 1);
+    if (log_path[0])
+        setenv("LOONY_LOG_INHERITED", "1", 1);
+    log_msg("back to the picker");
+    fflush(stderr);
+    execv(self, (char *const[]){self, NULL});
+    log_msg("can't restart for the picker: %s", strerror(errno));
+}
+
 int main(int argc, char **argv) {
     log_to_file_if_app(argv[0]);
     const char *dir_arg = NULL;
@@ -129,7 +161,12 @@ int main(int argc, char **argv) {
         int n = game_installed(installed, 8);
         if (n == 0)
             return no_game_error();
-        game = installed[0]; /* Task 5: the picker, when n > 1 */
+        if (n == 1) {
+            game = installed[0];
+        } else {
+            game = picker_run(installed, n);
+            return_to_picker = true;
+        }
         game_folder(game, dir, sizeof dir);
     }
 
@@ -159,6 +196,7 @@ int main(int argc, char **argv) {
         return startup_error("can't load the resources of %s: %s", path, err);
     mm_init();
     misc_init();
+    misc_set_exit_hook(back_to_picker);
     cf_init();
     char data_root[PATH_MAX], data_dir[PATH_MAX];
     if (files_data_root(data_root, sizeof data_root))
@@ -221,6 +259,7 @@ int main(int argc, char **argv) {
     if (img.init_tvector)
         guest_call(img.init_tvector, 0, NULL);
     guest_call(img.main_tvector, 0, NULL);
+    back_to_picker();
     log_msg("main returned");
     return 0;
 }

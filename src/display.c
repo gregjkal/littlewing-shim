@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "png.h"
 #include "qd.h"
@@ -68,7 +69,9 @@ static bool open_window(int w, int h) {
         return false;
     }
     int scale = w < 800 ? 2 : 1;
-    D.window = SDL_CreateWindow(D.title ? D.title : "LittleWing", w * scale, h * scale, SDL_WINDOW_RESIZABLE);
+    const char *fs = getenv("LOONY_FULLSCREEN");
+    SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | (fs && strcmp(fs, "1") == 0 ? SDL_WINDOW_FULLSCREEN : 0);
+    D.window = SDL_CreateWindow(D.title ? D.title : "LittleWing", w * scale, h * scale, flags);
     D.renderer = D.window ? SDL_CreateRenderer(D.window, NULL) : NULL;
     if (!D.renderer) {
         log_msg("display: can't create a window: %s (continuing without one)", SDL_GetError());
@@ -78,10 +81,8 @@ static bool open_window(int w, int h) {
     return true;
 }
 
-void display_present(void) {
+void display_present_rgba(const uint8_t *rgba, int w, int h) {
     D.frames++;
-    int w, h;
-    uint8_t *rgba = screen_rgba(&w, &h);
     if (!D.tried)
         D.sdl_ok = open_window(w, h);
     if (D.sdl_ok) {
@@ -101,7 +102,17 @@ void display_present(void) {
         SDL_RenderTexture(D.renderer, D.texture, NULL, NULL);
         SDL_RenderPresent(D.renderer);
     }
+}
+
+void display_present(void) {
+    int w, h;
+    uint8_t *rgba = screen_rgba(&w, &h);
+    display_present_rgba(rgba, w, h);
     free(rgba);
+}
+
+bool display_fullscreen(void) {
+    return D.window && (SDL_GetWindowFlags(D.window) & SDL_WINDOW_FULLSCREEN) != 0;
 }
 
 void display_present_if_dirty(void) {

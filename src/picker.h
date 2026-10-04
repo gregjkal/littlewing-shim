@@ -42,3 +42,11 @@ int picker_key(int n, int selected, int scancode, bool *choose);
 
 /* The entry for last_id (the last game picked), or 0. */
 int picker_initial(const picker_entry *e, int n, const char *last_id);
+
+/* Shows the picker for these installed games (2 to PICKER_MAX) and returns
+   the one chosen. Remembers it in <files_data_root>/picker.plist ("last
+   game") and starts on the one remembered. Cmd-Q or closing the window
+   exits the process. For tests: LOONY_PICK=<id|quit>[,...] acts on its
+   first item after the first frame and passes the rest on (as
+   LOONY_PICK); LOONY_PICKER_SHOT=<png> writes that first frame. */
+const game_info *picker_run(const game_info *const *games, int n);
