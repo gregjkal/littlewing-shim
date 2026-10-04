@@ -754,8 +754,8 @@ TEST(run_the_app_bundle_is_self_contained_and_plays) {
         return;
     }
     CHECK(made == 0);
-    snprintf(bundle_bin, sizeof bundle_bin, "%s/Loony Labyrinth.app/Contents/MacOS/loony", out_dir);
-    snprintf(cmd, sizeof cmd, "otool -L '%s' && codesign -d --entitlements - '%s/Loony Labyrinth.app' 2>&1",
+    snprintf(bundle_bin, sizeof bundle_bin, "%s/LittleWing.app/Contents/MacOS/loony", out_dir);
+    snprintf(cmd, sizeof cmd, "otool -L '%s' && codesign -d --entitlements - '%s/LittleWing.app' 2>&1",
              bundle_bin, out_dir);
     FILE *p = popen(cmd, "r");
     CHECK(p != NULL);
@@ -766,8 +766,15 @@ TEST(run_the_app_bundle_is_self_contained_and_plays) {
     CHECK_CONTAINS(text, "@rpath/libunicorn");
     CHECK_CONTAINS(text, "com.apple.security.cs.allow-jit");
     char icns[1024];
-    snprintf(icns, sizeof icns, "%s/Loony Labyrinth.app/Contents/Resources/AppIcon.icns", out_dir);
+    snprintf(icns, sizeof icns, "%s/LittleWing.app/Contents/Resources/AppIcon.icns", out_dir);
     CHECK(access(icns, R_OK) == 0);
+    snprintf(cmd, sizeof cmd, "plutil -extract CFBundleName raw '%s/LittleWing.app/Contents/Info.plist'", out_dir);
+    p = popen(cmd, "r");
+    CHECK(p != NULL);
+    n = fread(text, 1, sizeof text - 1, p);
+    text[n] = '\0';
+    pclose(p);
+    CHECK_STR(text, "LittleWing\n");
 
     char png[1024];
     tmp_name(png, sizeof png, "shot");
