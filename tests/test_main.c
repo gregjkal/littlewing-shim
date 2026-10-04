@@ -48,6 +48,17 @@ bool test_game_present(void) {
     return access(test_game_exe_path(), R_OK) == 0;
 }
 
+const char *test_cc_dir(void) {
+    const char *d = getenv("LOONY_CC_DIR");
+    return d && *d ? d : "/Applications/Crystal Caliburn";
+}
+
+bool test_cc_present(void) {
+    char path[1100];
+    snprintf(path, sizeof path, "%s/CRYSTAL CALIBURN 3.0.1", test_cc_dir());
+    return access(path, R_OK) == 0;
+}
+
 void test_tmp_dir(char *out, size_t cap) {
     const char *t = getenv("TMPDIR");
     snprintf(out, cap, "%s/loony-test-XXXXXX", t && *t ? t : "/tmp");

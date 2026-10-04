@@ -25,9 +25,6 @@
 #include "trap.h"
 #include "util.h"
 
-#define DEFAULT_GAME_DIR "/Applications/Loony Labyrinth"
-#define GAME_EXE_NAME "LOONY LABYRINTH 3.0.1"
-
 /* Launched as the app (from Finder or `open`), there is no terminal: the
    log goes to ~/Library/Logs/loony-shim/loony.log (the one before it is kept
    as loony.previous.log), and failures are shown in a message box. */
@@ -42,7 +39,7 @@ static void show_failure(const char *msg) {
         snprintf(text, sizeof text, "%s\n\nThe log is in %s", msg, log_path);
     else
         snprintf(text, sizeof text, "%s", msg);
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Loony Labyrinth", text, NULL);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LittleWing", text, NULL);
 }
 
 static void log_to_file_if_app(const char *argv0) {
@@ -87,26 +84,63 @@ static int startup_error(const char *fmt, ...) {
     return 1;
 }
 
+/* The games' folders, for the message when none is installed. */
+static int no_game_error(void) {
+    char msg[2048] = "no LittleWing game found: put ";
+    for (size_t i = 0; i < game_count(); i++) {
+        char dir[PATH_MAX];
+        game_folder(game_at(i), dir, sizeof dir);
+        size_t used = strlen(msg);
+        snprintf(msg + used, sizeof msg - used, "%s%s in %s", i ? " or " : "", game_at(i)->title, dir);
+    }
+    return startup_error("%s", msg);
+}
+
 int main(int argc, char **argv) {
     log_to_file_if_app(argv[0]);
-    const char *dir = DEFAULT_GAME_DIR;
+    const char *dir_arg = NULL;
     int nargs = 0;
     for (int i = 1; i < argc; i++) {
         if (strncmp(argv[i], "-psn_", 5) == 0) /* older macOS adds this when launching an app */
             continue;
-        dir = argv[i];
+        dir_arg = argv[i];
         nargs++;
     }
     if (nargs > 1)
         return startup_error("usage: loony [game-folder]");
 
+    /* The game: the one in the folder given; else LOONY_GAME's; else the
+       one installed, or the picker's choice when there are more. */
+    const game_info *game;
+    char dir[PATH_MAX];
+    const char *forced = getenv("LOONY_GAME");
+    if (dir_arg) {
+        snprintf(dir, sizeof dir, "%s", dir_arg);
+        game = game_in_folder(dir);
+        if (!game)
+            game = game_at(0); /* names the program expected, in the message below */
+    } else if (forced && *forced) {
+        game = game_by_id(forced);
+        if (!game)
+            return startup_error("LOONY_GAME names no known game: %s", forced);
+        game_folder(game, dir, sizeof dir);
+    } else {
+        const game_info *installed[8];
+        int n = game_installed(installed, 8);
+        if (n == 0)
+            return no_game_error();
+        game = installed[0]; /* Task 5: the picker, when n > 1 */
+        game_folder(game, dir, sizeof dir);
+    }
+
     char path[PATH_MAX];
-    snprintf(path, sizeof path, "%s/%s", dir, GAME_EXE_NAME);
+    snprintf(path, sizeof path, "%s/%s", dir, game->exe);
     size_t len = 0;
     uint8_t *buf = read_file(path, &len);
     if (!buf)
-        return startup_error("can't read %s: %s. Loony Labyrinth needs the original game in %s.", path,
-                             strerror(errno), dir);
+        return startup_error("can't read %s: %s. %s needs the original game in %s.", path,
+                             strerror(errno), game->title, dir);
+    log_msg("playing %s from %s", game->title, dir);
 
     char fork_path[PATH_MAX + 32];
     snprintf(fork_path, sizeof fork_path, "%s/..namedfork/rsrc", path);
@@ -126,8 +160,10 @@ int main(int argc, char **argv) {
     mm_init();
     misc_init();
     cf_init();
-    char data_dir[PATH_MAX];
-    bool have_data = files_data_dir(game_at(0)->id, data_dir, sizeof data_dir);
+    char data_root[PATH_MAX], data_dir[PATH_MAX];
+    if (files_data_root(data_root, sizeof data_root))
+        game_move_legacy_data(data_root);
+    bool have_data = files_data_dir(game->id, data_dir, sizeof data_dir);
     if (!have_data)
         log_msg("neither LOONY_DATA_DIR nor HOME is set: nothing will be saved");
     if (files_init(dir, have_data ? data_dir : NULL)) {
@@ -141,6 +177,7 @@ int main(int argc, char **argv) {
     events_init();
     sound_init();
     display_init();
+    display_set_title(game->title);
     events_set_present(display_present_if_dirty);
     events_set_poll(display_poll);
     events_set_screenshot(display_write_png);

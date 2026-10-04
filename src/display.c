@@ -18,7 +18,14 @@ static struct {
     display_input input;
     bool no_vsync;
     bool cursor_hidden;
+    const char *title;
 } D;
+
+void display_set_title(const char *title) {
+    D.title = title;
+    if (D.window)
+        SDL_SetWindowTitle(D.window, title);
+}
 
 static uint8_t *screen_rgba(int *w, int *h) {
     qd_pixels px;
@@ -61,7 +68,7 @@ static bool open_window(int w, int h) {
         return false;
     }
     int scale = w < 800 ? 2 : 1;
-    D.window = SDL_CreateWindow("Loony Labyrinth", w * scale, h * scale, SDL_WINDOW_RESIZABLE);
+    D.window = SDL_CreateWindow(D.title ? D.title : "LittleWing", w * scale, h * scale, SDL_WINDOW_RESIZABLE);
     D.renderer = D.window ? SDL_CreateRenderer(D.window, NULL) : NULL;
     if (!D.renderer) {
         log_msg("display: can't create a window: %s (continuing without one)", SDL_GetError());

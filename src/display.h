@@ -10,6 +10,9 @@
    the process exits, including after a crash. */
 void display_init(void);
 
+/* The window's title. Sets it at once on an open window. */
+void display_set_title(const char *title);
+
 /* Draws the current screen. */
 void display_present(void);
 

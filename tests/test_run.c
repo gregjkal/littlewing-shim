@@ -61,6 +61,37 @@ TEST(run_plays_the_opening_headless) {
     free(png);
 }
 
+TEST(run_crystal_caliburn_plays_its_opening_headless) {
+    SKIP_UNLESS_CC();
+    const char *t = getenv("TMPDIR");
+    snprintf(shot, sizeof shot, "%s/loony-run-XXXXXX", t && *t ? t : "/tmp");
+    int fd = mkstemp(shot);
+    CHECK(fd >= 0);
+    close(fd);
+    char out[32768];
+    test_tmp_dir(run_data, sizeof run_data);
+    int status = test_run_child(run_loony_headless, (void *)test_cc_dir(), out, sizeof out);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    size_t len = 0;
+    uint8_t *png = read_file(shot, &len);
+    unlink(shot);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "playing Crystal Caliburn from");
+    CHECK_CONTAINS(out, "CRYSTAL CALIBURN 3.0.1: 132 imports");
+    CHECK_CONTAINS(out, "loony: Alert 901 (answering item 1): Play Demo");
+    CHECK_CONTAINS(out, "LittleWing CRYSTAL CALIBURN Pinball");
+    CHECK_CONTAINS(out, "loony: Alert 900 (answering item 1): OK");
+    CHECK_CONTAINS(out, "loony: exiting after 240 ticks (LOONY_EXIT_AFTER)");
+    CHECK(!strstr(out, "unknown selector"));
+    CHECK(!strstr(out, "not supported"));
+    CHECK(png != NULL);
+    CHECK(len > 33);
+    CHECK_EQ(rd_be32(png + 16), 800);
+    CHECK_EQ(rd_be32(png + 20), 600);
+    free(png);
+}
+
 /* Fixed-clock runs are deterministic, so their frames can be compared with
    golden hashes (FNV-1a32 of the PNG file, which is uncompressed). The user
    approved the golden frames on 2026-10-02: the LittleWing logo, the title,
@@ -369,6 +400,126 @@ TEST(run_reports_missing_game_folder) {
     int status = test_run_child(run_loony, (void *)"/nonexistent/loony", out, sizeof out);
     CHECK_EQ(status, 1);
     CHECK_CONTAINS(out, "can't read /nonexistent/loony/LOONY LABYRINTH 3.0.1");
+}
+
+/* Fake application folders: apps_dir holds links to the real game folders
+   (or empty programs, for runs that never start a game). */
+static char apps_dir[1024];
+
+static bool link_game(const char *name, const char *real_dir) {
+    char path[1200];
+    snprintf(path, sizeof path, "%s/%s", apps_dir, name);
+    return symlink(real_dir, path) == 0;
+}
+
+static void run_loony_no_folder(void *unused) {
+    (void)unused;
+    setenv("LOONY_APPS_DIR", apps_dir, 1);
+    if (run_data[0])
+        setenv("LOONY_DATA_DIR", run_data, 1);
+    setenv("LOONY_AUTO_ALERTS", "1", 1);
+    execl(LOONY_BIN, "loony", (char *)NULL);
+    _exit(127);
+}
+
+/* Review Focus 4. */
+TEST(run_with_no_game_installed_says_where_to_put_them) {
+    test_tmp_dir(apps_dir, sizeof apps_dir);
+    char out[4096];
+    int status = test_run_child(run_loony_no_folder, NULL, out, sizeof out);
+    char expect[2600];
+    snprintf(expect, sizeof expect,
+             "no LittleWing game found: put Loony Labyrinth in %s/Loony Labyrinth or Crystal Caliburn in "
+             "%s/Crystal Caliburn",
+             apps_dir, apps_dir);
+    test_remove_tree(apps_dir);
+    CHECK_EQ(status, 1);
+    CHECK_CONTAINS(out, expect);
+}
+
+/* Review Focus 4: one game installed plays at once, with no picker. */
+static void run_loony_no_folder_briefly(void *unused) {
+    setenv("LOONY_EXIT_AFTER", "60", 1);
+    run_loony_no_folder(unused);
+}
+
+TEST(run_with_one_game_installed_skips_the_picker) {
+    SKIP_UNLESS_CC();
+    test_tmp_dir(apps_dir, sizeof apps_dir);
+    CHECK(link_game("Crystal Caliburn", test_cc_dir()));
+    test_tmp_dir(run_data, sizeof run_data);
+    char out[32768];
+    int status = test_run_child(run_loony_no_folder_briefly, NULL, out, sizeof out);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    test_remove_tree(apps_dir);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "playing Crystal Caliburn from");
+    CHECK(!strstr(out, "picker"));
+}
+
+static void run_loony_game_env(void *id) {
+    setenv("LOONY_GAME", (const char *)id, 1);
+    setenv("LOONY_EXIT_AFTER", "60", 1);
+    run_loony_no_folder(NULL);
+}
+
+TEST(run_loony_game_picks_without_a_folder) {
+    SKIP_UNLESS_CC();
+    test_tmp_dir(apps_dir, sizeof apps_dir);
+    CHECK(link_game("Crystal Caliburn", test_cc_dir()));
+    test_tmp_dir(run_data, sizeof run_data);
+    char out[32768], bad_out[4096];
+    int status = test_run_child(run_loony_game_env, (void *)"crystal-caliburn", out, sizeof out);
+    int bad = test_run_child(run_loony_game_env, (void *)"pacman", bad_out, sizeof bad_out);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    test_remove_tree(apps_dir);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "playing Crystal Caliburn from");
+    CHECK_EQ(bad, 1);
+    CHECK_CONTAINS(bad_out, "LOONY_GAME names no known game: pacman");
+}
+
+/* Review Focus 1 and 5: with no LOONY_DATA_DIR, a game saves in
+   ~/Library/Application Support/loony-shim/<id>, and Loony Labyrinth's
+   file from before Plan 8 moves into its folder. HOME is temporary. */
+static char save_home[1024];
+
+static void run_with_home_saves(void *dir) {
+    setenv("HOME", save_home, 1);
+    unsetenv("LOONY_DATA_DIR");
+    setenv("LOONY_AUTO_ALERTS", "1", 1);
+    setenv("LOONY_EXIT_AFTER", "240", 1);
+    execl(LOONY_BIN, "loony", (const char *)dir, (char *)NULL);
+    _exit(127);
+}
+
+TEST(run_each_game_saves_in_its_own_folder) {
+    SKIP_UNLESS_CC();
+    test_tmp_dir(save_home, sizeof save_home);
+    char root[1100], path[1300];
+    snprintf(root, sizeof root, "%s/Library/Application Support/loony-shim", save_home);
+    CHECK(make_dirs(root));
+    snprintf(path, sizeof path, "%s/prefs.plist", root);
+    FILE *f = fopen(path, "w");
+    CHECK(f != NULL);
+    fputs("Loony's license", f);
+    fclose(f);
+    char out[32768];
+    int status = test_run_child(run_with_home_saves, (void *)test_cc_dir(), out, sizeof out);
+    CHECK_EQ(status, 0);
+    snprintf(path, sizeof path, "%s/crystal-caliburn/prefs.plist", root);
+    CHECK(access(path, R_OK) == 0);
+    snprintf(path, sizeof path, "%s/loony-labyrinth/prefs.plist", root);
+    size_t len = 0;
+    char *moved = (char *)read_file(path, &len);
+    CHECK(moved != NULL);
+    CHECK(len == 15 && memcmp(moved, "Loony's license", 15) == 0);
+    free(moved);
+    snprintf(path, sizeof path, "%s/prefs.plist", root);
+    CHECK(access(path, F_OK) != 0);
+    test_remove_tree(save_home);
 }
 
 /* Launched as the app, the log goes to ~/Library/Logs/loony-shim instead
