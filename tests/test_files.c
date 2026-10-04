@@ -385,3 +385,70 @@ TEST(files_two_writers_share_one_copy) {
     CHECK_STR(contents(dir, "LL Data/effect.bin"), "hello world");
     teardown();
 }
+
+/* files_data_root and files_data_dir read HOME and LOONY_DATA_DIR; these
+   set them for one test and put them back. */
+static char saved_home[1024], saved_data[1024];
+static bool had_home, had_data;
+
+static void set_env(const char *home, const char *data) {
+    const char *h = getenv("HOME"), *d = getenv("LOONY_DATA_DIR");
+    had_home = h != NULL;
+    had_data = d != NULL;
+    snprintf(saved_home, sizeof saved_home, "%s", h ? h : "");
+    snprintf(saved_data, sizeof saved_data, "%s", d ? d : "");
+    if (home)
+        setenv("HOME", home, 1);
+    else
+        unsetenv("HOME");
+    if (data)
+        setenv("LOONY_DATA_DIR", data, 1);
+    else
+        unsetenv("LOONY_DATA_DIR");
+}
+
+static void restore_env(void) {
+    if (had_home)
+        setenv("HOME", saved_home, 1);
+    else
+        unsetenv("HOME");
+    if (had_data)
+        setenv("LOONY_DATA_DIR", saved_data, 1);
+    else
+        unsetenv("LOONY_DATA_DIR");
+}
+
+TEST(files_data_dir_is_per_game_under_home) {
+    char root[1024], dir[1024];
+    set_env("/Users/someone", NULL);
+    bool have_root = files_data_root(root, sizeof root);
+    bool have_dir = files_data_dir("crystal-caliburn", dir, sizeof dir);
+    restore_env();
+    CHECK(have_root);
+    CHECK_STR(root, "/Users/someone/Library/Application Support/loony-shim");
+    CHECK(have_dir);
+    CHECK_STR(dir, "/Users/someone/Library/Application Support/loony-shim/crystal-caliburn");
+}
+
+/* Review Focus 5: LOONY_DATA_DIR is the save folder itself, for any game,
+   and there is no shared root. */
+TEST(files_data_dir_honors_loony_data_dir) {
+    char root[1024], dir[1024];
+    set_env("/Users/someone", "/tmp/somewhere");
+    bool have_root = files_data_root(root, sizeof root);
+    bool have_dir = files_data_dir("crystal-caliburn", dir, sizeof dir);
+    restore_env();
+    CHECK(!have_root);
+    CHECK(have_dir);
+    CHECK_STR(dir, "/tmp/somewhere");
+}
+
+TEST(files_data_dir_without_home_or_loony_data_dir) {
+    char root[1024], dir[1024];
+    set_env(NULL, NULL);
+    bool have_root = files_data_root(root, sizeof root);
+    bool have_dir = files_data_dir("loony-labyrinth", dir, sizeof dir);
+    restore_env();
+    CHECK(!have_root);
+    CHECK(!have_dir);
+}

@@ -31,3 +31,13 @@ const game_info *game_in_folder(const char *dir);
 /* Writes the games installed in their folders, in table order, to out (at
    most cap) and returns how many there are. */
 int game_installed(const game_info **out, int cap);
+
+/* The picker's file in the save root (files_data_root): the last game picked. */
+#define GAME_PICKER_FILE "picker.plist"
+
+/* Before Plan 8 there was one game, and its files (prefs.plist) were saved
+   directly in the save root. Moves every entry of root that is neither a
+   known game's folder nor GAME_PICKER_FILE into root/loony-labyrinth. An
+   entry already there is left in place and logged, never overwritten.
+   Returns the number moved; a missing root moves nothing. */
+int game_move_legacy_data(const char *root);

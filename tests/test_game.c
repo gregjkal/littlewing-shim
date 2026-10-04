@@ -95,3 +95,63 @@ TEST(game_installed_lists_what_is_in_the_apps_dir) {
     CHECK_STR(g[0]->id, "loony-labyrinth");
     CHECK_STR(g[1]->id, "crystal-caliburn");
 }
+
+static void write_text(const char *path, const char *text) {
+    FILE *f = fopen(path, "w");
+    if (f) {
+        fputs(text, f);
+        fclose(f);
+    }
+}
+
+static bool file_says(const char *path, const char *text) {
+    size_t len = 0;
+    char *got = (char *)read_file(path, &len);
+    bool same = got && len == strlen(text) && memcmp(got, text, len) == 0;
+    free(got);
+    return same;
+}
+
+/* Review Focus 1: before Plan 8 Loony Labyrinth saved straight into the root. */
+TEST(game_legacy_data_moves_into_loony_labyrinth) {
+    char root[1024], path[1300];
+    test_tmp_dir(root, sizeof root);
+    snprintf(path, sizeof path, "%s/prefs.plist", root);
+    write_text(path, "license");
+    snprintf(path, sizeof path, "%s/" GAME_PICKER_FILE, root);
+    write_text(path, "picker");
+    snprintf(path, sizeof path, "%s/crystal-caliburn", root);
+    make_dirs(path);
+    CHECK_EQ(game_move_legacy_data(root), 1);
+    snprintf(path, sizeof path, "%s/loony-labyrinth/prefs.plist", root);
+    CHECK(file_says(path, "license"));
+    snprintf(path, sizeof path, "%s/prefs.plist", root);
+    CHECK(access(path, F_OK) != 0);
+    snprintf(path, sizeof path, "%s/" GAME_PICKER_FILE, root);
+    CHECK(file_says(path, "picker")); /* the picker's own file stays */
+    snprintf(path, sizeof path, "%s/crystal-caliburn", root);
+    CHECK(access(path, F_OK) == 0);
+    CHECK_EQ(game_move_legacy_data(root), 0); /* nothing left to move */
+    test_remove_tree(root);
+}
+
+TEST(game_legacy_data_never_overwrites) {
+    char root[1024], path[1300];
+    test_tmp_dir(root, sizeof root);
+    snprintf(path, sizeof path, "%s/loony-labyrinth", root);
+    make_dirs(path);
+    snprintf(path, sizeof path, "%s/loony-labyrinth/prefs.plist", root);
+    write_text(path, "newer");
+    snprintf(path, sizeof path, "%s/prefs.plist", root);
+    write_text(path, "older");
+    CHECK_EQ(game_move_legacy_data(root), 0);
+    snprintf(path, sizeof path, "%s/loony-labyrinth/prefs.plist", root);
+    CHECK(file_says(path, "newer"));
+    snprintf(path, sizeof path, "%s/prefs.plist", root);
+    CHECK(file_says(path, "older")); /* left in place, and logged */
+    test_remove_tree(root);
+}
+
+TEST(game_legacy_data_with_no_root_is_a_no_op) {
+    CHECK_EQ(game_move_legacy_data("/nonexistent/loony-shim"), 0);
+}

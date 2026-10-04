@@ -13,6 +13,7 @@
 #include "display.h"
 #include "events.h"
 #include "files.h"
+#include "game.h"
 #include "guest_mem.h"
 #include "loader.h"
 #include "memmgr.h"
@@ -126,7 +127,7 @@ int main(int argc, char **argv) {
     misc_init();
     cf_init();
     char data_dir[PATH_MAX];
-    bool have_data = files_data_dir(data_dir, sizeof data_dir);
+    bool have_data = files_data_dir(game_at(0)->id, data_dir, sizeof data_dir);
     if (!have_data)
         log_msg("neither LOONY_DATA_DIR nor HOME is set: nothing will be saved");
     if (files_init(dir, have_data ? data_dir : NULL)) {
