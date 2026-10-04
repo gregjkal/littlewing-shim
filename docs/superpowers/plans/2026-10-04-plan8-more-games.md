@@ -42,7 +42,7 @@
 | 72,000-tick fixed-clock run (Esc, Esc, Return, Return, then plunger and flippers) | A game started (ball 1, 56,520 points at tick 3000), no crash, no unknown selector, a clean quit |
 | The games' preferences | The same key names in both (`highscore 1`, the key bindings, the license). They need separate files |
 | The user's current save folder | `~/Library/Application Support/loony-shim/` holds only `prefs.plist` (their Loony license and high scores) |
-| Its backup | Copied on 2026-10-04, before any Plan 8 code ran, to `~/Library/Application Support/loony-shim-backup-2026-10-04/prefs.plist` (identical SHA-1; outside `loony-shim/`, so the migration never touches it). To restore it, copy it to `loony-shim/loony-labyrinth/prefs.plist`. Never delete it without the user's say-so |
+| Its backup | Copied on 2026-10-04, before any Plan 8 code ran, to `~/Library/Application Support/loony-shim-backup-2026-10-04/prefs.plist` (identical SHA-1; outside `loony-shim/`, so the migration never touches it). Never modify or delete it. If the Loony license or scores go missing after the migration, stop and tell the user before doing anything else, including restoring it |
 | Title art | `PICT 800` in both forks: 512×384, the "Solid State Pinball" title screen with the game's logo. `pict_draw` draws it into a 32-bit buffer without error. (Also present in both: 128 and 129 are 104×128 or 128×128 icons; 801, 802 and 804 are dialog art) |
 | Quitting from the game's menu | Script `1720 down esc`, `1724 up esc`, `1800 down esc`, `1804 up esc`, `1900 down up`, `1904 up up`, `2000 down return`, `2004 up return` (Esc ends the demo, Esc opens the menu, Up wraps to its quit item, Return). Both games log `ExitToShell` with no quit Apple Event, and save `prefs.plist` |
 | Cmd-Q, a window close or a script `quit` | `events_request_quit` sends the quit Apple Event (`sending the quit Apple Event`). The game's handler then calls `ExitToShell` |
@@ -1961,7 +1961,7 @@ Ask the user to:
    - both title pictures;
    - Left and Right, clicking, and Return;
    - Cmd-F full screen.
-3. Play **Loony Labyrinth** and confirm it's still registered and its high scores are there (their real `prefs.plist` moved). If they aren't, stop. Restore the backup (Facts measured) to `loony-shim/loony-labyrinth/prefs.plist`, then debug the migration.
+3. Play **Loony Labyrinth** and confirm it's still registered and its high scores are there (their real `prefs.plist` moved). If they aren't, stop and tell the user before doing anything else. Don't restore the backup (Facts measured) or debug the migration until they say how to proceed.
 4. Choose QUIT from its menu. That should return to the picker, still full screen if it was, and start on Loony.
 5. Play **Crystal Caliburn**: sound, flippers (Z, /), plunger (Return), nudge (Space), and high scores kept across a return to the picker. Register it if they have a key code.
 6. Quit from the picker with Cmd-Q, and from inside a game by closing the window.
