@@ -51,6 +51,7 @@ static struct {
     uint32_t standard[MAX_STANDARD];
     int nstandard;
     uint32_t focus_window; /* the window target keyboard events go to, or 0 */
+    bool app_active;       /* the last of kEventAppActivated / Deactivated posted */
     struct {
         bool active, running;
         uint32_t proc, data;
@@ -210,7 +211,13 @@ void events_set_modal(const ev_modal_sink *sink) { E.modal = sink; }
 
 void events_set_cursor(ev_cursor_fn fn) { E.cursor = fn; }
 
+/* A Mac sends these only when the application changes state, so they
+   alternate; SDL can report a focus loss twice, and the game removes its
+   timer on each deactivation. */
 void events_post_activation(bool active) {
+    if (active == E.app_active)
+        return;
+    E.app_active = active;
     post(EV_CLASS_APPLICATION, active ? EV_APP_ACTIVATED : EV_APP_DEACTIVATED);
 }
 
@@ -391,6 +398,8 @@ static void run_script(void) {
             events_post_mouse(a.x, a.y, false);
             break;
         case SCRIPT_TYPE: events_post_text(a.path); break;
+        case SCRIPT_BLUR: events_post_activation(false); break;
+        case SCRIPT_FOCUS: events_post_activation(true); break;
         }
     }
 }
@@ -588,8 +597,16 @@ static void h_install_event_loop_timer(void) {
     trap_return(0);
 }
 
+/* RemoveEventLoopTimer(EventLoopTimerRef) -> OSStatus. Carbon answers NULL
+   with paramErr. The game's kEventAppDeactivated handler removes its timer
+   and then sets it to NULL, so a second deactivation without an activation
+   between them passes NULL. */
 static void h_remove_event_loop_timer(void) {
     uint32_t ref = trap_arg(0);
+    if (ref == 0) {
+        trap_return((uint32_t)EV_PARAM_ERR);
+        return;
+    }
     uint32_t i = ref - timer_ref(0);
     if (i >= EV_MAX_TIMERS || !E.timers[i].active)
         trap_crash("RemoveEventLoopTimer: 0x%08x is not a timer", ref);

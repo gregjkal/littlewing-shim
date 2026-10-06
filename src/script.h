@@ -10,6 +10,8 @@
      <tick> quit              ask the game to quit (the quit Apple Event)
      <tick> click <x> <y>     click the left button at (x, y) on the emulated screen
      <tick> type <text>       type the rest of the line into a dialog, as Cmd-V would
+     <tick> blur              the window loses focus (kEventAppDeactivated)
+     <tick> focus             the window gains focus (kEventAppActivated)
    Blank lines and lines starting with '#' are ignored. Ticks are 1/60 s
    since launch and must not decrease. */
 
@@ -20,6 +22,8 @@ typedef enum {
     SCRIPT_QUIT,
     SCRIPT_CLICK,
     SCRIPT_TYPE,
+    SCRIPT_BLUR,
+    SCRIPT_FOCUS,
 } script_kind;
 
 typedef struct {
