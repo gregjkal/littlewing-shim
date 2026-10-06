@@ -104,6 +104,10 @@ void events_post_activation(bool active);
    (wall clock) later, exits with status 0. */
 void events_request_quit(void);
 
+/* True once the host asked the game to quit (Cmd-Q, closing the window, a
+   script's quit): the quit Apple Event has been sent. */
+bool events_quit_requested(void);
+
 /* Events waiting in the queue. */
 int events_queued(void);
 

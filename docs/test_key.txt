@@ -4,3 +4,7 @@
 # V2.5.1-ie
 Email = nowhereman@nowhere.co.jp
 Code = 761956149062368478713072
+
+# Crystal Caliburn, Mac
+Email = KCN@demo.user.org
+Code = 671428156153220608212701

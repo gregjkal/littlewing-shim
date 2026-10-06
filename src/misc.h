@@ -16,6 +16,10 @@
    depend on host speed. */
 void misc_init(void);
 
+/* Called by ExitToShell before the process exits; it may not return (main
+   uses it to go back to the picker). */
+void misc_set_exit_hook(void (*fn)(void));
+
 /* True if the virtual clock is in use. */
 bool misc_fixed_clock(void);
 

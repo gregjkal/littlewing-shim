@@ -1,6 +1,7 @@
 #!/bin/sh
-# Builds "Loony Labyrinth.app" around a loony binary: the Unicorn and SDL3
-# libraries are copied into the bundle (so a Homebrew upgrade can't break
+# Builds LittleWing.app around a loony binary: it plays the LittleWing games
+# installed in /Applications, with a picker when there are two. The Unicorn
+# and SDL3 libraries are copied into the bundle (so a Homebrew upgrade can't break
 # it), the icon is made from tools/AppIcon.png, and the bundle is signed with
 # the hardened runtime and the allow-jit entitlement: ad hoc, or with the
 # identity in LOONY_SIGN_ID (a "Developer ID Application: ..." certificate in
@@ -10,7 +11,7 @@ set -eu
 bin=$1
 out=$2
 here=$(cd "$(dirname "$0")" && pwd)
-app="$out/Loony Labyrinth.app"
+app="$out/LittleWing.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources"
 cp "$bin" "$app/Contents/MacOS/loony"
@@ -31,8 +32,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 	<key>CFBundleExecutable</key><string>loony</string>
 	<key>CFBundleIconFile</key><string>AppIcon</string>
 	<key>CFBundleIdentifier</key><string>local.loony-shim</string>
-	<key>CFBundleName</key><string>Loony Labyrinth</string>
-	<key>CFBundleDisplayName</key><string>Loony Labyrinth</string>
+	<key>CFBundleName</key><string>LittleWing</string>
+	<key>CFBundleDisplayName</key><string>LittleWing</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleShortVersionString</key><string>3.0.1</string>
 	<key>CFBundleVersion</key><string>1</string>

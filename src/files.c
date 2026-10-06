@@ -86,14 +86,24 @@ void files_mac_to_utf8(const char *mac, char *out, size_t cap) {
     out[o] = '\0';
 }
 
-bool files_data_dir(char *out, size_t cap) {
+bool files_data_root(char *out, size_t cap) {
     const char *d = getenv("LOONY_DATA_DIR"), *home = getenv("HOME");
-    if (d && *d)
-        snprintf(out, cap, "%s", d);
-    else if (home && *home)
-        snprintf(out, cap, "%s/Library/Application Support/loony-shim", home);
-    else
+    if ((d && *d) || !home || !*home)
         return false;
+    snprintf(out, cap, "%s/Library/Application Support/loony-shim", home);
+    return true;
+}
+
+bool files_data_dir(const char *game_id, char *out, size_t cap) {
+    const char *d = getenv("LOONY_DATA_DIR");
+    if (d && *d) {
+        snprintf(out, cap, "%s", d);
+        return true;
+    }
+    char root[PATH_MAX];
+    if (!files_data_root(root, sizeof root))
+        return false;
+    snprintf(out, cap, "%s/%s", root, game_id);
     return true;
 }
 

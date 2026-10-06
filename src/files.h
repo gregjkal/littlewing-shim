@@ -31,9 +31,14 @@
 /* FSSpec: vRefNum (2), parID (4), name (Str63, 64 bytes). */
 #define FSSPEC_SIZE 70
 
-/* The writable folder: $LOONY_DATA_DIR, or ~/Library/Application
-   Support/loony-shim. False if neither LOONY_DATA_DIR nor HOME is set. */
-bool files_data_dir(char *out, size_t cap);
+/* The folder holding each game's save folder (and the picker's file):
+   ~/Library/Application Support/loony-shim. False if LOONY_DATA_DIR is
+   set (it is then the save folder itself) or HOME isn't. */
+bool files_data_root(char *out, size_t cap);
+
+/* The writable folder: $LOONY_DATA_DIR, or <files_data_root>/<game_id>.
+   False if neither LOONY_DATA_DIR nor HOME is set. */
+bool files_data_dir(const char *game_id, char *out, size_t cap);
 
 /* Sets the game folder (read-only) and the writable folder (created when
    first needed; NULL means writes fail with wrPermErr). Closes open files
