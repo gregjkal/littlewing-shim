@@ -628,7 +628,7 @@ TEST(run_the_picker_frame_shows_both_games) {
     char got[16];
     snprintf(got, sizeof got, "%08x", fnv1a32(png, len));
     free(png);
-    CHECK_STR(got, ""); /* recorded in Task 8, after the user approves the picker */
+    CHECK_STR(got, "ed1ea7f1"); /* approved by the user on 2026-10-05 */
 }
 
 /* Review Focus 1: the picker remembers the last game in the save root,
@@ -829,8 +829,11 @@ static void write_regression_script(const char *path, char shots[3][1024]) {
     fclose(f);
 }
 
-TEST(run_three_minutes_of_play_match_the_recording) {
-    SKIP_UNLESS_GAME();
+/* Plays the regression script on the fixed clock in the game folder dir.
+   h gets the three frames' hashes, *wav_hash and *wav_len the recording's.
+   Returns the exit status; out gets stderr. */
+static int play_regression(const char *dir, uint32_t h[3], uint32_t *wav_hash, size_t *wav_len, char *out,
+                           size_t outlen) {
     char shots[3][1024];
     for (int i = 0; i < 3; i++)
         tmp_name(shots[i], sizeof shots[i], "shot");
@@ -841,13 +844,11 @@ TEST(run_three_minutes_of_play_match_the_recording) {
     char ticks[16];
     snprintf(ticks, sizeof ticks, "%d", REGRESSION_TICKS);
     setenv("LOONY_EXIT_AFTER", ticks, 1);
-    char out[32768];
-    int status = test_run_child(run_loony_scripted, (void *)test_game_dir(), out, sizeof out);
+    int status = test_run_child(run_loony_scripted, (void *)dir, out, outlen);
     unsetenv("LOONY_EXIT_AFTER");
     test_remove_tree(run_data);
     run_data[0] = '\0';
     unlink(script_path);
-    uint32_t h[3];
     for (int i = 0; i < 3; i++) {
         size_t len = 0;
         uint8_t *png = read_file(shots[i], &len);
@@ -855,12 +856,22 @@ TEST(run_three_minutes_of_play_match_the_recording) {
         free(png);
         unlink(shots[i]);
     }
-    size_t len = 0;
-    uint8_t *wav = read_file(wav_path, &len);
-    uint32_t wh = wav ? fnv1a32(wav, len) : 0;
+    uint8_t *wav = read_file(wav_path, wav_len);
+    *wav_hash = wav ? fnv1a32(wav, *wav_len) : 0;
+    if (!wav)
+        *wav_len = 0;
     free(wav);
     unlink(wav_path);
     wav_path[0] = '\0';
+    return status;
+}
+
+TEST(run_three_minutes_of_play_match_the_recording) {
+    SKIP_UNLESS_GAME();
+    uint32_t h[3], wh;
+    size_t len;
+    char out[32768];
+    int status = play_regression(test_game_dir(), h, &wh, &len, out, sizeof out);
     CHECK_EQ(status, 0);
     CHECK(!strstr(out, "runtime error"));
     CHECK_EQ(len, 44 + (size_t)REGRESSION_TICKS * 44100 / 60 * 4);
@@ -868,4 +879,23 @@ TEST(run_three_minutes_of_play_match_the_recording) {
     CHECK_EQ(h[1], 0x015482C8u); /* minute 2: ball 3, 13 seconds of demo time left */
     CHECK_EQ(h[2], 0x66E6FBF1u); /* minute 3: the time ran out; a new game, ball 1 */
     CHECK_EQ(wh, 0x3663C0FEu);
+}
+
+/* The same three minutes in Crystal Caliburn (the same keys). Recorded
+   after the user's Plan 8 playtest. */
+TEST(run_three_minutes_of_crystal_caliburn_match_the_recording) {
+    SKIP_UNLESS_CC();
+    uint32_t h[3], wh;
+    size_t len;
+    char out[32768];
+    int status = play_regression(test_cc_dir(), h, &wh, &len, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "runtime error"));
+    CHECK_EQ(len, 44 + (size_t)REGRESSION_TICKS * 44100 / 60 * 4);
+    char got[64];
+    snprintf(got, sizeof got, "%08x %08x %08x %08x", h[0], h[1], h[2], wh);
+    /* Frames at minutes 1, 2 and 3, then the recording. Minute 1: ball 1 in
+       play, 26,780 points. Minute 2: ball 3, 13 seconds of demo time left.
+       Minute 3: the time ran out; the attract display shows the copyright. */
+    CHECK_STR(got, "18e601a7 bdd31ce9 88136063 f331fd82");
 }
