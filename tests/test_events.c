@@ -169,6 +169,13 @@ static void child_bad_timer(void *unused) {
     call_import("RemoveEventLoopTimer", 1, 0x1234u);
 }
 
+TEST(events_removing_a_null_timer_is_a_param_error) {
+    setup();
+    install_timer(1.0, 0.0);
+    CHECK_EQ((int32_t)call_import("RemoveEventLoopTimer", 1, 0u), EV_PARAM_ERR);
+    CHECK_EQ(events_active_timers(), 1);
+}
+
 TEST(events_removing_an_unknown_timer_crashes) {
     char out[16384];
     CHECK_EQ(test_run_child(child_bad_timer, NULL, out, sizeof out), 2);
@@ -308,6 +315,28 @@ TEST(events_startup_queues_app_activated) {
     uint32_t ev = next_event(EV_CLASS_APPLICATION, EV_APP_ACTIVATED);
     CHECK(ev != 0);
     CHECK_EQ(call_import("GetEventKind", 1, ev), EV_APP_ACTIVATED);
+    call_import("ReleaseEvent", 1, ev);
+    CHECK_EQ(events_queued(), 0);
+}
+
+/* SDL can report a focus loss twice; the game removes its timer on every
+   kEventAppDeactivated and passes NULL the second time. */
+TEST(events_activation_posts_only_changes) {
+    setup();
+    events_post_activation(true); /* already active from startup */
+    CHECK_EQ(events_queued(), 1);
+    events_post_activation(false);
+    events_post_activation(false);
+    CHECK_EQ(events_queued(), 2);
+    events_post_activation(true);
+    CHECK_EQ(events_queued(), 3);
+    uint32_t ev = next_event(EV_CLASS_APPLICATION, EV_APP_ACTIVATED);
+    call_import("ReleaseEvent", 1, ev);
+    ev = next_event(EV_CLASS_APPLICATION, EV_APP_DEACTIVATED);
+    CHECK(ev != 0);
+    call_import("ReleaseEvent", 1, ev);
+    ev = next_event(EV_CLASS_APPLICATION, EV_APP_ACTIVATED);
+    CHECK(ev != 0);
     call_import("ReleaseEvent", 1, ev);
     CHECK_EQ(events_queued(), 0);
 }

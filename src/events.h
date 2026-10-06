@@ -17,6 +17,7 @@
 #define EV_APPLICATION_TARGET (EV_TAG_BASE + 1)
 #define EV_DISPATCHER_TARGET  (EV_TAG_BASE + 2)
 #define EV_MAIN_LOOP          (EV_TAG_BASE + 3)
+#define EV_PARAM_ERR              (-50)   /* paramErr */
 #define EV_NOT_HANDLED_ERR        (-9874) /* eventNotHandledErr */
 #define EV_LOOP_TIMED_OUT_ERR     (-9875) /* eventLoopTimedOutErr */
 #define EV_PARAM_NOT_FOUND_ERR    (-9870) /* eventParameterNotFoundErr */
@@ -97,7 +98,8 @@ void events_set_modal(const ev_modal_sink *sink);
 typedef void (*ev_cursor_fn)(bool visible);
 void events_set_cursor(ev_cursor_fn fn);
 
-/* The window gained or lost focus: kEventAppActivated / Deactivated. */
+/* The window gained or lost focus: kEventAppActivated / Deactivated, posted
+   only when that changes whether the application is active. */
 void events_post_activation(bool active);
 /* The user asked to quit (window close, Cmd-Q, a script). Queues the quit
    Apple Event for the game's handler; if the game hasn't quit 3 seconds

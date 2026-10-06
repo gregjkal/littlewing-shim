@@ -151,8 +151,8 @@ action per line:
 ```
 
 Scripts can also click (`20 click 460 270`, in emulated-screen pixels) and type
-into a dialog (`50 type me@example.com`, the rest of the line), and may be any
-length. `tools/soak_script.py` writes one that keeps playing for an hour (game
+into a dialog (`50 type me@example.com`, the rest of the line), take focus away
+and give it back (`60 blur`, `90 focus`), and may be any length. `tools/soak_script.py` writes one that keeps playing for an hour (game
 starts, plunger, flippers, nudges, a screenshot every 5 minutes):
 
 ```bash
