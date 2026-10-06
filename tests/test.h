@@ -15,6 +15,9 @@ void test_skip(const char *reason);
 const char *test_game_dir(void);
 const char *test_game_exe_path(void);
 bool test_game_present(void);
+/* Crystal Caliburn's folder: $LOONY_CC_DIR, or /Applications/Crystal Caliburn. */
+const char *test_cc_dir(void);
+bool test_cc_present(void);
 
 /* Creates a fresh, empty folder under $TMPDIR and writes its path to out. */
 void test_tmp_dir(char *out, size_t cap);
@@ -81,6 +84,14 @@ int test_run_child(void (*fn)(void *), void *arg, char *out, size_t outlen);
     do {                                                                        \
         if (!test_game_present()) {                                             \
             test_skip("game files not found");                                  \
+            return;                                                             \
+        }                                                                       \
+    } while (0)
+
+#define SKIP_UNLESS_CC()                                                        \
+    do {                                                                        \
+        if (!test_cc_present()) {                                               \
+            test_skip("Crystal Caliburn not found");                            \
             return;                                                             \
         }                                                                       \
     } while (0)

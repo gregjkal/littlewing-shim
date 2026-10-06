@@ -32,7 +32,7 @@ target_link_libraries(loony PRIVATE loony_core)
 add_custom_target(app
   COMMAND ${CMAKE_SOURCE_DIR}/tools/make_app.sh $<TARGET_FILE:loony> ${CMAKE_BINARY_DIR}
   DEPENDS loony
-  COMMENT "Building Loony Labyrinth.app"
+  COMMENT "Building LittleWing.app"
   VERBATIM)
 
 file(GLOB TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/*.c)

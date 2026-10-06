@@ -31,6 +31,7 @@ static struct {
     uint64_t virtual_us;
     int polls; /* time polls since the virtual clock last moved */
     misc_url_fn open_url;
+    void (*exit_hook)(void);
 } M;
 
 extern char **environ;
@@ -387,8 +388,12 @@ static void h_num2dec(void) {
     memcpy(gm_ptr(d + 5, MISC_SIGDIGLEN), dec.sig, n);
 }
 
+void misc_set_exit_hook(void (*fn)(void)) { M.exit_hook = fn; }
+
 static void h_exit_to_shell(void) {
     log_msg("ExitToShell");
+    if (M.exit_hook)
+        M.exit_hook();
     exit(0);
 }
 

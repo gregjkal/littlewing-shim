@@ -1,5 +1,6 @@
 #pragma once
 #include <stdbool.h>
+#include <stdint.h>
 
 /* Shows the emulated screen (qd_screen) in an SDL window, scaled to fit with
    the right aspect ratio and nearest-neighbor sampling. The window is created
@@ -10,8 +11,17 @@
    the process exits, including after a crash. */
 void display_init(void);
 
+/* The window's title. Sets it at once on an open window. */
+void display_set_title(const char *title);
+
 /* Draws the current screen. */
 void display_present(void);
+
+/* Draws an RGBA frame (w x h, rows top to bottom), opening the window on the first one. */
+void display_present_rgba(const uint8_t *rgba, int w, int h);
+
+/* Whether the window is full screen. LOONY_FULLSCREEN=1 opens it full screen. */
+bool display_fullscreen(void);
 
 /* Whether presenting waits for the display's refresh (the default). Turned
    off for fixed-clock runs, where waiting would only slow the run down. */
