@@ -55,5 +55,11 @@ bool qd_blit(const qd_pixels *src, qd_rect src_rect, const qd_pixels *dst, qd_re
 /* Fills r (clipped to clip and dst's bounds) with color c. */
 void qd_fill(const qd_pixels *dst, qd_rect r, qd_rect clip, qd_rgb c);
 
+/* One pixel's value at (x, y), which must be inside p's bounds; storing one;
+   and the color of a pixel value. */
+uint32_t qd_get_pixel(const qd_pixels *p, int x, int y);
+void qd_set_pixel(const qd_pixels *p, int x, int y, uint32_t v);
+qd_rgb qd_color_of(uint32_t v, int depth, const qd_palette *pal);
+
 /* Converts the whole of src to 8-bit RGBA rows. rgba holds width*height*4 bytes. */
 void qd_to_rgba(const qd_pixels *src, uint8_t *rgba);

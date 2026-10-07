@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "hd.h"
 #include "png.h"
 #include "qd.h"
 #include "util.h"
@@ -28,24 +29,32 @@ void display_set_title(const char *title) {
         SDL_SetWindowTitle(D.window, title);
 }
 
-static uint8_t *screen_rgba(int *w, int *h) {
+/* The frame to show, w x h: the screen's pixels, or their HD copy in HD mode.
+   *lw x *lh is the screen's own size. Free *owned afterwards. */
+static const uint8_t *screen_frame(int *w, int *h, int *lw, int *lh, uint8_t **owned) {
     qd_pixels px;
     qd_palette pal;
     qd_screen(&px, &pal);
-    *w = rect_w(px.bounds);
-    *h = rect_h(px.bounds);
+    *lw = rect_w(px.bounds);
+    *lh = rect_h(px.bounds);
+    *owned = NULL;
+    if (hd_scale())
+        return hd_frame(&px, w, h);
+    *w = *lw;
+    *h = *lh;
     uint8_t *rgba = malloc((size_t)*w * (size_t)*h * 4);
     if (!rgba)
         fatal("out of memory");
     qd_to_rgba(&px, rgba);
-    return rgba;
+    return *owned = rgba;
 }
 
 bool display_write_png(const char *path) {
-    int w, h;
-    uint8_t *rgba = screen_rgba(&w, &h);
+    int w, h, lw, lh;
+    uint8_t *owned;
+    const uint8_t *rgba = screen_frame(&w, &h, &lw, &lh, &owned);
     bool ok = png_write_rgba(path, rgba, w, h);
-    free(rgba);
+    free(owned);
     return ok;
 }
 
@@ -71,6 +80,8 @@ static bool open_window(int w, int h) {
     int scale = w < 800 ? 2 : 1;
     const char *fs = getenv("LOONY_FULLSCREEN");
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | (fs && strcmp(fs, "1") == 0 ? SDL_WINDOW_FULLSCREEN : 0);
+    if (hd_scale()) /* draw HD frames at the display's own pixel density */
+        flags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;
     D.window = SDL_CreateWindow(D.title ? D.title : "LittleWing", w * scale, h * scale, flags);
     D.renderer = D.window ? SDL_CreateRenderer(D.window, NULL) : NULL;
     if (!D.renderer) {
@@ -81,18 +92,21 @@ static bool open_window(int w, int h) {
     return true;
 }
 
-void display_present_rgba(const uint8_t *rgba, int w, int h) {
+/* Shows a w x h frame of a screen whose own size is lw x lh, the size mouse
+   coordinates are reported in. */
+static void present(const uint8_t *rgba, int w, int h, int lw, int lh) {
     D.frames++;
     if (!D.tried)
-        D.sdl_ok = open_window(w, h);
+        D.sdl_ok = open_window(lw, lh);
     if (D.sdl_ok) {
         if (!D.texture || D.tex_w != w || D.tex_h != h) {
             if (D.texture)
                 SDL_DestroyTexture(D.texture);
             D.texture = SDL_CreateTexture(D.renderer, SDL_PIXELFORMAT_RGBA32,
                                           SDL_TEXTUREACCESS_STREAMING, w, h);
-            SDL_SetTextureScaleMode(D.texture, SDL_SCALEMODE_NEAREST);
-            SDL_SetRenderLogicalPresentation(D.renderer, w, h, SDL_LOGICAL_PRESENTATION_LETTERBOX);
+            /* An HD frame is usually shrunk to fit, which wants smoothing. */
+            SDL_SetTextureScaleMode(D.texture, w == lw ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR);
+            SDL_SetRenderLogicalPresentation(D.renderer, lw, lh, SDL_LOGICAL_PRESENTATION_LETTERBOX);
             D.tex_w = w;
             D.tex_h = h;
         }
@@ -104,11 +118,14 @@ void display_present_rgba(const uint8_t *rgba, int w, int h) {
     }
 }
 
+void display_present_rgba(const uint8_t *rgba, int w, int h) { present(rgba, w, h, w, h); }
+
 void display_present(void) {
-    int w, h;
-    uint8_t *rgba = screen_rgba(&w, &h);
-    display_present_rgba(rgba, w, h);
-    free(rgba);
+    int w, h, lw, lh;
+    uint8_t *owned;
+    const uint8_t *rgba = screen_frame(&w, &h, &lw, &lh, &owned);
+    present(rgba, w, h, lw, lh);
+    free(owned);
 }
 
 bool display_fullscreen(void) {

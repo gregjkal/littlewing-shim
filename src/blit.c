@@ -155,6 +155,10 @@ static void put_px(const qd_pixels *p, int x, int y, uint32_t v) {
     }
 }
 
+uint32_t qd_get_pixel(const qd_pixels *p, int x, int y) { return get_px(p, x, y); }
+void qd_set_pixel(const qd_pixels *p, int x, int y, uint32_t v) { put_px(p, x, y, v); }
+qd_rgb qd_color_of(uint32_t v, int depth, const qd_palette *pal) { return rgb_of(v, depth, pal); }
+
 static bool indexed(int depth) { return depth <= 8; }
 
 static bool same_palette(const qd_palette *a, const qd_palette *b) {

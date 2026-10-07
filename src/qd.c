@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "guest_mem.h"
+#include "hd.h"
 #include "memmgr.h"
 #include "pict.h"
 #include "rsrc.h"
@@ -140,6 +141,7 @@ static uint32_t std_ctab(int depth) {
 
 static void free_pixmap_contents(uint32_t pm_h) {
     uint32_t pm = gm_r32(pm_h);
+    hd_forget(gm_ptr(gm_r32(pm + PM_BASE_ADDR), 1));
     mm_dispose_ptr(gm_r32(pm + PM_BASE_ADDR));
     mm_dispose_handle(gm_r32(pm + PM_TABLE));
 }
@@ -551,10 +553,11 @@ static void h_copy_bits(void) {
     if (dst_bits == port_pixmap(Q.cur_port))
         clip = port_clip("CopyBits", Q.cur_port);
     char err[128];
-    if (!qd_blit(&src, qd_read_rect(trap_arg(2)), &dst, qd_read_rect(trap_arg(3)), clip, mode,
-                 read_rgb(Q.cur_port + PORT_RGB_FG), read_rgb(Q.cur_port + PORT_RGB_BK), err,
-                 sizeof err))
+    qd_rect sr = qd_read_rect(trap_arg(2)), dr = qd_read_rect(trap_arg(3));
+    if (!qd_blit(&src, sr, &dst, dr, clip, mode, read_rgb(Q.cur_port + PORT_RGB_FG),
+                 read_rgb(Q.cur_port + PORT_RGB_BK), err, sizeof err))
         trap_crash("CopyBits: %s", err);
+    hd_copy(&src, sr, &dst, dr, clip);
     if (is_screen_bits(dst_bits))
         Q.dirty = true;
 }
@@ -570,10 +573,11 @@ static void h_draw_picture(void) {
     uint32_t bits = port_pixmap(Q.cur_port);
     qd_bits("DrawPicture", bits, &px, &pal);
     char err[128];
-    if (!pict_draw(data, len, qd_read_rect(trap_arg(1)), &px, port_clip("DrawPicture", Q.cur_port),
-                   read_rgb(Q.cur_port + PORT_RGB_FG), read_rgb(Q.cur_port + PORT_RGB_BK), err,
-                   sizeof err))
+    qd_rect dst = qd_read_rect(trap_arg(1)), clip = port_clip("DrawPicture", Q.cur_port);
+    if (!pict_draw(data, len, dst, &px, clip, read_rgb(Q.cur_port + PORT_RGB_FG),
+                   read_rgb(Q.cur_port + PORT_RGB_BK), err, sizeof err))
         trap_crash("DrawPicture: %s", err);
+    hd_picture(data, len, dst, &px, clip);
     if (is_screen_bits(bits))
         Q.dirty = true;
 }
