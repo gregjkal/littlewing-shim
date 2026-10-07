@@ -3,7 +3,9 @@
 Runs two 2003 PowerPC Mac pinball games by LittleWing, *Loony Labyrinth 3.0.1*
 and *Crystal Caliburn 3.0.1*, natively on Apple Silicon by emulating their CPU
 (Unicorn) and reimplementing the Mac OS calls they make in C. Personal use only.
-This repo contains no game files; point it at your own copies.
+This repo contains no game files; point it at your own copies. The one
+exception is `hd-art/`, enlarged art made from the game's pictures (see HD art
+below).
 
 ## Build
 
@@ -89,6 +91,40 @@ own folder there, never into the game folder. Delete a game's folder to start
 it over. Saves from before there were two games (`loony-shim/prefs.plist`)
 move into `loony-labyrinth/` on the next launch. The picker remembers the last
 game in `loony-shim/picker.plist`.
+
+## HD art (a prototype)
+
+HD mode draws the game at 4 times its size (3200×2400), with replacement art
+for the game's pictures. The game itself still runs at 800×600. Art for Loony
+Labyrinth is in `hd-art/loony-labyrinth`:
+
+```bash
+LOONY_HD=hd-art/loony-labyrinth ./build-release/loony "/Applications/Loony Labyrinth"
+```
+
+To make art again, or for another game, dump the pictures it draws and enlarge
+them:
+
+```bash
+LOONY_HD_DUMP=/tmp/dump ./build-release/loony   # play a while: writes each picture drawn
+tools/hd_art.sh /tmp/dump /tmp/art              # de-dither and enlarge them (ImageMagick)
+```
+
+Each picture is a file `<hash>.png` at any size, so art from a better
+upscaler, or redrawn by hand, can replace the generated file. `LOONY_HD_SCALE`
+(2 to 8) sets the factor.
+
+- **Without art:** a picture with no art file, and anything the game draws
+  with its own code, shows its original pixels enlarged. That covers the ball
+  and parts of the flippers.
+- **Lamps and other sprites:** when the game copies a small picture
+  pixel-for-pixel, that picture's art is drawn in its place.
+- **Picture sheets:** `hd_art.sh` enlarges each picture whole, so on a sheet of
+  tiles, such as the score display's font (`0e4f700e`), neighbouring tiles
+  blur together. That file is left out of `hd-art/loony-labyrinth`, so the
+  score display keeps the original font.
+- **Where it works:** only Loony Labyrinth has been tried, and only from a
+  terminal; the app doesn't pass these settings on.
 
 ## Giving it to someone
 

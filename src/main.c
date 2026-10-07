@@ -16,6 +16,7 @@
 #include "files.h"
 #include "game.h"
 #include "guest_mem.h"
+#include "hd.h"
 #include "loader.h"
 #include "memmgr.h"
 #include "misc.h"
@@ -215,6 +216,7 @@ int main(int argc, char **argv) {
     events_init();
     sound_init();
     display_init();
+    hd_init();
     display_set_title(game->title);
     events_set_present(display_present_if_dirty);
     events_set_poll(display_poll);
