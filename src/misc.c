@@ -34,6 +34,8 @@ static struct {
     void (*exit_hook)(void);
 } M;
 
+static uint32_t system_version = MISC_SYSTEM_VERSION_PEF; /* Gestalt('sysv') */
+
 extern char **environ;
 
 static bool open_with_open(const char *url) {
@@ -53,6 +55,7 @@ void misc_init(void) {
     misc_idle_fn idle = M.idle;
     misc_url_fn open_url = M.open_url;
     memset(&M, 0, sizeof M);
+    system_version = MISC_SYSTEM_VERSION_PEF;
     M.idle = idle;
     M.open_url = open_url ? open_url : open_with_open;
     clock_gettime(CLOCK_MONOTONIC, &M.start);
@@ -123,10 +126,12 @@ bool misc_ae_handler(uint32_t event_class, uint32_t event_id, uint32_t *handler,
 
 /* ---- Gestalt ---- */
 
+void misc_set_system_version(uint32_t v) { system_version = v; }
+
 static const struct {
     uint32_t selector, value;
 } gestalt_table[] = {
-    {FOURCC('s', 'y', 's', 'v'), 0x1028},     /* Mac OS X 10.2.8 */
+    {FOURCC('s', 'y', 's', 'v'), 0},          /* system_version */
     {FOURCC('c', 'b', 'o', 'n'), 0x0160},     /* Carbon 1.6 */
     {FOURCC('p', 'p', 'c', 'f'), 0x0003},     /* G3: graphics ops and stfiwx, no AltiVec (bit 4) */
     {FOURCC('v', 'm', ' ', ' '), 0x0001},     /* virtual memory present */
@@ -139,7 +144,7 @@ static void h_gestalt(void) {
     uint32_t sel = trap_arg(0), resp = trap_arg(1);
     for (size_t i = 0; i < sizeof gestalt_table / sizeof gestalt_table[0]; i++) {
         if (gestalt_table[i].selector == sel) {
-            gm_w32(resp, gestalt_table[i].value);
+            gm_w32(resp, sel == FOURCC('s', 'y', 's', 'v') ? system_version : gestalt_table[i].value);
             trap_return(0);
             return;
         }

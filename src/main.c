@@ -10,6 +10,7 @@
 
 #include "cf.h"
 #include "cpu.h"
+#include "cxxrt.h"
 #include "dialogs.h"
 #include "display.h"
 #include "events.h"
@@ -17,6 +18,7 @@
 #include "game.h"
 #include "guest_mem.h"
 #include "hd.h"
+#include "libc.h"
 #include "loader.h"
 #include "memmgr.h"
 #include "misc.h"
@@ -103,6 +105,16 @@ static int no_game_error(void) {
     return startup_error("%s", msg);
 }
 
+/* The loader's resolver for a Mach-O game's data imports. */
+static uint32_t macho_data_symbol(const char *name) {
+    uint32_t a = libc_data_symbol(name);
+    if (!a)
+        a = cxxrt_data_symbol(name);
+    if (!a)
+        a = cf_data_symbol(name);
+    return a;
+}
+
 /* Set when the picker chose the game: its own quit goes back to the picker. */
 static bool return_to_picker;
 
@@ -179,26 +191,45 @@ int main(int argc, char **argv) {
         return startup_error("can't read %s: %s. %s needs the original game in %s.", path,
                              strerror(errno), game->title, dir);
     log_msg("playing %s from %s", game->title, dir);
+    const bool macho = game->kind == GAME_MACHO_BUNDLE;
 
-    char fork_path[PATH_MAX + 32];
-    snprintf(fork_path, sizeof fork_path, "%s/..namedfork/rsrc", path);
-    size_t fork_len = 0;
-    uint8_t *fork = read_file(fork_path, &fork_len);
-    if (!fork)
-        return startup_error("can't read %s: %s", fork_path, strerror(errno));
-
-    gm_init();
-    cpu_init();
     loaded_image img;
     char err[256];
-    if (!image_load(buf, len, &img, err, sizeof err))
-        return startup_error("can't load %s: %s", path, err);
-    if (!rsrc_open(fork, fork_len, err, sizeof err))
-        return startup_error("can't load the resources of %s: %s", path, err);
-    mm_init();
-    misc_init();
-    misc_set_exit_hook(back_to_picker);
-    cf_init();
+    if (macho) {
+        /* The loader asks for the data objects the program imports, so the
+           heap and the libraries that own them come first. */
+        gm_init_layout(GM_LAYOUT_MACHO);
+        cpu_init();
+        mm_init();
+        cf_init();
+        libc_init(path);
+        cxxrt_init();
+        image_set_data_resolver(macho_data_symbol);
+        if (!image_load_macho(buf, len, &img, err, sizeof err))
+            return startup_error("can't load %s: %s", path, err);
+        rsrc_open_empty();
+        misc_init();
+        misc_set_system_version(MISC_SYSTEM_VERSION_MACHO);
+        misc_set_exit_hook(back_to_picker);
+    } else {
+        char fork_path[PATH_MAX + 32];
+        snprintf(fork_path, sizeof fork_path, "%s/..namedfork/rsrc", path);
+        size_t fork_len = 0;
+        uint8_t *fork = read_file(fork_path, &fork_len);
+        if (!fork)
+            return startup_error("can't read %s: %s", fork_path, strerror(errno));
+
+        gm_init();
+        cpu_init();
+        if (!image_load(buf, len, &img, err, sizeof err))
+            return startup_error("can't load %s: %s", path, err);
+        if (!rsrc_open(fork, fork_len, err, sizeof err))
+            return startup_error("can't load the resources of %s: %s", path, err);
+        mm_init();
+        misc_init();
+        misc_set_exit_hook(back_to_picker);
+        cf_init();
+    }
     char data_root[PATH_MAX], data_dir[PATH_MAX];
     if (files_data_root(data_root, sizeof data_root))
         game_move_legacy_data(data_root);
@@ -211,7 +242,7 @@ int main(int argc, char **argv) {
         cf_load_prefs(prefs);
         atexit(save_prefs_at_exit);
     }
-    qd_init(800, 600, 8);
+    qd_init(800, 600, macho ? 32 : 8);
     dialogs_init();
     events_init();
     sound_init();
@@ -234,12 +265,12 @@ int main(int argc, char **argv) {
     }
     misc_set_idle(events_pump);
 
-    const char **names = calloc(img.pef.nimports ? img.pef.nimports : 1, sizeof *names);
-    if (!names)
-        fatal("out of memory");
-    for (uint32_t i = 0; i < img.pef.nimports; i++)
-        names[i] = img.pef.imports[i].name;
-    trap_init(img.pef.nimports, names, img.code_base, img.code_len);
+    trap_init(img.nnames, img.names, img.code_base, img.code_len);
+    if (macho) {
+        trap_set_direct_calls(true);
+        libc_register();
+        cxxrt_register();
+    }
     mm_register();
     rsrc_register();
     misc_register();
@@ -249,6 +280,22 @@ int main(int argc, char **argv) {
     events_register();
     files_register();
     sound_register();
+
+    if (macho) {
+        log_msg("loaded %s: %u imports, main at 0x%x, %u initializers", path, img.nnames,
+                img.main_addr, img.ninit);
+        /* What dyld does before the entry point: the static constructors.
+           Then main, as crt1's _start would call it. */
+        for (uint32_t i = 0; i < img.ninit; i++)
+            guest_call(img.init_addrs[i], 0, NULL);
+        uint32_t args[4] = {1};
+        libc_main_args(&args[1], &args[2], &args[3]);
+        uint32_t status = guest_call(img.main_addr, 4, args);
+        back_to_picker();
+        log_msg("main returned %d", (int32_t)status);
+        return 0;
+    }
+
     int32_t app_id = image_find_import(&img, "kCFPreferencesCurrentApplication");
     if (app_id >= 0)
         gm_w32(img.import_addr[app_id], cf_current_app());

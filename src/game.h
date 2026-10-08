@@ -1,14 +1,22 @@
 #pragma once
 #include <stddef.h>
 
-/* The LittleWing games the shim can play. They share one engine and make
-   the same 132 calls, so they differ only in names. Adding a game is a row
-   in game.c (the picker is laid out for two; a third needs a new layout). */
+/* The LittleWing games the shim can play. The two classic games share one
+   engine and make the same 132 calls, so they differ only in names.
+   MONSTER FAIR is a Mac OS X bundle with a Mach-O program. Adding a game is
+   a row in game.c (the picker is laid out for two; a third needs a new
+   layout). */
+typedef enum {
+    GAME_PEF_FOLDER,   /* a folder holding a PEF program with a resource fork */
+    GAME_MACHO_BUNDLE, /* an .app bundle holding a Mach-O program */
+} game_kind;
+
 typedef struct {
     const char *id;          /* "loony-labyrinth": its save folder's name, LOONY_GAME's value */
     const char *title;       /* "Loony Labyrinth": the window title and the picker */
-    const char *folder_name; /* its folder in the applications folder */
-    const char *exe;         /* the program's file name in that folder */
+    const char *folder_name; /* its folder (or bundle) in the applications folder */
+    const char *exe;         /* the program's path in that folder */
+    game_kind kind;
 } game_info;
 
 size_t game_count(void);

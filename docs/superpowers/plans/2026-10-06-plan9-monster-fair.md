@@ -55,6 +55,9 @@
 | Preferences | `CFPreferences` with `kCFPreferencesCurrentApplication`. Keys like the classic games' (`highscore 1`…, `keycode flipper left`…, `user email`, `user id`, `signet`), plus `highscore name/aux/timestamp n` and `switch sound`/`switch music` |
 | The nib | `English.lproj/main.nib/objects.xib`, 25,559 bytes, XML. Named windows `Welcome` (Quit `not!`, Buy Now `Ans2`, Enter Key-Code `Ans3`, Play Demo `ok  `; an image view, signature `Appl` id 128), `Register` (two edit texts, signature `User`, ids 0 and 1; Cancel `not!`, Register `ok  `), `Demo` (the key list; OK), `AuthorizeFailed`, `ThankYou`, `MainWindow`, `MenuBar` |
 | Gestalt today | `sysv` answers `0x1028` (10.2.8). `main` calls `Gestalt` twice before anything else. Mad Daedalus's nib says "MacOS X 10.3.1 or later required", so MONSTER FAIR probably checks for 10.3 too; Task 6 confirms |
+| Startup, measured (Task 6, 2026-10-08, empty save folder, fixed clock) | The 13 initializers each register their destructors the way crt1 does: `_keymgr_get_and_lock_processwide_ptr(14)`, `calloc(20, 1)` the first time, `dlopen("/usr/lib/libSystem.B.dylib")`, `dlsym` of `__cxa_atexit` and `__cxa_finalize` (neither is provided, so the program keeps its own list), `_keymgr_set_and_unlock_processwide_ptr(14, list)`. One initializer calls `_Znam(1)`, another `Gestalt('vm  ')`. Nothing throws |
+| `main`, measured | `Gestalt('sysv')` at `0x41d1c` and `Gestalt('cbon')` at `0x41d38`; it goes on with 10.4.11 (`0x104B`) and Carbon 1.6. Then preferences: `CFPreferencesCopyAppValue`, a default written for each of about 20 keys (`CFNumberCreate` with type 9, `kCFNumberIntType`, and `CFPreferencesSetAppValue`), each read back with `CFPreferencesGetAppIntegerValue`. Then `Gestalt('mach')` at `0x396a4`, `CreateNibReference(CFSTR("main"))` at `0x40fd8` (call 252, the first unimplemented import), `CreateWindowFromNib(nib, CFSTR("Welcome"))`, `DisposeNibReference`, `GetWindowEventTarget`, `InstallEventHandler` on the window (one event type, list at `0x4c7f6`), `RepositionWindow(w, NULL, 7)`, `ShowWindow`. No file is opened and no game window is created before the Welcome window, so the display size and `CreateNewWindow`'s arguments wait for Task 10 to be measured |
+| Constant CFStrings | `0x5d2c8` "main", `0x5d2d8` "appl.png", `0x5d2e8` "Welcome", `0x5d2f8` "Demo", `0x5d308` "Register", `0x5d318` "AuthorizeFailed", `0x5d328` "ThankYou", `0x5d338` "Monster Fair" |
 
 ## Decisions this plan makes
 
@@ -348,16 +351,16 @@ This is a measuring task, like Plan 1's Task 9. It ends with facts, not a workin
 
 Startup for a bundle, in `main.c`: `gm_init_layout(GM_LAYOUT_MACHO)`, `cpu_init`, `image_set_data_resolver` (a function asking `libc_data_symbol`, `cxxrt_data_symbol` and `cf_data_symbol` in turn; Task 7 adds the last), `image_load_macho`, `rsrc_open_empty`, `trap_set_direct_calls(true)`, then the same services as today plus `libc_init`/`libc_register` and `cxxrt_register`. Then `guest_call` each initializer, write `argv`, `envp` and `apple` into the heap, and call `main(1, argv, envp, apple)`. `files_init` gets the bundle as the game folder.
 
-- [ ] **Step 1: Failing tests:** `game_table_knows_three_games`; `game_installed_finds_a_bundle`; `game_in_folder_finds_monster_fair_in_its_bundle`; `run_monster_fair_reaches_main` (`SKIP_UNLESS_MF`, `LOONY_TRACE=imports`, expects the log line `loaded … main at 0x41ca8` and a `Gestalt` call).
-- [ ] **Step 2: Implement.**
-- [ ] **Step 3: Measure.** Run with `LOONY_TRACE=imports LOONY_FIXED_CLOCK=1 LOONY_DATA_DIR=<empty> SDL_VIDEO_DRIVER=dummy ./build/loony "/Applications/MONSTER FAIR.app"` until the first unimplemented import, then with `LOONY_STUB=all` to see further. Record in this plan's Facts table:
+- [x] **Step 1: Failing tests:** `game_table_knows_three_games`; `game_installed_finds_a_bundle`; `game_in_folder_finds_monster_fair_in_its_bundle`; `run_monster_fair_reaches_main` (`SKIP_UNLESS_MF`, `LOONY_TRACE=imports`, expects the log line `loaded … main at 0x41ca8` and a `Gestalt` call).
+- [x] **Step 2: Implement.**
+- [x] **Step 3: Measure.** Run with `LOONY_TRACE=imports LOONY_FIXED_CLOCK=1 LOONY_DATA_DIR=<empty> SDL_VIDEO_DRIVER=dummy ./build/loony "/Applications/MONSTER FAIR.app"` until the first unimplemented import, then with `LOONY_STUB=all` to see further. Record in this plan's Facts table:
   - the `Gestalt` selectors and what `main` does with the answers;
   - the order of the first 50 imports;
   - the window `CreateNewWindow` asks for (class, attributes, bounds), or whether it captures the display, and the width, height and depth it uses with no preferences;
   - which nib windows it creates and in what order;
   - whether anything throws (the `__cxa_throw` crash), and if so, from where. **If it throws during a normal start, stop and tell the user before going on**, since Task 12 then becomes required;
   - which files it opens, with which permissions.
-- [ ] **Step 4: Commit** the code and the updated Facts table: `Start MONSTER FAIR: find main, run its initializers, and measure its first calls`.
+- [x] **Step 4: Commit** the code and the updated Facts table: `Start MONSTER FAIR: find main, run its initializers, and measure its first calls`.
 
 ---
 

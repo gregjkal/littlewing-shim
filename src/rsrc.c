@@ -104,6 +104,10 @@ bool rsrc_open(const uint8_t *fork, size_t len, char *err, size_t errlen) {
     return false;
 }
 
+void rsrc_open_empty(void) {
+    rsrc_close();
+}
+
 uint32_t rsrc_type_count(void) { return R.ntypes; }
 uint32_t rsrc_total(void) { return R.n; }
 

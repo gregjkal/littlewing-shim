@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "guest_mem.h"
+#include "memmgr.h"
 #include "plist.h"
 #include "trap.h"
 #include "util.h"
@@ -33,6 +34,8 @@ static struct {
     uint32_t nprefs, prefs_cap;
     uint32_t current_app;
     char *prefs_path; /* NULL: preferences are never saved */
+    uint32_t app_var;   /* Mach-O: the kCFPreferencesCurrentApplication variable */
+    uint32_t class_ref; /* Mach-O: __CFConstantStringClassReference */
 } C;
 
 static uint32_t ref_of(uint32_t index) { return CF_TAG_BASE + 16u * index; }
@@ -92,6 +95,29 @@ void cf_init(void) {
 }
 
 uint32_t cf_current_app(void) { return C.current_app; }
+
+static uint32_t new_data(uint32_t size) {
+    uint32_t p = mm_new_ptr(size, true);
+    if (!p)
+        fatal("can't allocate Core Foundation's data");
+    return p;
+}
+
+uint32_t cf_data_symbol(const char *name) {
+    if (strcmp(name, "kCFPreferencesCurrentApplication") == 0) {
+        if (!C.app_var) {
+            C.app_var = new_data(4);
+            gm_w32(C.app_var, C.current_app);
+        }
+        return C.app_var;
+    }
+    if (strcmp(name, "__CFConstantStringClassReference") == 0) {
+        if (!C.class_ref)
+            C.class_ref = new_data(16);
+        return C.class_ref;
+    }
+    return 0;
+}
 
 uint32_t cf_string(const char *s) {
     char *copy = strdup(s);

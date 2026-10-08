@@ -35,6 +35,13 @@ bool cf_save_prefs(void);
 /* The CFStringRef stored in the kCFPreferencesCurrentApplication data import. */
 uint32_t cf_current_app(void);
 
+/* The loader's resolver for a Mach-O game's Core Foundation data (see
+   image_data_fn): kCFPreferencesCurrentApplication, a word holding
+   cf_current_app(), and __CFConstantStringClassReference, the isa of the
+   program's constant strings. Allocated on first use (requires mm_init());
+   0 for anything else. */
+uint32_t cf_data_symbol(const char *name);
+
 /* Creates a CFString (retain count 1) from a C string. */
 uint32_t cf_string(const char *s);
 

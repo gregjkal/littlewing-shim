@@ -396,6 +396,29 @@ TEST(run_reports_an_unreadable_script) {
 }
 
 /* Review Focus 1: wrong or missing game folder. */
+static void run_monster_fair_traced(void *unused) {
+    (void)unused;
+    setenv("LOONY_TRACE", "imports", 1);
+    setenv("LOONY_FIXED_CLOCK", "1", 1);
+    setenv("LOONY_EXIT_AFTER", "120", 1);
+    run_loony((void *)test_mf_app());
+}
+
+TEST(run_monster_fair_reaches_main) {
+    SKIP_UNLESS_MF();
+    test_tmp_dir(run_data, sizeof run_data);
+    static char out[1 << 20];
+    test_run_child(run_monster_fair_traced, NULL, out, sizeof out);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    CHECK_CONTAINS(out, "loony: playing MONSTER FAIR from ");
+    CHECK_CONTAINS(out, "207 imports, main at 0x41ca8, 13 initializers");
+    /* main's first calls: the system version, then Carbon's. */
+    CHECK_CONTAINS(out, "Gestalt(0x73797376, ");
+    CHECK_CONTAINS(out, "from code+0x41d1c");
+    CHECK(!strstr(out, "the game threw"));
+}
+
 TEST(run_reports_missing_game_folder) {
     char out[4096];
     int status = test_run_child(run_loony, (void *)"/nonexistent/loony", out, sizeof out);

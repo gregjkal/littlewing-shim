@@ -3,6 +3,12 @@
 #include <stdint.h>
 
 #define MISC_GESTALT_UNDEF_SELECTOR_ERR (-5551)
+
+/* Gestalt('sysv'): Mac OS X 10.2.8 for the classic games, 10.4.11 for a
+   Mach-O game. The PEF answer is the default. */
+#define MISC_SYSTEM_VERSION_PEF   0x1028u
+#define MISC_SYSTEM_VERSION_MACHO 0x104Bu
+void misc_set_system_version(uint32_t v);
 /* The game sees a Mac that booted a minute before launch: TickCount and
    Microseconds start here, never at 0, which the game uses to mean "not
    scheduled" (BGMKickOff). misc_ticks() and scripts still count from launch. */
