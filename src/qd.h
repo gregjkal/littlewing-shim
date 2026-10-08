@@ -87,5 +87,16 @@ void qd_mark_dirty(void);
 bool qd_take_dirty(void);
 uint32_t qd_current_port(void);
 
+/* A new window port, hidden, whose portRect is (0, 0, height, width). It
+   shares the screen's pixels, as every window does. */
+uint32_t qd_new_window(int width, int height);
+
+/* What happened to a window, for the code that draws it (dialogs.c draws
+   nib windows). arg is RepositionWindow's method. Called before a disposed
+   window's port goes away. */
+typedef enum { QD_WINDOW_SHOWN, QD_WINDOW_HIDDEN, QD_WINDOW_DISPOSED, QD_WINDOW_REPOSITIONED } qd_window_change;
+typedef void (*qd_window_fn)(uint32_t window, qd_window_change change, uint32_t arg);
+void qd_set_window_hook(qd_window_fn fn);
+
 /* Registers the QuickDraw, GWorld and window imports. */
 void qd_register(void);

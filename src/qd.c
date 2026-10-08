@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "events.h"
 #include "guest_mem.h"
 #include "hd.h"
 #include "memmgr.h"
@@ -30,6 +31,7 @@ static struct {
     uint32_t cur_port, cur_device;
     bool dirty;
     int saved_w, saved_h; /* screen size before BeginFullScreen */
+    qd_window_fn window_hook;
 } Q;
 
 /* ---- guest structure helpers ---- */
@@ -463,8 +465,50 @@ static void h_get_qd_globals_screen_bits(void) {
     trap_return(out);
 }
 
-static void h_show_window(void) { need_port("ShowWindow", trap_arg(0))->visible = true; Q.dirty = true; }
-static void h_hide_window(void) { need_port("HideWindow", trap_arg(0))->visible = false; Q.dirty = true; }
+uint32_t qd_new_window(int width, int height) {
+    uint32_t w = new_port(Q.screen_pm, (qd_rect){0, 0, (int16_t)height, (int16_t)width}, KIND_WINDOW);
+    find_port(w)->visible = false;
+    return w;
+}
+
+void qd_set_window_hook(qd_window_fn fn) { Q.window_hook = fn; }
+
+static void window_changed(uint32_t w, qd_window_change change, uint32_t arg) {
+    if (Q.window_hook)
+        Q.window_hook(w, change, arg);
+}
+
+static void h_show_window(void) {
+    need_port("ShowWindow", trap_arg(0))->visible = true;
+    Q.dirty = true;
+    window_changed(trap_arg(0), QD_WINDOW_SHOWN, 0);
+}
+
+static void h_hide_window(void) {
+    need_port("HideWindow", trap_arg(0))->visible = false;
+    Q.dirty = true;
+    window_changed(trap_arg(0), QD_WINDOW_HIDDEN, 0);
+}
+
+/* DisposeWindow(WindowRef): its event handlers go with it. */
+static void h_dispose_window(void) {
+    uint32_t w = trap_arg(0);
+    port_info *info = need_port("DisposeWindow", w);
+    if (info->kind != KIND_WINDOW)
+        trap_crash("DisposeWindow: 0x%08x is not a window", w);
+    window_changed(w, QD_WINDOW_DISPOSED, 0);
+    events_forget_window(w);
+    dispose_port(find_port(w));
+    Q.dirty = true;
+}
+
+/* RepositionWindow(WindowRef, WindowRef parent, WindowPositionMethod) -> OSStatus */
+static void h_reposition_window(void) {
+    uint32_t w = trap_arg(0);
+    need_port("RepositionWindow", w);
+    window_changed(w, QD_WINDOW_REPOSITIONED, trap_arg(2));
+    trap_return(QD_NO_ERR);
+}
 
 static void h_inval_window_rect(void) {
     need_port("InvalWindowRect", trap_arg(0));
@@ -632,6 +676,8 @@ void qd_register(void) {
     trap_register("GetQDGlobalsScreenBits", h_get_qd_globals_screen_bits);
     trap_register("ShowWindow", h_show_window);
     trap_register("HideWindow", h_hide_window);
+    trap_register("DisposeWindow", h_dispose_window);
+    trap_register("RepositionWindow", h_reposition_window);
     trap_register("InvalWindowRect", h_inval_window_rect);
     trap_register("QDFlushPortBuffer", h_qd_flush_port_buffer);
     trap_register("BeginFullScreen", h_begin_full_screen);

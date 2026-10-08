@@ -441,6 +441,8 @@ Calls: `CreateNibReference`, `CreateWindowFromNib`, `DisposeNibReference`, `HIVi
 - `CreateStandardAlert`/`RunStandardAlert` draw like `Alert`, from the CFStrings given. This is how the game reports an "Unexpected operating system error".
 - `LOONY_AUTO_ALERTS=1` answers nib windows with their `'ok  '` button too.
 
+*Progress (2026-10-08):* done and tested: `nib.c` (reads all six of the game's windows), `cgimage.c` (decodes `appl.png`), `events_send_command`/`events_forget_window` (the window-target mapping now also works for Mach-O heap addresses), and `qd_new_window` with a show/hide/dispose/reposition hook, plus `DisposeWindow` and `RepositionWindow`. Left: the nib-window and standard-alert calls in `dialogs.c` (`CreateNibReference` … `RunStandardAlert`, `GetControlByID`, `GetControlData`, the `HIView*`/`HIImageView*` calls), registering `cgimage`, and the two run tests. Task 10 is done before Task 9, because the game window's size can only be measured after the Welcome window.
+
 - [ ] **Step 1: Failing tests:** `nib_reads_the_welcome_window` (from a copy of the window's XML written by the test, not from the game); `nib_refuses_an_unknown_control`; `dialogs_nib_button_sends_its_command`; `dialogs_nib_edit_text_returns_a_cfstring`; `cgimage_decodes_a_png` (a PNG the test writes with `png.c`); and with the game (`SKIP_UNLESS_MF`): `run_monster_fair_shows_the_welcome_window` (screenshot at a tick from Task 6, checked against a golden the user approves); `run_monster_fair_wrong_key_code_shows_authorize_failed`.
 - [ ] **Step 2: Implement, run** `./build/loony_tests nib_ dialogs_ cgimage_ run_`.
 - [ ] **Step 3: Commit** `Nib windows and standard alerts, drawn like the classic dialogs`.
