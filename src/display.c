@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "hd.h"
+#include "menu.h"
 #include "png.h"
 #include "qd.h"
 #include "util.h"
@@ -77,6 +78,7 @@ static bool open_window(int w, int h) {
         log_msg("display: SDL_Init failed: %s (continuing without a window)", SDL_GetError());
         return false;
     }
+    menu_install();
     int scale = w < 800 ? 2 : 1;
     const char *fs = getenv("LOONY_FULLSCREEN");
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | (fs && strcmp(fs, "1") == 0 ? SDL_WINDOW_FULLSCREEN : 0);
