@@ -1,11 +1,11 @@
-# loony-shim
+# littlewing-shim
 
 Runs two 2003 PowerPC Mac pinball games by LittleWing, *Loony Labyrinth 3.0.1*
 and *Crystal Caliburn 3.0.1*, natively on Apple Silicon by emulating their CPU
 (Unicorn) and reimplementing the Mac OS calls they make in C. Personal use only.
 This repo contains no game files; point it at your own copies. The one
 exception is `hd-art/`, enlarged art made from the game's pictures (see HD art
-below).
+below). It is an unofficial project, not made or endorsed by LittleWing.
 
 ## Build
 
@@ -40,14 +40,14 @@ double-click it. With both games installed, it opens on a picker showing each
 game's title picture: Left and Right (or the mouse) choose, and Return (or a
 click) plays. It starts on the last game played. With one game installed, it
 plays that game. Choosing QUIT in a game's own menu goes back to the picker;
-Cmd-Q or closing the window quits. The app It carries its own copies of Unicorn and SDL3, so Homebrew
+Cmd-Q or closing the window quits. The app carries its own copies of Unicorn and SDL3, so Homebrew
 upgrades don't affect it. Built as above, it is signed ad hoc, which is enough
 on the Mac that built it. On another Mac, Gatekeeper blocks the first launch;
 open System Settings, then Privacy & Security, and click Open Anyway near the
 bottom. (Right-click and Open no longer gets past it on recent macOS.) To give
 the app to someone without that step, sign and notarize it (below). When the app can't
 start or the game crashes, it says so in a message box; its log is
-`~/Library/Logs/loony-shim/loony.log` (the run before is kept as
+`~/Library/Logs/littlewing-shim/loony.log` (the run before is kept as
 `loony.previous.log`).
 
 From a terminal:
@@ -85,12 +85,13 @@ time-limited.
 
 Each game's preferences (options, keys, the high-score table and the license)
 are saved when it quits (and at any exit but a crash), in
-`~/Library/Application Support/loony-shim/<game>/prefs.plist`, where `<game>`
+`~/Library/Application Support/littlewing-shim/<game>/prefs.plist`, where `<game>`
 is `loony-labyrinth` or `crystal-caliburn`. Any file a game writes goes to its
 own folder there, never into the game folder. Delete a game's folder to start
-it over. Saves from before there were two games (`loony-shim/prefs.plist`)
-move into `loony-labyrinth/` on the next launch. The picker remembers the last
-game in `loony-shim/picker.plist`.
+it over. The picker remembers the last game in `littlewing-shim/picker.plist`.
+Saves from before the project was renamed (`loony-shim/`) move to
+`littlewing-shim/` on the next launch, and saves from before there were two
+games (`prefs.plist` at the top) move into `loony-labyrinth/`.
 
 ## HD art (a prototype)
 
