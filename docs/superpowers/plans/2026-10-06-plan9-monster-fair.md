@@ -460,7 +460,7 @@ Calls: `CreateNibReference`, `CreateWindowFromNib`, `DisposeNibReference`, `HIVi
 - `DLG_MAX` is 8, for nested nib windows plus an alert.
 - The run tests use `real_alerts`, since `LOONY_AUTO_ALERTS=1` would answer the Welcome window with Play Demo.
 - Extra tests: `dialogs_nib_hidden_controls_take_no_input`, `dialogs_auto_alerts_press_a_nib_windows_ok_button`, `dialogs_standard_alert_shows_its_text_and_answers_ok`.
-- `run_monster_fair_shows_the_welcome_window`'s golden (`0xCF4FD1C9`, tick 120) is waiting for the user's approval.
+- `run_monster_fair_shows_the_welcome_window`'s golden (`0xCF4FD1C9`, tick 120) was approved by the user on 2026-10-08.
 
 - [x] **Step 1: Failing tests:** `nib_reads_the_welcome_window` (from a copy of the window's XML written by the test, not from the game); `nib_refuses_an_unknown_control`; `dialogs_nib_button_sends_its_command`; `dialogs_nib_edit_text_returns_a_cfstring`; `cgimage_decodes_a_png` (a PNG the test writes with `png.c`); and with the game (`SKIP_UNLESS_MF`): `run_monster_fair_shows_the_welcome_window` (screenshot at a tick from Task 6, checked against a golden the user approves); `run_monster_fair_wrong_key_code_shows_authorize_failed`.
 - [x] **Step 2: Implement, run** `./build/loony_tests nib_ dialogs_ cgimage_ run_`.

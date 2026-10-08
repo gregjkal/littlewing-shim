@@ -9,7 +9,6 @@ Next:
 - **Task 15** (soak, the user's playtest, goldens).
 
 Waiting on the user:
-- Approval of `run_monster_fair_shows_the_welcome_window`'s golden `0xCF4FD1C9`. Regenerate the PNG with a fixed-clock run screenshotting at tick 120, or look at `build/review/monster_fair_welcome.png` in that worktree if it's still there.
 - Goldens for the three-card picker and MONSTER FAIR's frames, in Task 15.
 
 Worktree notes from this session:

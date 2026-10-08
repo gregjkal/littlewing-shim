@@ -441,7 +441,7 @@ TEST(run_monster_fair_shows_the_welcome_window) {
     CHECK_CONTAINS(out, "loony: nib window Welcome: 510x144, 6 controls");
     CHECK_CONTAINS(out, "loony: nib window Welcome: shown");
     CHECK(!strstr(out, "command '"));
-    CHECK_EQ(shots[0], 0xCF4FD1C9u); /* the Welcome window, appl.png beside its text */
+    CHECK_EQ(shots[0], 0xCF4FD1C9u); /* the Welcome window, approved by the user on 2026-10-08 */
 }
 
 /* "Enter Key-Code" opens the Register window; a key code that isn't one
