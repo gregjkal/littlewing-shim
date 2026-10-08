@@ -491,7 +491,7 @@ Calls: `CreateNibReference`, `CreateWindowFromNib`, `DisposeNibReference`, `HIVi
 
 Only if Task 6 or 11 shows a throw that a real Mac would catch during normal play. Otherwise, write "not needed" here with the evidence and skip it.
 
-*Not needed so far (2026-10-08).* Nothing threw (`__cxa_throw` would have crashed by name) in Task 6's start, in any of the nib windows and the registration flow, or in Task 11's 9,100-tick run through the opening, the menu, a game and a clean quit. Task 15's hour-long soak is the last check.
+*Not needed (2026-10-08).* Nothing threw (`__cxa_throw` would have crashed by name) in Task 6's start, in any of the nib windows and the registration flow, in Task 11's 9,100-tick run through the opening, the menu, a game and a clean quit, or in Task 15's hour-long soak.
 
 The design, if needed: a host-side two-phase unwinder over the guest's registers. Parse the CIEs and FDEs in `__eh_frame` (PowerPC DWARF register numbers: r0 to r31, f0 to f31 as 32 to 63, LR 65, CR 70), interpret the CFA programs, and use the LSDA in `__gcc_except_tab` for `__gxx_personality_v0` (call sites, actions, type tables compared by `type_info` address). `__cxa_begin_catch`, `__cxa_end_catch`, `__cxa_rethrow` and `_Unwind_Resume` then work for real. This is a plan of its own, written when needed.
 
@@ -536,8 +536,13 @@ The design, if needed: a host-side two-phase unwinder over the guest's registers
 
 ### Task 15: An hour of MONSTER FAIR, the user's playtest, and the recordings
 
-- [ ] **Step 1:** A 216,000-tick fixed-clock soak with `tools/soak_script.py` (adapted for MONSTER FAIR's keys): no crash, no unknown selector, a clean quit, preferences saved.
-- [ ] **Step 2:** Run the soak twice from empty save folders and compare frames and `LOONY_WAV` output. They must match byte for byte (Review Focus 5).
+*Steps 1 and 2 done (2026-10-08).* Details:
+- **The script.** `tools/soak_script.py 216000 <prefix> monster-fair`. Its keys are the classic games' (MONSTER FAIR's defaults match), plus X and period, its side nudges. The first game starts at tick 3000, not 1700: until the table plays by itself, Esc opens the menu at once and the second Esc closes it again, so no game starts. Measured: from the self-playing table, Esc, Esc, Return, Return goes to the menu, NEW GAME, "HOW MANY PLAYERS?" and a 1-player game. In a game, the same keys pause it (PAUSED: RESUME, RESET) and resume it, and the last Return pulls the plunger. A tryout game ends by itself after 100 seconds (TIME UP, then GAME OVER, then the table plays by itself again), so a new game starts every two or three minutes.
+- **The soak** (Release build, `LOONY_AUTO_ALERTS=1`, `LOONY_FIXED_CLOCK=1`, `LOONY_WAV`, empty save folder): exit status 0 in about 790 seconds of host time for the hour. No crash, no unknown selector, nothing unimplemented, nothing thrown; the log is 74 lines, mostly the 13 initializers' `dlopen`/`dlsym` lines. The quit Apple Event ends it cleanly: the display goes back to 800×600, 32 bits, and `main` returns 0. The 5-minute screenshots show tryout games under way (up to 303,600 points), the menu and the self-playing table. `prefs.plist` holds 40 keys (key codes, the high-score table, `mode screen size` 2, the sound and music switches, an empty license). No soak game beat the default high scores, so name entry wasn't exercised; that's for the playtest.
+- **Determinism.** Two soaks run at the same time from separate empty save folders matched byte for byte: the 634,866,584-byte WAV (SHA-256 `edeeba644e355050…`), all 12 screenshots, the last frame (`90b49b9d634cd0eb…`), `prefs.plist` and the log. The scripts differ only in their screenshot paths.
+
+- [x] **Step 1:** A 216,000-tick fixed-clock soak with `tools/soak_script.py` (adapted for MONSTER FAIR's keys): no crash, no unknown selector, a clean quit, preferences saved.
+- [x] **Step 2:** Run the soak twice from empty save folders and compare frames and `LOONY_WAV` output. They must match byte for byte (Review Focus 5).
 - [ ] **Step 3:** Ask the user to play: windowed and full screen, Cmd-F, registering with their own key code (they type it; it is never logged or written anywhere but the preferences), quitting to the picker, Cmd-Q. Fix what they find.
 - [ ] **Step 4:** With the user's approval, add MONSTER FAIR's golden frames and recording, and the facts the soak measured.
 - [ ] **Step 5:** Commit.

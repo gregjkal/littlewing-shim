@@ -6,7 +6,7 @@ Tasks 9, 10, 11 and 13 are done, and Task 12 is not needed so far. Their notes i
 
 Next:
 - **Task 14** is done too: the full suite gave 426 passed, 0 failed, 1 skipped.
-- **Task 15** (soak, the user's playtest, goldens). See the plan for where it stands.
+- **Task 15**: the soak and the determinism check (steps 1 and 2) passed. Next is step 3, the user's playtest, then the goldens with their approval.
 
 Waiting on the user:
 - Goldens for the three-card picker and MONSTER FAIR's frames, in Task 15.
