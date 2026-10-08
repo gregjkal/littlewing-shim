@@ -193,10 +193,10 @@ git commit -m "Read Mach-O executables: the PowerPC slice, its segments, symbols
   PEF: unchanged (low memory `0`-`0x10000`, image `0x100000`-`0x1000000`, heap `0x1000000` + 64 MB).
   Mach-O: `0`-`0x1000` unmapped, image `0x1000`-`0x100000`, heap `0x10000000` + 256 MB. Stack, trap and tag addresses are the same in both.
 
-- [ ] **Step 1: Failing tests:** `gm_pef_layout_is_unchanged` (every region's base, size and protection as today); `gm_macho_layout_leaves_page_zero_unmapped` (`gm_is_backed(0, 4)` is false, `gm_is_backed(0x1000, 4)` is true); `gm_macho_heap_is_256_mb`; `mm_allocates_in_the_macho_heap`.
-- [ ] **Step 2: Implement.** Backing memory is allocated per region, so the bigger heap costs only what the game touches (allocate with `mmap(MAP_ANON)` so untouched pages stay unbacked on the host). `memmgr.c` reads the heap bounds from `gm_heap_*` instead of the macros.
-- [ ] **Step 3: Run** `./build/loony_tests gm_ mm_ run_` and confirm the classic runs still match their goldens.
-- [ ] **Step 4: Commit** `A memory layout for Mach-O programs: page zero unmapped, a bigger heap`.
+- [x] **Step 1: Failing tests:** `gm_pef_layout_is_unchanged` (every region's base, size and protection as today); `gm_macho_layout_leaves_page_zero_unmapped` (`gm_is_backed(0, 4)` is false, `gm_is_backed(0x1000, 4)` is true); `gm_macho_heap_is_256_mb`; `mm_allocates_in_the_macho_heap`.
+- [x] **Step 2: Implement.** Backing memory is allocated per region, so the bigger heap costs only what the game touches (allocate with `mmap(MAP_ANON)` so untouched pages stay unbacked on the host). `memmgr.c` reads the heap bounds from `gm_heap_*` instead of the macros.
+- [x] **Step 3: Run** `./build/loony_tests gm_ mm_ run_` and confirm the classic runs still match their goldens.
+- [x] **Step 4: Commit** `A memory layout for Mach-O programs: page zero unmapped, a bigger heap`.
 
 ---
 

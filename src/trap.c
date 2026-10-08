@@ -67,7 +67,8 @@ void trap_init(uint32_t nimports, const char *const *names, uint32_t code_base,
     const char *trace = getenv("LOONY_TRACE");
     T.trace_imports = trace && strstr(trace, "imports");
     T.trace_calls = trace && strstr(trace, "calls");
-    if (trace && strstr(trace, "lowmem"))
+    /* A Mach-O program has no low memory: its image starts at 0x1000. */
+    if (trace && strstr(trace, "lowmem") && gm_current_layout() == GM_LAYOUT_PEF)
         cpu_watch_writes(GUEST_LOWMEM_BASE, GUEST_LOWMEM_BASE + GUEST_LOWMEM_SIZE - 1,
                          on_lowmem_write);
     const char *stub = getenv("LOONY_STUB");
