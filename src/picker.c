@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "blit.h"
+#include "cgimage.h"
 #include "display.h"
 #include "files.h"
 #include "font.h"
@@ -27,12 +28,29 @@
 #define NAME_TOP 448
 #define HEADING_TOP 64
 #define HINT_TOP 540
+/* Three cards: smaller art, in a row centered on the screen. */
+#define ART3_W 240
+#define ART3_H 180
+#define CARD3_GAP 24
+#define CARD3_LEFT0 ((PICKER_W - 3 * ART3_W - 2 * CARD3_GAP) / 2)
+#define CARD3_TOP 180
+#define NAME3_TOP 392
 
 static const qd_rgb BLACK = {0, 0, 0}, GOLD = {0xFFFF, 0xCCCC, 0x3333}, DARK = {0x3333, 0x3333, 0x3333},
                     PLAIN = {0x2222, 0x2222, 0x2222}, WHITE = {0xFFFF, 0xFFFF, 0xFFFF},
                     GRAY = {0x8888, 0x8888, 0x8888};
 
-static int card_left(int i) { return CARD_LEFT0 + i * (PICKER_ART_W + CARD_GAP); }
+/* Where card i's art goes: two cards side by side, or three smaller ones. */
+static qd_rect card(int n, int i) {
+    if (n == 3) {
+        int left = CARD3_LEFT0 + i * (ART3_W + CARD3_GAP);
+        return (qd_rect){CARD3_TOP, (int16_t)left, CARD3_TOP + ART3_H, (int16_t)(left + ART3_W)};
+    }
+    int left = CARD_LEFT0 + i * (PICKER_ART_W + CARD_GAP);
+    return (qd_rect){CARD_TOP, (int16_t)left, CARD_TOP + PICKER_ART_H, (int16_t)(left + PICKER_ART_W)};
+}
+
+static int name_top(int n) { return n == 3 ? NAME3_TOP : NAME_TOP; }
 
 static qd_pixels pixels(uint8_t *base, int w, int h) {
     qd_pixels p = {base, (uint32_t)w * 4, {0, 0, (int16_t)h, (int16_t)w}, 32, NULL};
@@ -42,6 +60,26 @@ static qd_pixels pixels(uint8_t *base, int w, int h) {
 static qd_rect rect(int left, int top, int w, int h) {
     qd_rect r = {(int16_t)top, (int16_t)left, (int16_t)(top + h), (int16_t)(left + w)};
     return r;
+}
+
+/* src (sw x sh xRGB) reduced to dw x dh (no larger) by averaging the source
+   pixels under each output pixel; dst rows are dst_stride bytes apart. */
+static void reduce(const uint8_t *src, int sw, int sh, uint8_t *dst, int dw, int dh, size_t dst_stride) {
+    for (int y = 0; y < dh; y++) {
+        int y0 = y * sh / dh, y1 = (y + 1) * sh / dh;
+        for (int x = 0; x < dw; x++) {
+            int x0 = x * sw / dw, x1 = (x + 1) * sw / dw;
+            unsigned sum[3] = {0, 0, 0}, count = 0;
+            for (int sy = y0; sy < y1; sy++)
+                for (int sx = x0; sx < x1; sx++, count++)
+                    for (int c = 0; c < 3; c++)
+                        sum[c] += src[((size_t)sy * (size_t)sw + (size_t)sx) * 4 + 1 + (size_t)c];
+            uint8_t *d = dst + (size_t)y * dst_stride + (size_t)x * 4;
+            d[0] = 0;
+            for (int c = 0; c < 3; c++)
+                d[1 + c] = (uint8_t)(sum[c] / count);
+        }
+    }
 }
 
 /* ASCII text at `scale`, each glyph bit a scale x scale square, centered on cx. */
@@ -62,30 +100,32 @@ void picker_draw(const picker_entry *e, int n, int selected, uint8_t *screen) {
     qd_fill(&s, s.bounds, s.bounds, BLACK);
     draw_text(&s, PICKER_W / 2, HEADING_TOP, "LITTLEWING PINBALL", 3, GOLD);
     for (int i = 0; i < n && i < PICKER_MAX; i++) {
-        int left = card_left(i);
-        qd_fill(&s, rect(left - BORDER, CARD_TOP - BORDER, PICKER_ART_W + 2 * BORDER, PICKER_ART_H + 2 * BORDER),
-                s.bounds, i == selected ? GOLD : DARK);
-        if (e[i].art)
+        qd_rect c = card(n, i);
+        int left = c.left, w = rect_w(c), h = rect_h(c);
+        qd_fill(&s, rect(left - BORDER, c.top - BORDER, w + 2 * BORDER, h + 2 * BORDER), s.bounds,
+                i == selected ? GOLD : DARK);
+        uint8_t *at = screen + ((size_t)c.top * PICKER_W + (size_t)left) * 4;
+        if (!e[i].art)
+            qd_fill(&s, c, s.bounds, PLAIN);
+        else if (w == PICKER_ART_W)
             for (int y = 0; y < PICKER_ART_H; y++)
-                memcpy(screen + ((size_t)(CARD_TOP + y) * PICKER_W + (size_t)left) * 4,
-                       e[i].art + (size_t)y * PICKER_ART_W * 4, PICKER_ART_W * 4);
+                memcpy(at + (size_t)y * PICKER_W * 4, e[i].art + (size_t)y * PICKER_ART_W * 4, PICKER_ART_W * 4);
         else
-            qd_fill(&s, rect(left, CARD_TOP, PICKER_ART_W, PICKER_ART_H), s.bounds, PLAIN);
+            reduce(e[i].art, PICKER_ART_W, PICKER_ART_H, at, w, h, PICKER_W * 4);
         char name[64];
         size_t k = 0;
         for (const char *p = e[i].game->title; *p && k + 1 < sizeof name; p++)
             name[k++] = (char)toupper((unsigned char)*p);
         name[k] = '\0';
-        draw_text(&s, left + PICKER_ART_W / 2, NAME_TOP, name, 2, i == selected ? WHITE : GRAY);
+        draw_text(&s, left + w / 2, name_top(n), name, 2, i == selected ? WHITE : GRAY);
     }
     draw_text(&s, PICKER_W / 2, HINT_TOP, "RETURN TO PLAY - CMD-Q TO QUIT", 2, GRAY);
 }
 
 int picker_hit(int n, int x, int y) {
     for (int i = 0; i < n && i < PICKER_MAX; i++) {
-        int left = card_left(i) - BORDER;
-        if (x >= left && x < left + PICKER_ART_W + 2 * BORDER && y >= CARD_TOP - BORDER &&
-            y < NAME_TOP + 2 * FONT_H)
+        qd_rect c = card(n, i);
+        if (x >= c.left - BORDER && x < c.right + BORDER && y >= c.top - BORDER && y < name_top(n) + 2 * FONT_H)
             return i;
     }
     return -1;
@@ -106,25 +146,6 @@ int picker_initial(const picker_entry *e, int n, const char *last_id) {
         if (strcmp(e[i].game->id, last_id) == 0)
             return i;
     return 0;
-}
-
-/* src (512x384) reduced to 3/4 by averaging the source pixels under each output pixel. */
-static void reduce(const uint8_t *src, uint8_t *dst) {
-    for (int y = 0; y < PICKER_ART_H; y++) {
-        int y0 = y * ART_SRC_H / PICKER_ART_H, y1 = (y + 1) * ART_SRC_H / PICKER_ART_H;
-        for (int x = 0; x < PICKER_ART_W; x++) {
-            int x0 = x * ART_SRC_W / PICKER_ART_W, x1 = (x + 1) * ART_SRC_W / PICKER_ART_W;
-            unsigned sum[3] = {0, 0, 0}, count = 0;
-            for (int sy = y0; sy < y1; sy++)
-                for (int sx = x0; sx < x1; sx++, count++)
-                    for (int c = 0; c < 3; c++)
-                        sum[c] += src[((size_t)sy * ART_SRC_W + (size_t)sx) * 4 + 1 + (size_t)c];
-            uint8_t *d = dst + ((size_t)y * PICKER_ART_W + (size_t)x) * 4;
-            d[0] = 0;
-            for (int c = 0; c < 3; c++)
-                d[1 + c] = (uint8_t)(sum[c] / count);
-        }
-    }
 }
 
 bool picker_load_art(const char *exe_path, uint8_t *art, char *err, size_t errlen) {
@@ -155,13 +176,32 @@ bool picker_load_art(const char *exe_path, uint8_t *art, char *err, size_t errle
         qd_pixels t = pixels(full, ART_SRC_W, ART_SRC_H);
         ok = pict_draw(rsrc_data(e), e->len, t.bounds, &t, t.bounds, BLACK, WHITE, rerr, sizeof rerr);
         if (ok)
-            reduce(full, art);
+            reduce(full, ART_SRC_W, ART_SRC_H, art, PICKER_ART_W, PICKER_ART_H, PICKER_ART_W * 4);
         else
             snprintf(err, errlen, "%s: PICT 800: %s", exe_path, rerr);
     }
     free(full);
     rsrc_close();
     free(fork);
+    return ok;
+}
+
+bool picker_load_icon(const char *png_path, uint8_t *art, char *err, size_t errlen) {
+    cgimage_pixels icon;
+    if (!cgimage_decode_png_over(png_path, 0x22, 0x22, 0x22, &icon, err, errlen))
+        return false;
+    bool ok = icon.width <= PICKER_ART_W && icon.height <= PICKER_ART_H;
+    if (!ok) {
+        snprintf(err, errlen, "%s is %dx%d, larger than a card", png_path, icon.width, icon.height);
+    } else {
+        qd_pixels a = pixels(art, PICKER_ART_W, PICKER_ART_H);
+        qd_fill(&a, a.bounds, a.bounds, PLAIN);
+        int left = (PICKER_ART_W - icon.width) / 2, top = (PICKER_ART_H - icon.height) / 2;
+        for (int y = 0; y < icon.height; y++)
+            memcpy(art + ((size_t)(top + y) * PICKER_ART_W + (size_t)left) * 4,
+                   icon.xrgb + (size_t)y * (size_t)icon.width * 4, (size_t)icon.width * 4);
+    }
+    free(icon.xrgb);
     return ok;
 }
 
@@ -241,10 +281,16 @@ const game_info *picker_run(const game_info *const *games, int n) {
     for (int i = 0; i < n; i++) {
         e[i].game = games[i];
         e[i].art = malloc(PICKER_ART_W * PICKER_ART_H * 4);
-        char dir[PATH_MAX], exe[PATH_MAX + 64], err[512];
+        char dir[PATH_MAX], path[PATH_MAX + 64], err[512];
         game_folder(games[i], dir, sizeof dir);
-        snprintf(exe, sizeof exe, "%s/%s", dir, games[i]->exe);
-        if (!e[i].art || !picker_load_art(exe, e[i].art, err, sizeof err)) {
+        bool bundle = games[i]->kind == GAME_MACHO_BUNDLE;
+        if (bundle)
+            snprintf(path, sizeof path, "%s/Contents/Resources/appl.png", dir);
+        else
+            snprintf(path, sizeof path, "%s/%s", dir, games[i]->exe);
+        bool loaded = e[i].art && (bundle ? picker_load_icon(path, e[i].art, err, sizeof err)
+                                          : picker_load_art(path, e[i].art, err, sizeof err));
+        if (!loaded) {
             log_msg("picker: %s", e[i].art ? err : "out of memory");
             free(e[i].art);
             e[i].art = NULL;

@@ -504,9 +504,16 @@ The design, if needed: a host-side two-phase unwinder over the guest's registers
 
 - Three cards in a row on the 800×600 picker, each about 240 wide. A classic game's PICT 800 is scaled to fit its card. MONSTER FAIR's card shows `appl.png` (through `cgimage.c`) centered above its title.
 - Two installed games keep today's two-card layout, so the existing picker golden still matches.
-- [ ] **Step 1: Failing tests:** `picker_draws_three_cards`, `picker_left_and_right_wrap_across_three`, `picker_draws_an_icon_card_for_a_bundle_game`.
-- [ ] **Step 2: Implement, run** `./build/loony_tests picker_ run_the_picker`.
-- [ ] **Step 3: Commit** `The picker shows up to three games`.
+*Done (2026-10-08).* Details:
+- **Layout.** Three 240×180 cards at x = 16, 280 and 544, from y = 180, with names at y = 392. A classic game's 384×288 art is reduced by area averaging. The two-card layout is unchanged: its approved golden `ed1ea7f1` and `picker_frame_matches_its_recording` still match.
+- **MONSTER FAIR's card.** `picker_load_icon` centers `appl.png` on the plain card color (`cgimage_decode_png_over` flattens it over that color, not white).
+- **Deviation.** Left and Right stop at the ends with three cards, as with two, so the test is `picker_left_and_right_move_across_three`, not "wrap".
+- **Extra run test.** `run_the_picker_shows_three_games_and_starts_monster_fair`. It checks the frame's structure (gold selection, the plain card, the drawn icon), not a golden: a golden for the three-card frame waits for the user's approval. A host quit (Cmd-Q, or a script's `quit`) quits the app, while the game's own QUIT goes back to the picker.
+- **Testing.** The full suite wasn't re-run for this commit: only `picker_`, `cgimage_`, `run_the_picker` and `run_monster_fair_shows` were. Run it once at the start of Task 14.
+
+- [x] **Step 1: Failing tests:** `picker_draws_three_cards`, `picker_left_and_right_wrap_across_three`, `picker_draws_an_icon_card_for_a_bundle_game`.
+- [x] **Step 2: Implement, run** `./build/loony_tests picker_ run_the_picker`.
+- [x] **Step 3: Commit** `The picker shows up to three games`.
 
 ---
 

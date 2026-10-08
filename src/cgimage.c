@@ -22,7 +22,8 @@ static struct {
     cg_obj objs[MAX_OBJECTS];
 } G;
 
-bool cgimage_decode_png(const char *path, cgimage_pixels *out, char *err, size_t errlen) {
+bool cgimage_decode_png_over(const char *path, uint8_t r, uint8_t g, uint8_t b, cgimage_pixels *out,
+                            char *err, size_t errlen) {
     memset(out, 0, sizeof *out);
     CFURLRef url = CFURLCreateFromFileSystemRepresentation(NULL, (const UInt8 *)path,
                                                            (CFIndex)strlen(path), false);
@@ -56,20 +57,24 @@ bool cgimage_decode_png(const char *path, cgimage_pixels *out, char *err, size_t
     CGContextDrawImage(ctx, CGRectMake(0, 0, w, h), img);
     CGContextRelease(ctx);
     CGImageRelease(img);
-    /* Premultiplied color over white: c + (255 - alpha). */
+    /* Premultiplied color over the background: c + bg * (255 - alpha) / 255. */
     for (size_t i = 0; i < (size_t)w * (size_t)h; i++) {
         const uint8_t *s = rgba + 4 * i;
         uint8_t *d = out->xrgb + 4 * i;
         int under = 255 - s[3];
         d[0] = 0;
-        d[1] = (uint8_t)(s[0] + under);
-        d[2] = (uint8_t)(s[1] + under);
-        d[3] = (uint8_t)(s[2] + under);
+        d[1] = (uint8_t)(s[0] + (r * under + 127) / 255);
+        d[2] = (uint8_t)(s[1] + (g * under + 127) / 255);
+        d[3] = (uint8_t)(s[2] + (b * under + 127) / 255);
     }
     free(rgba);
     out->width = w;
     out->height = h;
     return true;
+}
+
+bool cgimage_decode_png(const char *path, cgimage_pixels *out, char *err, size_t errlen) {
+    return cgimage_decode_png_over(path, 255, 255, 255, out, err, errlen);
 }
 
 static void free_obj(cg_obj *o) {

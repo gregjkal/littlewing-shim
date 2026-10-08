@@ -783,6 +783,46 @@ TEST(run_the_picker_frame_shows_both_games) {
     CHECK_STR(got, "ed1ea7f1"); /* approved by the user on 2026-10-05 */
 }
 
+/* Three games: three cards in a row, MONSTER FAIR's showing its icon. Picked,
+   it starts from its bundle. */
+TEST(run_the_picker_shows_three_games_and_starts_monster_fair) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_CC();
+    SKIP_UNLESS_MF();
+    test_tmp_dir(apps_dir, sizeof apps_dir);
+    CHECK(both_games() && link_game("MONSTER FAIR.app", test_mf_app()));
+    test_tmp_dir(run_data, sizeof run_data);
+    tmp_name(pick_shot, sizeof pick_shot, "picker");
+    char out[32768];
+    int status = run_picker_with("monster-fair", "300 quit\n", out, sizeof out);
+    cgimage_pixels px = {0};
+    char err[256];
+    bool decoded = cgimage_decode_png(pick_shot, &px, err, sizeof err);
+    unlink(pick_shot);
+    pick_shot[0] = '\0';
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    test_remove_tree(apps_dir);
+    CHECK_EQ(status, 0);
+    CHECK(decoded);
+    const uint8_t *border = px.xrgb + 4 * (200 * px.width + 16 - 2);  /* the first card, selected */
+    const uint8_t *plain = px.xrgb + 4 * (185 * px.width + 544 + 5);  /* MONSTER FAIR's card, */
+    const uint8_t *icon = px.xrgb + 4 * (270 * px.width + 544 + 120); /* and its icon */
+    bool gold = border[1] == 0xFF && border[2] == 0xCC;
+    bool card = plain[1] == 0x22 && plain[2] == 0x22;
+    bool drawn = !(icon[1] == 0x22 && icon[2] == 0x22 && icon[3] == 0x22);
+    free(px.xrgb);
+    CHECK(gold);
+    CHECK(card);
+    CHECK(drawn);
+    CHECK(!strstr(out, "picker: can't")); /* every card's art loaded */
+    CHECK_CONTAINS(out, "loony: picker: monster-fair");
+    CHECK_CONTAINS(out, "loony: playing MONSTER FAIR from ");
+    CHECK_CONTAINS(out, "loony: nib window Welcome: command 'ok  ' (Play Demo)");
+    CHECK_CONTAINS(out, "loony: main returned 0");
+    CHECK(!strstr(out, "back to the picker")); /* the host's quit (Cmd-Q) quits the app */
+}
+
 /* Review Focus 1: the picker remembers the last game in the save root,
    and each game's preferences land in its own folder. */
 static void run_picker_home(void *unused) {

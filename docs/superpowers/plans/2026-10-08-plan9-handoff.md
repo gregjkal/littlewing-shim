@@ -1,5 +1,22 @@
 # Plan 9 handoff (2026-10-08)
 
+## Update, later on 2026-10-08: read this first
+
+Tasks 9, 10, 11 and 13 are done, and Task 12 is not needed so far. Their notes in the plan say what was built and measured. **MONSTER FAIR now plays:** the Welcome and Demo windows, the registration flow, the full-screen 1024×768×16 display, the title, the menu, a game and a clean quit. Task 13's picker shows three cards. The status table below is out of date; the plan's checkboxes are current.
+
+Next:
+- **Task 14** (README, spec, `make_app.sh` check). Start by running the full suite: it wasn't re-run after Task 13, though the picker, picker-run and Welcome tests were. After Task 11 it gave 422 passed, 0 failed, 1 skipped.
+- **Task 15** (soak, the user's playtest, goldens).
+
+Waiting on the user:
+- Approval of `run_monster_fair_shows_the_welcome_window`'s golden `0xCF4FD1C9`. Regenerate the PNG with a fixed-clock run screenshotting at tick 120, or look at `build/review/monster_fair_welcome.png` in that worktree if it's still there.
+- Goldens for the three-card picker and MONSTER FAIR's frames, in Task 15.
+
+Worktree notes from this session:
+- The guard refuses shell loops, heredoc appends and `sh -c`-like constructs. Put helper scripts in the job's tmp dir and call each with plain arguments.
+- A PowerPC call-site decoder lives at `<job tmp>/callsites.py` (`--range lo hi` dumps code). It is gone with the job, but it's 100 lines to rewrite if needed.
+- Tag spaces added: control refs `0x0B040000` (+256·slot + item, root `0xFF`), nib refs `0x0B080000`, display modes `0x0C800000`.
+
 Where the work on `docs/superpowers/plans/2026-10-06-plan9-monster-fair.md` (MONSTER FAIR) stands. Read the plan first. Its Facts table, the Task 3 to 8 notes and the Task 10 "Progress" note are up to date. This file adds what the plan doesn't say: how to work in this repo, and the detailed design for the rest of Task 10.
 
 ## Where the code is

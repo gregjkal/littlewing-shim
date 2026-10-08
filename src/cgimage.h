@@ -19,6 +19,10 @@ typedef struct {
    frees out->xrgb. */
 bool cgimage_decode_png(const char *path, cgimage_pixels *out, char *err, size_t errlen);
 
+/* The same, flattened over the color (r, g, b) instead of white. */
+bool cgimage_decode_png_over(const char *path, uint8_t r, uint8_t g, uint8_t b, cgimage_pixels *out,
+                             char *err, size_t errlen);
+
 /* Frees every provider and image. */
 void cgimage_init(void);
 
