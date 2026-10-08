@@ -472,16 +472,26 @@ Calls: `CreateNibReference`, `CreateWindowFromNib`, `DisposeNibReference`, `HIVi
 
 **Files:** whatever the measurements name.
 
-- [ ] **Step 1:** Run from an empty save folder with `LOONY_AUTO_ALERTS=1` and a script: Esc, Esc, Return, Return, then plunger and flippers, as Plan 8 did for Crystal Caliburn. Fix each missing or wrong call as its own small commit, with a unit test for each.
-- [ ] **Step 2:** Check the sound: the game uses the Sound Manager with `snda.bin` and `sndf.bin` (8-bit samples). `LOONY_WAV=out.wav` should record its music and effects. Its callbacks now come through direct calls.
-- [ ] **Step 3:** Add `run_monster_fair_plays_its_opening_headless` and `run_monster_fair_starts_a_game` (`SKIP_UNLESS_MF`), modeled on Crystal Caliburn's.
-- [ ] **Step 4:** Record what was measured in the Facts table, and commit.
+*Done (2026-10-08), with no call to fix.* After Tasks 9 and 10, a 9,100-tick fixed-clock run from an empty save folder found no missing or wrong call. It answered both windows automatically, opened the menu with Esc, picked NEW GAME with Return, served with the plunger and flipped once a second until the tryout time ran out, then quit. What it showed:
+- **Opening.** The title ("PRESS ESC TO START", by tick 900), then the table playing by itself ("GAME OVER", BEST MONSTERS) from about tick 2000.
+- **Menu.** Esc opens MENU (NEW GAME, OPTIONS, CREDITS, QUIT). NEW GAME blinks, so some frames catch it blank.
+- **A game.** "Player 1 Ball 1" and "Tryout time left: 95".
+- **Quitting.** The quit Apple Event ends the game cleanly. It switches the display back to 800×600, 32 bits, and `main` returns 0.
+- **Sound** (`LOONY_WAV`). The opening has music (94 clipped samples in 45 seconds, which is negligible). In play, the flipper sounds are one `bufferCmd` each on two channels, and the game polls `SndChannelStatus` about once a frame. It uses no callbacks. Music during play hasn't been heard yet; that's for the user's playtest.
+- **Tests.** `run_monster_fair_starts_a_game` has no golden frame: it checks that the status line under the score changes from "GAME OVER" to "Player 1 Ball 1". Golden frames wait for Task 15 and the user's approval.
+
+- [x] **Step 1:** Run from an empty save folder with `LOONY_AUTO_ALERTS=1` and a script: Esc, Esc, Return, Return, then plunger and flippers, as Plan 8 did for Crystal Caliburn. Fix each missing or wrong call as its own small commit, with a unit test for each.
+- [x] **Step 2:** Check the sound: the game uses the Sound Manager with `snda.bin` and `sndf.bin` (8-bit samples). `LOONY_WAV=out.wav` should record its music and effects. Its callbacks now come through direct calls.
+- [x] **Step 3:** Add `run_monster_fair_plays_its_opening_headless` and `run_monster_fair_starts_a_game` (`SKIP_UNLESS_MF`), modeled on Crystal Caliburn's.
+- [x] **Step 4:** Record what was measured in the Facts table, and commit.
 
 ---
 
 ### Task 12 (contingent): C++ exceptions
 
 Only if Task 6 or 11 shows a throw that a real Mac would catch during normal play. Otherwise, write "not needed" here with the evidence and skip it.
+
+*Not needed so far (2026-10-08).* Nothing threw (`__cxa_throw` would have crashed by name) in Task 6's start, in any of the nib windows and the registration flow, or in Task 11's 9,100-tick run through the opening, the menu, a game and a clean quit. Task 15's hour-long soak is the last check.
 
 The design, if needed: a host-side two-phase unwinder over the guest's registers. Parse the CIEs and FDEs in `__eh_frame` (PowerPC DWARF register numbers: r0 to r31, f0 to f31 as 32 to 63, LR 65, CR 70), interpret the CFA programs, and use the LSDA in `__gcc_except_tab` for `__gxx_personality_v0` (call sites, actions, type tables compared by `type_info` address). `__cxa_begin_catch`, `__cxa_end_catch`, `__cxa_rethrow` and `_Unwind_Resume` then work for real. This is a plan of its own, written when needed.
 

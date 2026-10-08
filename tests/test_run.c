@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include "cgimage.h"
 #include "plist.h"
 #include "util.h"
 
@@ -466,6 +467,85 @@ TEST(run_monster_fair_wrong_key_code_shows_authorize_failed) {
     const char *again = strstr(out, "AuthorizeFailed: command");
     CHECK(again && strstr(again, "loony: nib window Welcome: shown"));
     CHECK(!strstr(out, "0000-1111-2222-3333"));
+}
+
+static void run_monster_fair_headless(void *unused) {
+    (void)unused;
+    setenv("LOONY_FIXED_CLOCK", "1", 1);
+    setenv("LOONY_EXIT_AFTER", "900", 1);
+    setenv("LOONY_SCREENSHOT", shot, 1);
+    run_loony((void *)test_mf_app());
+}
+
+/* Answering its windows automatically (Play Demo, then OK), MONSTER FAIR
+   takes the display at 1024x768, 16 bits, and plays its opening: by tick
+   900, the title. */
+TEST(run_monster_fair_plays_its_opening_headless) {
+    SKIP_UNLESS_MF();
+    tmp_name(shot, sizeof shot, "run");
+    char out[32768];
+    test_tmp_dir(run_data, sizeof run_data);
+    int status = test_run_child(run_monster_fair_headless, NULL, out, sizeof out);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    size_t len = 0;
+    uint8_t *png = read_file(shot, &len);
+    unlink(shot);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: nib window Welcome: command 'ok  ' (Play Demo)");
+    CHECK_CONTAINS(out, "loony: nib window Demo: command 'ok  ' (OK)");
+    CHECK_CONTAINS(out, "loony: display mode 1024x768, 16 bits");
+    CHECK_CONTAINS(out, "loony: exiting after 900 ticks (LOONY_EXIT_AFTER)");
+    CHECK(!strstr(out, "unknown selector"));
+    CHECK(!strstr(out, "not supported"));
+    CHECK(png != NULL);
+    CHECK(len > 33);
+    CHECK_EQ(rd_be32(png + 16), 1024);
+    CHECK_EQ(rd_be32(png + 20), 768);
+    free(png);
+}
+
+/* Whether the line under the score, at (80, 344)-(166, 359), differs
+   between two screenshots: "GAME OVER" while the table plays by itself,
+   "Player 1 Ball 1" in a game. */
+static bool status_line_differs(const char *a, const char *b) {
+    cgimage_pixels pa, pb;
+    char err[256];
+    if (!cgimage_decode_png(a, &pa, err, sizeof err))
+        fatal("%s", err);
+    if (!cgimage_decode_png(b, &pb, err, sizeof err))
+        fatal("%s", err);
+    bool differs = false;
+    for (int y = 344; y < 360 && !differs; y++)
+        differs = memcmp(pa.xrgb + 4 * (y * pa.width + 80), pb.xrgb + 4 * (y * pb.width + 80), 4 * 87) != 0;
+    free(pa.xrgb);
+    free(pb.xrgb);
+    return differs;
+}
+
+/* Esc opens the menu over the self-playing table, Return picks NEW GAME
+   (the first item), and the plunger, held and released, serves the ball;
+   then the game quits cleanly, giving the display back. */
+TEST(run_monster_fair_starts_a_game) {
+    SKIP_UNLESS_MF();
+    char attract[1024], playing[1024], actions[4096];
+    tmp_name(attract, sizeof attract, "shot");
+    tmp_name(playing, sizeof playing, "shot");
+    snprintf(actions, sizeof actions,
+             "2100 screenshot %s\n2200 down esc\n2204 up esc\n2320 down return\n2326 up return\n"
+             "2600 down return\n2700 up return\n2900 screenshot %s\n3000 quit\n",
+             attract, playing);
+    char out[32768];
+    int status = run_script_in(test_mf_app(), actions, NULL, NULL, 0, out, sizeof out);
+    bool differs = status_line_differs(attract, playing);
+    unlink(attract);
+    unlink(playing);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: display mode 1024x768, 16 bits");
+    CHECK_CONTAINS(out, "loony: sending the quit Apple Event");
+    CHECK_CONTAINS(out, "loony: display mode 800x600, 32 bits");
+    CHECK_CONTAINS(out, "loony: main returned 0");
+    CHECK(differs);
 }
 
 TEST(run_reports_missing_game_folder) {
