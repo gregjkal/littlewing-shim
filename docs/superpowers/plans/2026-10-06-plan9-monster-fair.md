@@ -44,7 +44,7 @@
 | Segments | `__PAGEZERO` `0x0`-`0x1000`; `__TEXT` `0x1000`-`0x5b000` (file `0x0`, r-x); `__DATA` `0x5b000`-`0x60000` (file `0x5a000`, `0x3000` bytes in the file, rw-); `__LINKEDIT` `0x60000`-`0x62dc8` |
 | Sections that matter | `__text` `0x2430` (`0x40dc0` bytes); `__symbol_stub1` `0x431f0`, 193 stubs of 16 bytes; `__nl_symbol_ptr` `0x5b03c`, 66 slots (7 to imports, 59 local); `__la_symbol_ptr` `0x5b144`, 193 slots (all 0 in the file); `__mod_init_func` `0x5b008`, 13 entries; `__cfstring` `0x5d2c8`, 8 constant CFStrings; `__dyld` `0x5b000` (`0x8fe01000`, `0x8fe01008`); `__eh_frame` `0x4f354`, `__gcc_except_tab` `0x4c810` |
 | Entry and `main` | `LC_UNIXTHREAD` srr0 `0x2fdc`. It calls `_start` at `0x3010`, which ends `bl 0x41ca8` then `bl` to the `_exit` stub. `main` is `0x41ca8`. It begins with two `Gestalt` calls |
-| Imports | 205: Carbon 150, libSystem 38, libstdc++ 16, libgcc_s 1. 95 have handlers today. The 110 missing are listed under Tasks 4, 5, 7, 8, 9 and 10 |
+| Imports | 205: Carbon 150, libSystem 38, libstdc++ 16, libgcc_s 1. 95 have handlers today. The 110 missing are listed under Tasks 4, 5, 7, 8, 9 and 10. All 205 are `N_PBUD \| N_EXT` (type `0xd`, prebound undefined), not `N_UNDF`. The indirect table has 452 entries (193 stubs, 66 non-lazy, 193 lazy) |
 | Non-lazy pointers to imports | `_mach_init_routine`, `_errno`, `__cthread_init_routine`, `___keymgr_global`, `___gxx_personality_v0`, `_kCFPreferencesCurrentApplication`, `__DefaultRuneLocale` |
 | External relocations | 212, all 32-bit absolute, extern, unprebound: the stored word is the addend. `__ZTVN10__cxxabiv120__si_class_type_infoE` ×81, `___cxa_pure_virtual` ×69, `__ZTVN10__cxxabiv121__vmi_class_type_infoE` ×37, `__ZTVN10__cxxabiv117__class_type_infoE` ×17, `___CFConstantStringClassReference` ×8. `r_address` is the absolute address |
 | A constant CFString | At `0x5d2c8`: isa (relocated), flags `0x7c8`, pointer `0x45748` (`"main"`, the nib's name), length 4 |
@@ -138,7 +138,7 @@
   ```
 - All multi-byte fields are big-endian, in the fat header and in the slice.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/macho_build.h` builds a fat file with one PowerPC slice holding `__TEXT` (a `__text` and a `__symbol_stub1` with two stubs), `__DATA` (a `__nl_symbol_ptr` with one slot, a `__la_symbol_ptr` with two, a `__mod_init_func` with one entry), a symbol table with three undefined externals (`_malloc`, `_CFRelease`, `_kCFPreferencesCurrentApplication`), an indirect table, one external relocation, two `LC_LOAD_DYLIB`s and an `LC_UNIXTHREAD`. Tests:
 
@@ -152,21 +152,21 @@
 
 Add `SKIP_UNLESS_MF()` to `tests/test.h` next to `SKIP_UNLESS_CC()`: it skips unless `/Applications/MONSTER FAIR.app/Contents/MacOS/MONSTER FAIR` is readable.
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `cmake --build build 2>&1 | tail -5`
 Expected: `'macho.h' file not found`.
 
-- [ ] **Step 3: Write `macho.c`**
+- [x] **Step 3: Write `macho.c`**
 
 Parse with bounds checks on every offset (the style of `pef.c`). Accept `LC_SEGMENT` (1), `LC_SYMTAB` (2), `LC_DYSYMTAB` (0xb), `LC_LOAD_DYLIB` (0xc), `LC_LOAD_DYLINKER` (0xe), `LC_UNIXTHREAD` (5; PPC_THREAD_STATE, srr0 is the first word), and skip the rest. An `nlist` is 12 bytes: `n_strx` u32, `n_type` u8, `n_sect` u8, `n_desc` u16, `n_value` u32. A relocation is 8 bytes: `r_address` i32, then `r_symbolnum:24 r_pcrel:1 r_length:2 r_extern:1 r_type:4`. Keep only external relocations with `r_extern=1`, `r_length=2`, `r_pcrel=0`, `r_type=0`, and refuse any other kind by name.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cmake --build build && ./build/loony_tests macho_`
 Expected: all pass (`macho_monster_fair_facts` skips without the game).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/macho.h src/macho.c tests/macho_build.h tests/test_macho.c tests/test.h

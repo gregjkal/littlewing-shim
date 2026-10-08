@@ -59,6 +59,21 @@ bool test_cc_present(void) {
     return access(path, R_OK) == 0;
 }
 
+const char *test_mf_app(void) {
+    const char *d = getenv("LOONY_MF_APP");
+    return d && *d ? d : "/Applications/MONSTER FAIR.app";
+}
+
+const char *test_mf_exe_path(void) {
+    static char path[1100];
+    snprintf(path, sizeof path, "%s/Contents/MacOS/MONSTER FAIR", test_mf_app());
+    return path;
+}
+
+bool test_mf_present(void) {
+    return access(test_mf_exe_path(), R_OK) == 0;
+}
+
 void test_tmp_dir(char *out, size_t cap) {
     const char *t = getenv("TMPDIR");
     snprintf(out, cap, "%s/loony-test-XXXXXX", t && *t ? t : "/tmp");
