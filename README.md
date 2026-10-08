@@ -2,8 +2,8 @@
 
 Runs two 2003 PowerPC Mac pinball games by LittleWing, *Loony Labyrinth 3.0.1*
 and *Crystal Caliburn 3.0.1*, natively on Apple Silicon by emulating their CPU
-(Unicorn) and reimplementing the Mac OS calls they make in C. Personal use only.
-This repo contains no game files; point it at your own copies. The one
+(Unicorn) and reimplementing the Mac OS calls they make in C. This repo
+contains no game files: you need your own copies of the games. The one
 exception is `hd-art/`, enlarged art made from the game's pictures (see HD art
 below). It is an unofficial project, not made or endorsed by LittleWing.
 
