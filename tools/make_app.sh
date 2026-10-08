@@ -5,11 +5,14 @@
 # it), the icon is made from tools/AppIcon.png, and the bundle is signed with
 # the hardened runtime and the allow-jit entitlement: ad hoc, or with the
 # identity in LOONY_SIGN_ID (a "Developer ID Application: ..." certificate in
-# the keychain) for an app that can be notarized and given to others.
-#   [LOONY_SIGN_ID=<identity>] tools/make_app.sh <loony binary> <output folder>
+# the keychain) for an app that can be notarized and given to others. Its
+# version is LOONY_VERSION (x.y.z), or 0.0.0 for a build that isn't a release.
+# Resources/Licenses holds this project's license and the bundled libraries'.
+#   [LOONY_SIGN_ID=<identity>] [LOONY_VERSION=<x.y.z>] tools/make_app.sh <loony binary> <output folder>
 set -eu
 bin=$1
 out=$2
+version=${LOONY_VERSION:-0.0.0}
 here=$(cd "$(dirname "$0")" && pwd)
 app="$out/LittleWing.app"
 rm -rf "$app"
@@ -35,8 +38,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 	<key>CFBundleName</key><string>LittleWing</string>
 	<key>CFBundleDisplayName</key><string>LittleWing</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
-	<key>CFBundleShortVersionString</key><string>3.0.1</string>
-	<key>CFBundleVersion</key><string>1</string>
+	<key>CFBundleShortVersionString</key><string>$version</string>
+	<key>CFBundleVersion</key><string>$version</string>
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
 	<key>LSMinimumSystemVersion</key><string>26.0</string>
 	<key>LSApplicationCategoryType</key><string>public.app-category.arcade-games</string>
@@ -44,10 +47,20 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-# Copy each Homebrew library the binary links and point the binary at the copy.
+# Copy each Homebrew library the binary links and point the binary at the copy,
+# with the license files of the Homebrew package it came from.
+licenses="$app/Contents/Resources/Licenses"
+mkdir -p "$licenses"
+cp "$here/../LICENSE" "$licenses/littlewing-shim-LICENSE"
 for lib in $(otool -L "$bin" | awk '/\/opt\/homebrew\// {print $1}'); do  # paths without spaces
     name=$(basename "$lib")
     cp "$lib" "$app/Contents/Frameworks/$name"
+    pkg=$(cd "$(dirname "$lib")/.." && pwd -P)  # the package's Cellar folder
+    for f in "$pkg"/COPYING* "$pkg"/LICENSE*; do
+        if [ -f "$f" ]; then
+            cp "$f" "$licenses/$(basename "$(dirname "$pkg")")-$(basename "$f")"
+        fi
+    done
     chmod u+w "$app/Contents/Frameworks/$name"
     install_name_tool -id "@rpath/$name" "$app/Contents/Frameworks/$name"
     install_name_tool -change "$lib" "@rpath/$name" "$app/Contents/MacOS/loony"
