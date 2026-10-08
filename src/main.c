@@ -202,6 +202,7 @@ int main(int argc, char **argv) {
         cpu_init();
         mm_init();
         cf_init();
+        cf_set_bundle(dir);
         libc_init(path);
         cxxrt_init();
         image_set_data_resolver(macho_data_symbol);

@@ -375,11 +375,12 @@ Calls: `CFBundleGetMainBundle`, `CFBundleCopyResourcesDirectoryURL`, `CFBundleCo
 - `cf_set_bundle(const char *bundle_path)` from `main.c`.
 - CFURLs are a new `cf_obj` kind holding a host path. `CFURLGetFileSystemRepresentation` writes it as UTF-8 and returns false if it doesn't fit.
 - `cf_data_symbol("__CFConstantStringClassReference")` returns a 16-byte block. Every `cf.c` entry point that takes a CFString first checks whether the argument's first word is that block's address, and if so reads the string from its pointer and length. `CFRelease` and `CFRetain` on one do nothing.
-- `kCFPreferencesCurrentApplication` moves from `main.c` into `cf_data_symbol`, for both kinds.
+- `kCFPreferencesCurrentApplication` is in `cf_data_symbol` for a Mach-O game (Task 6). For the classic games `main.c` still writes it into the PEF import's data slot, unchanged, since PEF data imports don't go through the resolver.
+- `cf_string_text(call, ref)` reads a CFString object or a constant string, and `cf_url_path(call, ref)` a CFURL's path; Tasks 9 and 10 use both. `CFBundleCopyResourceURL` also looks in `English.lproj`, and returns NULL for a missing resource.
 
-- [ ] **Step 1: Failing tests:** `cf_bundle_resources_url_is_the_bundles`, `cf_resource_url_names_a_file_in_resources`, `cf_url_appends_a_component`, `cf_file_system_representation_is_utf8`, `cf_constant_strings_read_from_guest_memory`, `cf_release_ignores_a_constant_string`.
-- [ ] **Step 2: Implement, run** `./build/loony_tests cf_`.
-- [ ] **Step 3: Commit** `CFBundle and CFURL for a bundle game, and its constant CFStrings`.
+- [x] **Step 1: Failing tests:** `cf_bundle_resources_url_is_the_bundles`, `cf_resource_url_names_a_file_in_resources`, `cf_url_appends_a_component`, `cf_file_system_representation_is_utf8`, `cf_constant_strings_read_from_guest_memory`, `cf_release_ignores_a_constant_string`.
+- [x] **Step 2: Implement, run** `./build/loony_tests cf_`.
+- [x] **Step 3: Commit** `CFBundle and CFURL for a bundle game, and its constant CFStrings`.
 
 ---
 

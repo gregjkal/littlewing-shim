@@ -14,6 +14,8 @@
 #define CF_TAG_LIMIT      0x09000000u
 #define CF_STRING_TYPE_ID 7u
 #define CF_NUMBER_TYPE_ID 22u
+#define CF_URL_TYPE_ID    29u /* the shim's own numbers from here on */
+#define CF_BUNDLE_TYPE_ID 31u
 
 /* Empties the object table and preferences, then creates the string that
    kCFPreferencesCurrentApplication refers to. */
@@ -45,11 +47,29 @@ uint32_t cf_data_symbol(const char *name);
 /* Creates a CFString (retain count 1) from a C string. */
 uint32_t cf_string(const char *s);
 
+/* The text of a CFString: a live CFString object, or one of the program's
+   constant strings (a guest struct whose isa is
+   __CFConstantStringClassReference, then flags, a pointer to the bytes and
+   a length). Crashes, naming call, for anything else. The text stays valid
+   until cf_init(). */
+const char *cf_string_text(const char *call, uint32_t ref);
+
+/* A Mach-O game's bundle: CFBundleGetMainBundle's, whose resources are in
+   <path>/Contents/Resources. Kept across cf_init(). */
+void cf_set_bundle(const char *path);
+
+/* Creates a CFURL (retain count 1) for a host path. */
+uint32_t cf_url(const char *path);
+
+/* The host path a CFURL names. Crashes, naming call, if ref isn't a CFURL. */
+const char *cf_url_path(const char *call, uint32_t ref);
+
 /* Retain count of a live object, or 0 if ref isn't one. */
 int cf_retain_count(uint32_t ref);
 
 /* Number of live objects. */
 uint32_t cf_live_objects(void);
 
-/* Registers the CFString, CFNumber, CFRelease, CFGetTypeID and CFPreferences imports. */
+/* Registers the CFString, CFNumber, CFRelease, CFGetTypeID, CFPreferences,
+   CFBundle and CFURL imports. */
 void cf_register(void);
