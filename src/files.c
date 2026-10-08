@@ -90,7 +90,26 @@ bool files_data_root(char *out, size_t cap) {
     const char *d = getenv("LOONY_DATA_DIR"), *home = getenv("HOME");
     if ((d && *d) || !home || !*home)
         return false;
-    snprintf(out, cap, "%s/Library/Application Support/loony-shim", home);
+    snprintf(out, cap, "%s/Library/Application Support/littlewing-shim", home);
+    return true;
+}
+
+bool files_move_old_data_root(void) {
+    char root[PATH_MAX], old[PATH_MAX];
+    if (!files_data_root(root, sizeof root))
+        return false;
+    snprintf(old, sizeof old, "%s/Library/Application Support/loony-shim", getenv("HOME"));
+    if (access(old, F_OK) != 0)
+        return false;
+    if (access(root, F_OK) == 0) {
+        log_msg("left %s where it is: %s already exists", old, root);
+        return false;
+    }
+    if (rename(old, root) != 0) {
+        log_msg("can't move %s to %s: %s", old, root, strerror(errno));
+        return false;
+    }
+    log_msg("moved %s to %s", old, root);
     return true;
 }
 

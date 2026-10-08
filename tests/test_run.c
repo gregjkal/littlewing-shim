@@ -483,7 +483,7 @@ TEST(run_loony_game_picks_without_a_folder) {
 }
 
 /* Review Focus 1 and 5: with no LOONY_DATA_DIR, a game saves in
-   ~/Library/Application Support/loony-shim/<id>, and Loony Labyrinth's
+   ~/Library/Application Support/littlewing-shim/<id>, and Loony Labyrinth's
    file from before Plan 8 moves into its folder. HOME is temporary. */
 static char save_home[1024];
 
@@ -500,7 +500,7 @@ TEST(run_each_game_saves_in_its_own_folder) {
     SKIP_UNLESS_CC();
     test_tmp_dir(save_home, sizeof save_home);
     char root[1100], path[1300];
-    snprintf(root, sizeof root, "%s/Library/Application Support/loony-shim", save_home);
+    snprintf(root, sizeof root, "%s/Library/Application Support/littlewing-shim", save_home);
     CHECK(make_dirs(root));
     snprintf(path, sizeof path, "%s/prefs.plist", root);
     FILE *f = fopen(path, "w");
@@ -656,7 +656,7 @@ TEST(run_the_picker_remembers_and_each_game_saves_apart) {
     unlink(script_path);
     script_path[0] = '\0';
     char root[1100], path[1300];
-    snprintf(root, sizeof root, "%s/Library/Application Support/loony-shim", save_home);
+    snprintf(root, sizeof root, "%s/Library/Application Support/littlewing-shim", save_home);
     snprintf(path, sizeof path, "%s/picker.plist", root);
     plist_entry *e = NULL;
     uint32_t n = 0;
@@ -680,7 +680,7 @@ TEST(run_the_picker_remembers_and_each_game_saves_apart) {
     CHECK(none_at_root);
 }
 
-/* Launched as the app, the log goes to ~/Library/Logs/loony-shim instead
+/* Launched as the app, the log goes to ~/Library/Logs/littlewing-shim instead
    of the (absent) terminal. HOME is a temporary folder here. */
 static char app_home[1024], app_bin[1200];
 
@@ -699,7 +699,7 @@ TEST(run_as_the_app_logs_to_library_logs) {
     snprintf(cmd, sizeof cmd, "cp '%s' '%s'", LOONY_BIN, app_bin);
     CHECK(system(cmd) == 0);
     char log[1200];
-    snprintf(log, sizeof log, "%s/Library/Logs/loony-shim/loony.log", app_home);
+    snprintf(log, sizeof log, "%s/Library/Logs/littlewing-shim/loony.log", app_home);
     char out[4096];
     for (int run = 0; run < 2; run++) { /* the second run keeps the first log as loony.previous.log */
         int status = test_run_child(run_as_app, (void *)"/nonexistent/loony", out, sizeof out);
@@ -714,7 +714,7 @@ TEST(run_as_the_app_logs_to_library_logs) {
     CHECK_CONTAINS(text, "can't read /nonexistent/loony/LOONY LABYRINTH 3.0.1");
     CHECK_CONTAINS(text, "needs the original game in /nonexistent/loony");
     free(text);
-    snprintf(log, sizeof log, "%s/Library/Logs/loony-shim/loony.previous.log", app_home);
+    snprintf(log, sizeof log, "%s/Library/Logs/littlewing-shim/loony.previous.log", app_home);
     CHECK(access(log, F_OK) == 0);
     test_remove_tree(app_home);
 }

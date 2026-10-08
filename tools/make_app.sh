@@ -31,7 +31,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <dict>
 	<key>CFBundleExecutable</key><string>loony</string>
 	<key>CFBundleIconFile</key><string>AppIcon</string>
-	<key>CFBundleIdentifier</key><string>local.loony-shim</string>
+	<key>CFBundleIdentifier</key><string>com.gregkaleka.littlewing-shim</string>
 	<key>CFBundleName</key><string>LittleWing</string>
 	<key>CFBundleDisplayName</key><string>LittleWing</string>
 	<key>CFBundlePackageType</key><string>APPL</string>

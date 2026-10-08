@@ -153,5 +153,5 @@ TEST(game_legacy_data_never_overwrites) {
 }
 
 TEST(game_legacy_data_with_no_root_is_a_no_op) {
-    CHECK_EQ(game_move_legacy_data("/nonexistent/loony-shim"), 0);
+    CHECK_EQ(game_move_legacy_data("/nonexistent/littlewing-shim"), 0);
 }

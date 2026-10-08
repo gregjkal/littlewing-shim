@@ -29,7 +29,7 @@
 #include "util.h"
 
 /* Launched as the app (from Finder or `open`), there is no terminal: the
-   log goes to ~/Library/Logs/loony-shim/loony.log (the one before it is kept
+   log goes to ~/Library/Logs/littlewing-shim/loony.log (the one before it is kept
    as loony.previous.log; after a restart for the picker, the same log
    carries on), and failures are shown in a message box. */
 static char log_path[PATH_MAX];
@@ -51,7 +51,7 @@ static void log_to_file_if_app(const char *argv0) {
     if (!strstr(argv0, ".app/Contents/MacOS/") || isatty(STDERR_FILENO) || !home)
         return;
     char dir[PATH_MAX], prev[PATH_MAX + 32];
-    snprintf(dir, sizeof dir, "%s/Library/Logs/loony-shim", home);
+    snprintf(dir, sizeof dir, "%s/Library/Logs/littlewing-shim", home);
     snprintf(log_path, sizeof log_path, "%s/loony.log", dir);
     snprintf(prev, sizeof prev, "%s/loony.previous.log", dir);
     util_set_failure_hook(show_failure);
@@ -131,6 +131,7 @@ static void back_to_picker(void) {
 
 int main(int argc, char **argv) {
     log_to_file_if_app(argv[0]);
+    files_move_old_data_root(); /* before the picker reads its file there */
     const char *dir_arg = NULL;
     int nargs = 0;
     for (int i = 1; i < argc; i++) {
