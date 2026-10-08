@@ -1,6 +1,6 @@
 #!/bin/sh
 # Builds LittleWing.app around a loony binary: it plays the LittleWing games
-# installed in /Applications, with a picker when there are two. The Unicorn
+# installed in /Applications, with a picker when there are two or three. The Unicorn
 # and SDL3 libraries are copied into the bundle (so a Homebrew upgrade can't break
 # it), the icon is made from tools/AppIcon.png, and the bundle is signed with
 # the hardened runtime and the allow-jit entitlement: ad hoc, or with the
@@ -84,5 +84,5 @@ for lib in "$app"/Contents/Frameworks/*.dylib; do
     codesign --force --sign "$sign" "$@" --options runtime "$lib"
 done
 codesign --force --sign "$sign" "$@" --options runtime --entitlements "$here/loony.entitlements" "$app"
-codesign --verify --strict "$app"
+codesign --verify --deep --strict "$app"
 echo "built $app"

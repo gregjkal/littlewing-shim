@@ -5,8 +5,8 @@
 Tasks 9, 10, 11 and 13 are done, and Task 12 is not needed so far. Their notes in the plan say what was built and measured. **MONSTER FAIR now plays:** the Welcome and Demo windows, the registration flow, the full-screen 1024×768×16 display, the title, the menu, a game and a clean quit. Task 13's picker shows three cards. The status table below is out of date; the plan's checkboxes are current.
 
 Next:
-- **Task 14** (README, spec, `make_app.sh` check). Start by running the full suite: it wasn't re-run after Task 13, though the picker, picker-run and Welcome tests were. After Task 11 it gave 422 passed, 0 failed, 1 skipped.
-- **Task 15** (soak, the user's playtest, goldens).
+- **Task 14** is done too: the full suite gave 426 passed, 0 failed, 1 skipped.
+- **Task 15** (soak, the user's playtest, goldens). See the plan for where it stands.
 
 Waiting on the user:
 - Goldens for the three-card picker and MONSTER FAIR's frames, in Task 15.

@@ -522,7 +522,15 @@ The design, if needed: a host-side two-phase unwinder over the guest's registers
 - `tools/make_app.sh`: nothing new is bundled (ImageIO and CoreGraphics are system frameworks); check that `codesign --verify --deep --strict` still passes.
 - README: MONSTER FAIR in the Play table (`/Applications/MONSTER FAIR.app`, from LittleWing's download page; drag the app itself to Applications and keep its name), the save folder `monster-fair`, `SKIP_UNLESS_MF` in the test notes.
 - Spec: the second program format, the Mach-O memory layout, direct calls, the runtimes, nib windows.
-- [ ] **Commit** `README and spec: MONSTER FAIR`.
+
+*Done (2026-10-08).* Details:
+- **Tests first.** The full suite, after Task 13: 426 passed, 0 failed, 1 skipped (the skip needs `LOONY_TEST_EMAIL` and `LOONY_TEST_KEY`).
+- **The app.** `make_app.sh` bundles nothing new: ImageIO and CoreGraphics link from `/System`, and its self-contained check passes. It now verifies with `codesign --verify --deep --strict`, which passes. The bundled binary plays MONSTER FAIR to its 1024×768 display.
+- **README.** MONSTER FAIR in the Play table (no download file name is recorded, so the table says "the Mac OS X version"), the picker with three games, `LOONY_GAME=monster-fair`, the `monster-fair` save folder, its extra nudge keys (X and period, from the Demo window's key list), the 1024×768 screen, and the test skip macros with `LOONY_MF_APP`.
+- **Spec.** The new modules, the Mach-O layout and tag spaces, and a "Mac OS X games" section.
+- **`tools/soak_script.py`** takes an optional `monster-fair` argument for Task 15; its output for the classic games is unchanged byte for byte.
+
+- [x] **Commit** `README and spec: MONSTER FAIR`.
 
 ---
 

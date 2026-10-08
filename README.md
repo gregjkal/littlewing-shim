@@ -1,11 +1,12 @@
 # loony-shim
 
-Runs two 2003 PowerPC Mac pinball games by LittleWing, *Loony Labyrinth 3.0.1*
-and *Crystal Caliburn 3.0.1*, natively on Apple Silicon by emulating their CPU
-(Unicorn) and reimplementing the Mac OS calls they make in C. Personal use only.
-This repo contains no game files; point it at your own copies. The one
-exception is `hd-art/`, enlarged art made from the game's pictures (see HD art
-below).
+Runs three PowerPC Mac pinball games by LittleWing natively on Apple Silicon:
+*Loony Labyrinth 3.0.1* and *Crystal Caliburn 3.0.1* (2003, Carbon programs for
+Mac OS 9 and X) and *MONSTER FAIR 1.2.5* (2010, a Mac OS X application). It
+emulates their CPU (Unicorn) and reimplements the Mac OS calls they make in C.
+Personal use only. This repo contains no game files; point it at your own
+copies. The one exception is `hd-art/`, enlarged art made from the game's
+pictures (see HD art below).
 
 ## Build
 
@@ -23,24 +24,28 @@ cmake --build build-release --target app                # build-release/LittleWi
 ## Play
 
 The app needs an Apple Silicon Mac with macOS 26 or later. It plays the games
-from these folders, which must hold the game's file:
+from these places, which must hold the game's file:
 
-| Game | Folder | File | Download |
+| Game | Where | File | Download |
 |---|---|---|---|
 | Loony Labyrinth | `/Applications/Loony Labyrinth` | `LOONY LABYRINTH 3.0.1` | `loony_labyrinth_301a.dmg` |
 | Crystal Caliburn | `/Applications/Crystal Caliburn` | `CRYSTAL CALIBURN 3.0.1` | `crystal_caliburn_301a.dmg` |
+| MONSTER FAIR | `/Applications/MONSTER FAIR.app` | `Contents/MacOS/MONSTER FAIR` | the Mac OS X version |
 
-To get a game, download its disk image from LittleWing's
+To get a game, download it from LittleWing's
 [download page](http://www.littlewingpinball.com/doc/en/downloads/index.html),
-open it, and drag the game's folder onto the Applications shortcut next to it.
-Keep the folder's name.
+open the disk image, and drag the game onto the Applications shortcut next to
+it: the game's folder for Loony Labyrinth and Crystal Caliburn, the app itself
+for MONSTER FAIR. Keep its name. MONSTER FAIR's own app doesn't run on Apple
+Silicon; LittleWing.app runs it.
 
 Copy `build-release/LittleWing.app` to `/Applications` (or anywhere) and
-double-click it. With both games installed, it opens on a picker showing each
-game's title picture: Left and Right (or the mouse) choose, and Return (or a
-click) plays. It starts on the last game played. With one game installed, it
-plays that game. Choosing QUIT in a game's own menu goes back to the picker;
-Cmd-Q or closing the window quits. The app It carries its own copies of Unicorn and SDL3, so Homebrew
+double-click it. With two or three games installed, it opens on a picker
+showing each game's title picture (MONSTER FAIR's card shows its icon): Left
+and Right (or the mouse) choose, and Return (or a click) plays. It starts on
+the last game played. With one game installed, it plays that game. Choosing
+QUIT in a game's own menu goes back to the picker; Cmd-Q or closing the window
+quits. The app carries its own copies of Unicorn and SDL3, so Homebrew
 upgrades don't affect it. Built as above, it is signed ad hoc, which is enough
 on the Mac that built it. On another Mac, Gatekeeper blocks the first launch;
 open System Settings, then Privacy & Security, and click Open Anyway near the
@@ -55,10 +60,13 @@ From a terminal:
 ```bash
 ./build-release/loony                       # like the app: the picker, or the one game installed
 ./build-release/loony "/path/to/game folder"   # the game in that folder, no picker
-LOONY_GAME=crystal-caliburn ./build-release/loony   # that game, from its usual folder
+./build-release/loony "/Applications/MONSTER FAIR.app"   # MONSTER FAIR, no picker
+LOONY_GAME=crystal-caliburn ./build-release/loony   # that game, from its usual place
 ```
 
-Until it is registered, each game first shows two alerts: the shareware screen
+`LOONY_GAME` takes `loony-labyrinth`, `crystal-caliburn` or `monster-fair`.
+
+Until it is registered, each game first shows two windows: the shareware screen
 (Play Demo, Buy Now, Enter Key-Code, Quit) and the key list. Click a button, or
 press Return for the outlined one. To register, click **Enter Key-Code**, type
 or paste (Cmd-V) your e-mail address and key code, using Tab to move between
@@ -67,8 +75,9 @@ the preferences, so later launches go straight to the game. For testing Loony
 Labyrinth, `docs/test_key.txt` has an e-mail address and key code that were posted
 publicly on [archive.org](https://archive.org/details/littlewing-pinball/).
 
-The game then plays its opening and a self-playing demo. Both games use the
-same keys by default:
+The game then plays its opening and a self-playing demo. All three games use
+the same keys by default (MONSTER FAIR adds X and . to nudge the table's left
+and right sides):
 
 | Key | Does |
 |---|---|
@@ -86,8 +95,8 @@ time-limited.
 Each game's preferences (options, keys, the high-score table and the license)
 are saved when it quits (and at any exit but a crash), in
 `~/Library/Application Support/loony-shim/<game>/prefs.plist`, where `<game>`
-is `loony-labyrinth` or `crystal-caliburn`. Any file a game writes goes to its
-own folder there, never into the game folder. Delete a game's folder to start
+is `loony-labyrinth`, `crystal-caliburn` or `monster-fair`. Any file a game
+writes goes to its own folder there, never into the game's folder or app. Delete a game's folder to start
 it over. Saves from before there were two games (`loony-shim/prefs.plist`)
 move into `loony-labyrinth/` on the next launch. The picker remembers the last
 game in `loony-shim/picker.plist`.
@@ -197,10 +206,20 @@ LOONY_DATA_DIR=$(mktemp -d) LOONY_AUTO_ALERTS=1 LOONY_FIXED_CLOCK=1 LOONY_SCRIPT
   SDL_VIDEO_DRIVER=dummy SDL_AUDIO_DRIVER=dummy ./build-release/loony
 ```
 
+For MONSTER FAIR, add `monster-fair` after the screenshot prefix (its first
+game starts later, and it nudges with X and . too), and pass
+`"/Applications/MONSTER FAIR.app"` to `loony`.
+
 Key names are those in `src/keymap.c` (`z`, `slash`, `return`, `space`, `esc`,
 `lshift`, `rshift`, ...).
 
 The original game files are only ever read, never modified. The emulated screen
-is 800x600, the size the game expects.
+is the size each game expects: 800x600 for the classic games, and 1024x768 at
+16 bits for MONSTER FAIR, which takes over the whole (emulated) display. The
+host window keeps its size and scales it to fit.
+
+Tests that need a game's files skip when it isn't installed (`SKIP_UNLESS_GAME`,
+`SKIP_UNLESS_CC` and `SKIP_UNLESS_MF` in `tests/test.h`). `LOONY_GAME_DIR`,
+`LOONY_CC_DIR` and `LOONY_MF_APP` point them at copies elsewhere.
 
 Design: `docs/superpowers/specs/2026-09-30-loony-shim-design.md`
