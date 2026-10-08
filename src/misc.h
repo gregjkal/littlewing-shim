@@ -58,6 +58,11 @@ double misc_seconds(void);
 /* False while HideCursor has hidden the cursor (until InitCursor). */
 bool misc_cursor_visible(void);
 
+/* What CGDisplayHideCursor and CGDisplayShowCursor do: hide the cursor
+   once more, and show it once more (never past visible). */
+void misc_hide_cursor(void);
+void misc_show_cursor(void);
+
 /* The handler AEInstallEventHandler recorded for (event class, event ID).
    Returns false if there is none. */
 bool misc_ae_handler(uint32_t event_class, uint32_t event_id, uint32_t *handler,

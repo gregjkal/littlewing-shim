@@ -418,9 +418,16 @@ Calls: `CreateNewWindow`, `ChangeWindowAttributes`, `SetWindowTitleWithCFString`
 - `CGDisplaySwitchToMode` and the first `CreateNewWindow` call `qd_resize_screen(w, h, depth)`, which reallocates the screen's pixels and PixMap in place (the GDevice and port addresses stay the same) and marks it dirty. The SDL window keeps its size and letterboxes.
 - Use Task 6's measurements for the sizes and depths to test.
 
-- [ ] **Step 1: Failing tests:** `qd_resize_screen_keeps_the_device`, `qd_create_new_window_sizes_the_screen`, `cgdisplay_base_address_is_the_screen`, `cgdisplay_best_mode_is_what_was_asked`, `cgdisplay_capture_and_release_nest`.
-- [ ] **Step 2: Implement, run** `./build/loony_tests qd_ cgdisplay_ run_` (the classic goldens must still match).
-- [ ] **Step 3: Commit** `Windows and a CoreGraphics main display on the emulated screen`.
+*Done (2026-10-08).* Measured first (see the Facts row "After the Demo window"), then built to fit:
+- **How the game picks a display.** `main` reads "mode screen size". Its default gives 1024×768; another value gives 1280×768. The function at `0x34948` then does `CGDisplayCurrentMode`, `CGDisplayBestModeForParameters(main, 16, w, h)`, `CGDisplayCapture`, `CGDisplaySwitchToMode` and `CGDisplayHideCursor`, and reads `PixelsWide`, `PixelsHigh`, `BaseAddress` and `BytesPerRow`. It then draws straight into the display's memory, checking `CGDisplayIsCaptured` and re-reading the base address and row bytes every frame.
+- **The fallback.** The windowed path (`SetDepth(16)`, `CreateNewWindow(kDocumentWindowClass, 0x0200001F, …)`, `SetWindowTitleWithCFString`, `ChangeWindowAttributes(w, 0, 17)`) runs only when no mode is found, and only on a screen of at least 1024×768. Otherwise the game calls `Alert(135)` and `ExitToShell`. The shim always finds a mode, so the game plays full screen, and the window calls exist for completeness.
+- **Deviations.** A display mode is an opaque ID (`0x0C800000` and up), not a CFDictionary: the game imports no `CFDictionary` call. `CGDisplayRelease` without a capture returns `kCGErrorIllegalArgument`. While captured, `qd_set_direct_drawing` presents the screen on every pump, because the game's drawing bypasses QuickDraw. `FlushEvents` does nothing, and the game never calls it. `ReallocateHandle` keeps the old contents.
+- **Measured with Task 9 in place.** Play Demo, then the Demo window's OK, then `display mode 1024x768, 16 bits`. The opening animation (a rocket over black) draws, with no missing import in 700 ticks. The game opens its data files with `FSPathMakeRef` and `FSOpenFork` and reads them with `PBReadSync`. Its main loop is `ReceiveNextEvent` on the dispatcher target, plus `Microseconds`.
+- Extra tests: `qd_direct_drawing_keeps_the_screen_dirty`, `cgdisplay_hides_and_shows_the_cursor`, `cgdisplay_another_display_crashes`.
+
+- [x] **Step 1: Failing tests:** `qd_resize_screen_keeps_the_device`, `qd_create_new_window_sizes_the_screen`, `cgdisplay_base_address_is_the_screen`, `cgdisplay_best_mode_is_what_was_asked`, `cgdisplay_capture_and_release_nest`.
+- [x] **Step 2: Implement, run** `./build/loony_tests qd_ cgdisplay_ run_` (the classic goldens must still match).
+- [x] **Step 3: Commit** `Windows and a CoreGraphics main display on the emulated screen`.
 
 ---
 

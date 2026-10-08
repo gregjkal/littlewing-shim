@@ -83,8 +83,21 @@ void qd_screen(qd_pixels *out, qd_palette *pal);
 /* Notes that something drew to the screen outside QuickDraw (dialogs). */
 void qd_mark_dirty(void);
 
-/* True if anything drew to the screen since the last call. */
+/* True if anything drew to the screen since the last call, and always
+   while direct drawing is on. */
 bool qd_take_dirty(void);
+
+/* A game is drawing into the screen's pixels itself (a captured display),
+   so QuickDraw can't tell when they change. */
+void qd_set_direct_drawing(bool on);
+
+/* The guest address of the screen's pixels. */
+uint32_t qd_screen_base(void);
+
+/* Makes the screen width x height at depth (8, 16 or 32), with new zeroed
+   pixels. The GDevice, the PixMap handle and every port keep their
+   addresses; window ports take the new size. */
+void qd_resize_screen(int width, int height, int depth);
 uint32_t qd_current_port(void);
 
 /* A new window port, hidden, whose portRect is (0, 0, height, width). It
@@ -98,5 +111,7 @@ typedef enum { QD_WINDOW_SHOWN, QD_WINDOW_HIDDEN, QD_WINDOW_DISPOSED, QD_WINDOW_
 typedef void (*qd_window_fn)(uint32_t window, qd_window_change change, uint32_t arg);
 void qd_set_window_hook(qd_window_fn fn);
 
-/* Registers the QuickDraw, GWorld and window imports. */
+/* Registers the QuickDraw, GWorld and window imports, including
+   CreateNewWindow (the first one sizes the screen to its content),
+   ChangeWindowAttributes and SetWindowTitleWithCFString. */
 void qd_register(void);

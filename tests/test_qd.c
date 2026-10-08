@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 
+#include "cf.h"
 #include "harness.h"
 #include "memmgr.h"
 #include "qd.h"
@@ -14,7 +15,8 @@ static const char *const names[] = {
     "GetPortBounds", "GetWindowPortBounds", "GetPortBitMapForCopyBits", "GetQDGlobalsScreenBits",
     "ShowWindow", "HideWindow", "InvalWindowRect", "QDFlushPortBuffer", "BeginFullScreen",
     "EndFullScreen", "ClipRect", "RGBForeColor", "PaintRect", "CopyBits", "DrawPicture",
-    "GetEntryColor", "DisposePalette",
+    "GetEntryColor", "DisposePalette", "CreateNewWindow", "ChangeWindowAttributes",
+    "SetWindowTitleWithCFString",
 };
 
 static void setup(void) {
@@ -190,6 +192,61 @@ TEST(qd_begin_full_screen_makes_a_window_on_the_screen) {
     call_import("ShowWindow", 1, win);
     call_import("InvalWindowRect", 2, win, r);
     CHECK_EQ(call_import("EndFullScreen", 2, gm_r32(restore), 0u), 0);
+}
+
+TEST(qd_resize_screen_keeps_the_device) {
+    setup();
+    uint32_t gd = qd_main_device(), pm_h = gm_r32(gm_r32(gd) + GD_PMAP), port = qd_current_port();
+    qd_resize_screen(1024, 768, 16);
+    CHECK_EQ(qd_main_device(), gd);
+    CHECK_EQ(gm_r32(gm_r32(gd) + GD_PMAP), pm_h);
+    CHECK_EQ(qd_current_port(), port);
+    CHECK_EQ(gm_r16(gm_r32(gd) + GD_TYPE), 2);
+    CHECK_EQ(qd_read_rect(gm_r32(gd) + GD_RECT).right, 1024);
+    CHECK_EQ(qd_read_rect(port + PORT_RECT).bottom, 768);
+    qd_pixels px;
+    qd_palette pal;
+    qd_screen(&px, &pal);
+    CHECK_EQ(rect_w(px.bounds), 1024);
+    CHECK_EQ(rect_h(px.bounds), 768);
+    CHECK_EQ(px.depth, 16);
+    CHECK_EQ(px.row_bytes, 2048);
+    CHECK_EQ(qd_screen_base(), gm_r32(gm_r32(pm_h) + PM_BASE_ADDR));
+    CHECK(qd_take_dirty());
+}
+
+TEST(qd_direct_drawing_keeps_the_screen_dirty) {
+    setup();
+    qd_take_dirty();
+    CHECK(!qd_take_dirty());
+    qd_set_direct_drawing(true);
+    CHECK(qd_take_dirty());
+    CHECK(qd_take_dirty());
+    qd_set_direct_drawing(false);
+    CHECK(!qd_take_dirty());
+}
+
+TEST(qd_create_new_window_sizes_the_screen) {
+    setup();
+    cf_init();
+    uint32_t out = scratch(4), r = scratch(8);
+    CHECK_EQ(call_import("CreateNewWindow", 4, 6u, 0x0200001Fu, rect(100, 50, 868, 1074), out), 0);
+    uint32_t win = gm_r32(out);
+    call_import("GetWindowPortBounds", 2, win, r);
+    CHECK_EQ(qd_read_rect(r).bottom, 768);
+    CHECK_EQ(qd_read_rect(r).right, 1024);
+    qd_pixels px;
+    qd_palette pal;
+    qd_screen(&px, &pal);
+    CHECK_EQ(rect_w(px.bounds), 1024);
+    CHECK_EQ(rect_h(px.bounds), 768);
+    CHECK_EQ(px.depth, 8); /* the depth stays */
+    /* Only the first window sizes the screen. */
+    CHECK_EQ(call_import("CreateNewWindow", 4, 6u, 0u, rect(0, 0, 100, 200), out), 0);
+    qd_screen(&px, &pal);
+    CHECK_EQ(rect_w(px.bounds), 1024);
+    CHECK_EQ(call_import("ChangeWindowAttributes", 3, win, 0u, 17u), 0);
+    CHECK_EQ(call_import("SetWindowTitleWithCFString", 2, win, cf_string("Monster Fair")), 0);
 }
 
 TEST(qd_get_ctable_standard_tables) {

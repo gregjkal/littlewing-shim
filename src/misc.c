@@ -112,6 +112,13 @@ void misc_poll(void) {
 
 bool misc_cursor_visible(void) { return M.cursor_level == 0; }
 
+void misc_hide_cursor(void) { M.cursor_level--; }
+
+void misc_show_cursor(void) {
+    if (M.cursor_level < 0)
+        M.cursor_level++;
+}
+
 bool misc_ae_handler(uint32_t event_class, uint32_t event_id, uint32_t *handler,
                      uint32_t *refcon) {
     for (int i = 0; i < M.nae; i++) {

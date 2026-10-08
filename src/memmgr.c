@@ -294,6 +294,21 @@ static void h_set_ptr_size(void) {
     last_error = mm_set_ptr_size(p, trap_arg(1));
 }
 
+static void h_new_handle(void) {
+    uint32_t h = mm_new_handle(trap_arg(0), false);
+    last_error = h ? MM_NO_ERR : MM_MEM_FULL_ERR;
+    trap_return(h);
+}
+
+/* ReallocateHandle(Handle, Size): new contents of that size (the old ones
+   are lost on a Mac; here they're kept, which no caller can tell apart). */
+static void h_reallocate_handle(void) {
+    uint32_t h = trap_arg(0);
+    if (!need_handle("ReallocateHandle", h))
+        return;
+    last_error = mm_set_handle_size(h, trap_arg(1));
+}
+
 static void h_new_handle_clear(void) {
     uint32_t h = mm_new_handle(trap_arg(0), true);
     last_error = h ? MM_NO_ERR : MM_MEM_FULL_ERR;
@@ -369,6 +384,8 @@ void mm_register(void) {
     trap_register("DisposePtr", h_dispose_ptr);
     trap_register("GetPtrSize", h_get_ptr_size);
     trap_register("SetPtrSize", h_set_ptr_size);
+    trap_register("NewHandle", h_new_handle);
+    trap_register("ReallocateHandle", h_reallocate_handle);
     trap_register("NewHandleClear", h_new_handle_clear);
     trap_register("DisposeHandle", h_dispose_handle);
     trap_register("GetHandleSize", h_get_handle_size);
