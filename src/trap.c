@@ -32,7 +32,7 @@ static struct {
     uint8_t lowmem_seen[GUEST_LOWMEM_SIZE / 8]; /* one bit per address already logged */
 } T;
 
-static const char *fmt_addr(uint32_t a, char buf[static 32]) {
+const char *trap_format_addr(uint32_t a, char buf[static 32]) {
     if (T.code_len && a >= T.code_base && a - T.code_base < T.code_len)
         snprintf(buf, 32, "code+0x%05x", a - T.code_base);
     else
@@ -52,7 +52,7 @@ static void on_lowmem_write(uint32_t addr, int size, uint64_t value) {
     T.lowmem_seen[off / 8] |= (uint8_t)(1u << (off % 8));
     char a[32];
     fprintf(stderr, "loony: lowmem: write 0x%04x = 0x%0*llx (%d bytes) at %s\n", addr, size * 2,
-            (unsigned long long)value, size, fmt_addr(cpu_pc(), a));
+            (unsigned long long)value, size, trap_format_addr(cpu_pc(), a));
 }
 
 void trap_init(uint32_t nimports, const char *const *names, uint32_t code_base,
@@ -107,8 +107,8 @@ const char *trap_import_name(uint32_t index) {
 
 static void report_state(void) {
     char a[32], b[32];
-    fprintf(stderr, "  pc %s  lr %s  ctr 0x%08x  depth %d\n", fmt_addr(cpu_pc(), a),
-            fmt_addr(cpu_lr(), b), cpu_ctr(), T.depth);
+    fprintf(stderr, "  pc %s  lr %s  ctr 0x%08x  depth %d\n", trap_format_addr(cpu_pc(), a),
+            trap_format_addr(cpu_lr(), b), cpu_ctr(), T.depth);
     for (int r = 0; r < 32; r += 4)
         fprintf(stderr, "  r%-2d 0x%08x  r%-2d 0x%08x  r%-2d 0x%08x  r%-2d 0x%08x\n", r,
                 cpu_gpr(r), r + 1, cpu_gpr(r + 1), r + 2, cpu_gpr(r + 2), r + 3, cpu_gpr(r + 3));
@@ -118,7 +118,7 @@ static void report_state(void) {
         const hist_entry *h = &T.hist[k % HISTORY];
         fprintf(stderr, "    #%u %s(0x%08x, 0x%08x, 0x%08x, 0x%08x) from %s\n", k,
                 trap_import_name(h->index), h->a[0], h->a[1], h->a[2], h->a[3],
-                fmt_addr(h->lr, a));
+                trap_format_addr(h->lr, a));
     }
 }
 
@@ -178,7 +178,7 @@ uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
     T.depth++;
     if (T.trace_calls) {
         char a[32];
-        fprintf(stderr, "loony: trace: call %s(", fmt_addr(code, a));
+        fprintf(stderr, "loony: trace: call %s(", trap_format_addr(code, a));
         for (int i = 0; i < nargs; i++)
             fprintf(stderr, "%s0x%08x", i ? ", " : "", args[i]);
         fprintf(stderr, ") depth %d\n", T.depth);
@@ -190,7 +190,7 @@ uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
             break;
         if (s.kind == CPU_STOP_FAULT) {
             char a[32];
-            trap_crash("guest fault: %s (pc %s)", s.detail, fmt_addr(s.pc, a));
+            trap_crash("guest fault: %s (pc %s)", s.detail, trap_format_addr(s.pc, a));
         }
         uint32_t index = (s.addr - GUEST_TRAP_BASE) / 4;
         if (index >= T.n)
@@ -203,7 +203,7 @@ uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
             char a[32];
             fprintf(stderr, "loony: stub: #%u %s(0x%08x, 0x%08x, 0x%08x, 0x%08x) from %s\n",
                     T.hist_count - 1, T.names[index], h->a[0], h->a[1], h->a[2], h->a[3],
-                    fmt_addr(h->lr, a));
+                    trap_format_addr(h->lr, a));
             trap_return(0);
             pc = resume;
             continue;
@@ -212,7 +212,7 @@ uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
             char a[32];
             fprintf(stderr, "loony: trace: #%u %s(0x%08x, 0x%08x, 0x%08x, 0x%08x) from %s\n",
                     T.hist_count - 1, T.names[index], h->a[0], h->a[1], h->a[2], h->a[3],
-                    fmt_addr(h->lr, a));
+                    trap_format_addr(h->lr, a));
         }
         T.handlers[index]();
         if (T.trace_imports)
@@ -223,7 +223,7 @@ uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
     if (T.trace_calls) {
         char a[32];
         fprintf(stderr, "loony: trace: return 0x%08x from %s depth %d\n", result,
-                fmt_addr(code, a), T.depth);
+                trap_format_addr(code, a), T.depth);
     }
     T.depth--;
 

@@ -35,6 +35,10 @@ const char *trap_import_name(uint32_t index);
 /* Index of the import called name, or -1. */
 int32_t trap_find(const char *name);
 
+/* A guest address as crash reports print it: code+0xNNNNN inside the code,
+   0xNNNNNNNN elsewhere. Returns buf. */
+const char *trap_format_addr(uint32_t a, char buf[static 32]);
+
 /* True if import index has a handler. */
 bool trap_has_handler(uint32_t index);
 

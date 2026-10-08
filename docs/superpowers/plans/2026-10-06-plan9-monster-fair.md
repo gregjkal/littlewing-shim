@@ -301,7 +301,7 @@ Data symbols from `libc_data_symbol`: `errno` (a word), `_DefaultRuneLocale` (a 
 - Test: `tests/test_cxxrt.c`
 
 **Interfaces:**
-- Produces: `void cxxrt_register(void); uint32_t cxxrt_data_symbol(const char *name);`
+- Produces: `void cxxrt_init(void); void cxxrt_register(void); uint32_t cxxrt_data_symbol(const char *name);` (`cxxrt_init` allocates the vtables after `mm_init`; `cxxrt_data_symbol` also answers `IMAGE_SYMBOL_CODE` for `__cxa_pure_virtual` and `__gxx_personality_v0`). `trap_format_addr` is now public, for the throw site.
 
 | Calls | Behavior |
 |---|---|
@@ -317,9 +317,9 @@ Data symbols from `libc_data_symbol`: `errno` (a word), `_DefaultRuneLocale` (a 
 
 Data symbols: the three type-info vtables (`_ZTVN10__cxxabiv117__class_type_infoE`, `…120__si_class_type_infoE`, `…121__vmi_class_type_infoE`), 64 zeroed bytes each. The game uses them only as identity (RTTI for exception matching); it imports no `__dynamic_cast`.
 
-- [ ] **Step 1: Failing tests:** `cxxrt_new_and_delete_use_the_pointer_heap`, `cxxrt_guard_runs_once`, `cxxrt_throw_crashes_naming_the_type` (run as a child process, like the other crash tests, and check stderr), `cxxrt_pure_virtual_crashes`.
-- [ ] **Step 2: Implement, run** `./build/loony_tests cxxrt_`.
-- [ ] **Step 3: Commit** `A C++ runtime for Mach-O games; exceptions crash with their type`.
+- [x] **Step 1: Failing tests:** `cxxrt_new_and_delete_use_the_pointer_heap`, `cxxrt_guard_runs_once`, `cxxrt_throw_crashes_naming_the_type` (run as a child process, like the other crash tests, and check stderr), `cxxrt_pure_virtual_crashes`.
+- [x] **Step 2: Implement, run** `./build/loony_tests cxxrt_`.
+- [x] **Step 3: Commit** `A C++ runtime for Mach-O games; exceptions crash with their type`.
 
 ---
 
