@@ -14,6 +14,9 @@
 
 #define MAX_DIRS 64
 #define MAX_FILES 16
+#define MAX_REFS 64
+#define FSREF_SIZE 80
+#define FSREF_MAGIC 0x4C576673u /* 'LWfs' */
 #define FIRST_REFNUM 20
 #define REL_CAP 1024  /* a path relative to the game folder */
 #define PATH_CAP 2100 /* a host path */
@@ -48,6 +51,8 @@ static struct {
     char dirs[MAX_DIRS][REL_CAP]; /* relative host path of each directory ID - 2 ("" = game folder) */
     int ndirs;
     open_file files[MAX_FILES];
+    char refs[MAX_REFS][REL_CAP]; /* what each FSRef names, relative to the game folder */
+    int nrefs;
     bool warned_no_data;
 } F;
 
@@ -325,28 +330,24 @@ static void h_fsp_create(void) {
     trap_return(0);
 }
 
-/* FSpOpenDF(const FSSpec *spec, SInt8 permission, short *refNum) -> OSErr.
-   Every permission but fsRdPerm (1) allows writing; the file is opened for
-   reading either way and copied to the data folder at its first write. */
-static void h_fsp_open_df(void) {
-    uint32_t spec = trap_arg(0), out = trap_arg(2);
-    int perm = (int8_t)trap_arg(1);
+/* Opens the data fork of rel (relative to the game folder) and writes its
+   refnum to out. Every permission but fsRdPerm (1) allows writing; the file
+   is opened for reading either way and copied to the data folder at its
+   first write. Returns an OSErr. */
+static int16_t open_data_fork(const char *call, const char *rel, int perm, uint32_t out) {
     if (perm < 0 || perm > 4)
-        trap_crash("FSpOpenDF: unknown permission %d", perm);
-    char rel[REL_CAP], path[PATH_CAP];
-    spec_rel_path(spec, rel, sizeof rel);
+        trap_crash("%s: unknown permission %d", call, perm);
+    char path[PATH_CAP];
     bool in_data = locate(rel, false, path, sizeof path);
     int slot = 0;
     while (slot < MAX_FILES && F.files[slot].f)
         slot++;
     if (slot == MAX_FILES)
-        trap_crash("FSpOpenDF: more than %d open files", MAX_FILES);
+        trap_crash("%s: more than %d open files", call, MAX_FILES);
     bool writable = perm != 1;
     FILE *f = exists(path, false) ? fopen(path, in_data && writable ? "r+b" : "rb") : NULL;
-    if (!f) {
-        trap_return((uint32_t)FILES_FNF_ERR);
-        return;
-    }
+    if (!f)
+        return FILES_FNF_ERR;
     fseek(f, 0, SEEK_END);
     F.files[slot].f = f;
     F.files[slot].eof = ftell(f);
@@ -355,7 +356,90 @@ static void h_fsp_open_df(void) {
     snprintf(F.files[slot].rel, sizeof F.files[slot].rel, "%s", rel);
     fseek(f, 0, SEEK_SET);
     gm_w16(out, (uint16_t)(FIRST_REFNUM + slot));
+    return 0;
+}
+
+/* FSpOpenDF(const FSSpec *spec, SInt8 permission, short *refNum) -> OSErr. */
+static void h_fsp_open_df(void) {
+    char rel[REL_CAP];
+    spec_rel_path(trap_arg(0), rel, sizeof rel);
+    trap_return((uint32_t)(int32_t)open_data_fork("FSpOpenDF", rel, (int8_t)trap_arg(1), trap_arg(2)));
+}
+
+/* ---- FSRefs: a magic word and an index into a table of paths relative to
+   the game folder, so they go through the same overlay as FSSpecs ---- */
+
+/* FSPathMakeRef(const UInt8 *path, FSRef *ref, Boolean *isDirectory) ->
+   OSStatus. path is a host path in UTF-8, inside the game folder or the
+   data folder (which stands for the same place); anything else is fnfErr. */
+static void h_fs_path_make_ref(void) {
+    char path[PATH_CAP], abs[PATH_MAX], root[PATH_MAX], rel[REL_CAP] = "";
+    if (!gm_read_cstr(trap_arg(0), path, sizeof path))
+        trap_crash("FSPathMakeRef: the path is longer than %d bytes", PATH_CAP - 1);
+    uint32_t ref = trap_arg(1), is_dir_out = trap_arg(2);
+    canonical(path, abs, sizeof abs);
+    bool inside = false;
+    const char *roots[2] = {F.game_dir, F.data_dir};
+    for (int i = 0; i < 2 && !inside; i++) {
+        if (!roots[i][0])
+            continue;
+        canonical(roots[i], root, sizeof root);
+        if (within(abs, root)) {
+            inside = true;
+            const char *tail = abs + strlen(root);
+            snprintf(rel, sizeof rel, "%s", *tail == '/' ? tail + 1 : tail);
+        }
+    }
+    if (!inside || strstr(rel, "/../") || strncmp(rel, "../", 3) == 0) {
+        log_msg("FSPathMakeRef: %s is outside the game's folders", path);
+        trap_return((uint32_t)FILES_FNF_ERR);
+        return;
+    }
+    char host[PATH_CAP];
+    locate(rel, false, host, sizeof host);
+    bool dir = is_dir(rel);
+    if (!dir && !exists(host, false)) {
+        trap_return((uint32_t)FILES_FNF_ERR);
+        return;
+    }
+    int i = 0;
+    while (i < F.nrefs && strcmp(F.refs[i], rel) != 0)
+        i++;
+    if (i == F.nrefs) {
+        if (F.nrefs == MAX_REFS)
+            trap_crash("FSPathMakeRef: more than %d files", MAX_REFS);
+        snprintf(F.refs[F.nrefs++], sizeof F.refs[0], "%s", rel);
+    }
+    memset(gm_ptr(ref, FSREF_SIZE), 0, FSREF_SIZE);
+    gm_w32(ref, FSREF_MAGIC);
+    gm_w32(ref + 4, (uint32_t)i);
+    if (is_dir_out)
+        gm_w8(is_dir_out, dir);
     trap_return(0);
+}
+
+/* The path an FSRef names, relative to the game folder. */
+static const char *ref_rel_path(const char *call, uint32_t ref) {
+    uint32_t i = gm_r32(ref + 4);
+    if (gm_r32(ref) != FSREF_MAGIC || i >= (uint32_t)F.nrefs)
+        trap_crash("%s: 0x%08x is not an FSRef from FSPathMakeRef", call, ref);
+    return F.refs[i];
+}
+
+/* FSGetDataForkName(HFSUniStr255 *name): the data fork's name is empty. */
+static void h_fs_get_data_fork_name(void) {
+    gm_w16(trap_arg(0), 0);
+    trap_return(0);
+}
+
+/* FSOpenFork(const FSRef *ref, UniCharCount forkNameLength, const UniChar
+   *forkName, SInt8 permissions, FSIORefNum *forkRefNum) -> OSErr. Only the
+   data fork. */
+static void h_fs_open_fork(void) {
+    const char *rel = ref_rel_path("FSOpenFork", trap_arg(0));
+    if (trap_arg(1) != 0)
+        trap_crash("FSOpenFork: only the data fork can be opened (%s)", rel);
+    trap_return((uint32_t)(int32_t)open_data_fork("FSOpenFork", rel, (int8_t)trap_arg(3), trap_arg(4)));
 }
 
 static open_file *file_of(int16_t ref) {
@@ -549,6 +633,47 @@ static void h_pb_flush_file_sync(void) {
     trap_return((uint32_t)(int32_t)err);
 }
 
+/* FSGetForkSize(FSIORefNum, SInt64 *forkSize) -> OSErr */
+static void h_fs_get_fork_size(void) {
+    open_file *o = file_of((int16_t)trap_arg(0));
+    if (!o) {
+        trap_return((uint32_t)FILES_RF_NUM_ERR);
+        return;
+    }
+    gm_w32(trap_arg(1), 0);
+    gm_w32(trap_arg(1) + 4, (uint32_t)o->eof);
+    trap_return(0);
+}
+
+/* FSGetForkPosition(FSIORefNum, SInt64 *position) -> OSErr */
+static void h_fs_get_fork_position(void) {
+    open_file *o = file_of((int16_t)trap_arg(0));
+    if (!o) {
+        trap_return((uint32_t)FILES_RF_NUM_ERR);
+        return;
+    }
+    gm_w32(trap_arg(1), 0);
+    gm_w32(trap_arg(1) + 4, (uint32_t)ftell(o->f));
+    trap_return(0);
+}
+
+/* FSSetForkPosition(FSIORefNum, UInt16 positionMode, SInt64 positionOffset)
+   -> OSErr. The 64-bit offset takes the next two registers, high word first
+   (Darwin's ABI doesn't align it to an even register). */
+static void h_fs_set_fork_position(void) {
+    open_file *o = file_of((int16_t)trap_arg(0));
+    if (!o) {
+        trap_return((uint32_t)FILES_RF_NUM_ERR);
+        return;
+    }
+    int64_t off = (int64_t)(((uint64_t)trap_arg(2) << 32) | trap_arg(3));
+    if (off < INT32_MIN || off > INT32_MAX) {
+        trap_return((uint32_t)FILES_POS_ERR);
+        return;
+    }
+    trap_return((uint32_t)(int32_t)set_pos(o->f, o->eof, (int16_t)trap_arg(1), (int32_t)off));
+}
+
 static void h_fs_close(void) {
     int16_t ref = (int16_t)trap_arg(0);
     open_file *o = file_of(ref);
@@ -573,4 +698,11 @@ void files_register(void) {
     trap_register("SetFPos", h_set_fpos);
     trap_register("GetFPos", h_get_fpos);
     trap_register("FSClose", h_fs_close);
+    trap_register("FSPathMakeRef", h_fs_path_make_ref);
+    trap_register("FSGetDataForkName", h_fs_get_data_fork_name);
+    trap_register("FSOpenFork", h_fs_open_fork);
+    trap_register("FSGetForkSize", h_fs_get_fork_size);
+    trap_register("FSGetForkPosition", h_fs_get_fork_position);
+    trap_register("FSSetForkPosition", h_fs_set_fork_position);
+    trap_register("FSCloseFork", h_fs_close);
 }

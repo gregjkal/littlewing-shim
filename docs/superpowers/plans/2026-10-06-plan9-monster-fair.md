@@ -394,11 +394,11 @@ Calls: `FSPathMakeRef`, `FSGetDataForkName`, `FSOpenFork`, `FSGetForkSize`, `FSG
 
 - An `FSRef` (80 opaque bytes) holds an index into a table of host paths. `FSPathMakeRef` resolves a path inside the bundle or the save folder (the save folder first, as `files.c` does now) and returns `fnfErr` for a missing file or a path elsewhere.
 - `FSGetDataForkName` writes an empty `HFSUniStr255`.
-- `FSOpenFork` with write permission on a file in the bundle copies it to the save folder first, as the first write does today.
+- `FSOpenFork` with write permission on a file in the bundle copies it to the save folder at the first write, as `FSpOpenDF` already does (done: the game can't tell this from copying at open, and it shares the code). `FSPathMakeRef` also accepts a path in the save folder, which names the same file as the bundle path.
 
-- [ ] **Step 1: Failing tests:** `files_path_make_ref_finds_a_resource`, `files_path_make_ref_refuses_outside_paths`, `files_open_fork_reads_with_pbreadsync`, `files_fork_size_and_position`, `files_writing_a_bundle_file_writes_the_save_folders_copy`.
-- [ ] **Step 2: Implement, run** `./build/loony_tests files_`.
-- [ ] **Step 3: Commit** `FSRefs and forks, sharing refnums with the File Manager calls`.
+- [x] **Step 1: Failing tests:** `files_path_make_ref_finds_a_resource`, `files_path_make_ref_refuses_outside_paths`, `files_open_fork_reads_with_pbreadsync`, `files_fork_size_and_position`, `files_writing_a_bundle_file_writes_the_save_folders_copy`.
+- [x] **Step 2: Implement, run** `./build/loony_tests files_`.
+- [x] **Step 3: Commit** `FSRefs and forks, sharing refnums with the File Manager calls`.
 
 ---
 
