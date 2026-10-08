@@ -225,9 +225,12 @@ git commit -m "Read Mach-O executables: the PowerPC slice, its segments, symbols
      gm_init_layout(GM_LAYOUT_MACHO). */
   bool image_load_macho(const uint8_t *buf, size_t len, loaded_image *img, char *err, size_t errlen);
 
-  /* Where a data import lives: called by the loader for each non-lazy
-     pointer or external relocation naming a data symbol. Returns its guest
-     address, or 0 if the shim doesn't know the symbol (the load then fails). */
+  /* What a Mach-O import is: called once for each import that a non-lazy
+     pointer or an external relocation names (lazy pointers are always
+     functions). Returns the guest address of a data object,
+     IMAGE_SYMBOL_CODE (1) for a function whose address the program takes,
+     or 0 if the shim doesn't know the symbol (the load then fails). */
+  #define IMAGE_SYMBOL_CODE 1u
   typedef uint32_t (*image_data_fn)(const char *name);
   void image_set_data_resolver(image_data_fn fn);
 
@@ -239,17 +242,18 @@ git commit -m "Read Mach-O executables: the PowerPC slice, its segments, symbols
 Binding rules:
 1. Copy each segment's file bytes to its `vmaddr`, zero the rest of `vmsize`. `__PAGEZERO` and `__LINKEDIT` are not copied.
 2. Build the name table: every undefined external symbol, then the synthetic imports the runtime needs (`sprintf`, for `dlsym`; see Task 4). Import `i` traps at `GUEST_TRAP_ADDR(i)`.
-3. For each `S_LAZY_SYMBOL_POINTERS` and `S_NON_LAZY_SYMBOL_POINTERS` slot: a local or absolute indirect entry is left alone. A function import gets its trap address. A data import gets the resolver's address. Which names are data comes from the resolver: whatever it knows is data, anything else is a function.
+3. For each `S_LAZY_SYMBOL_POINTERS` and `S_NON_LAZY_SYMBOL_POINTERS` slot: a local or absolute indirect entry is left alone. A function import gets its trap address. A data import gets the resolver's address. An import behind a lazy pointer is a function; for any other, the resolver says: a data address, `IMAGE_SYMBOL_CODE` for a function (`__cxa_pure_virtual`, `__gxx_personality_v0`), or 0, which fails the load by name. (Measured: MONSTER FAIR asks about exactly 12 names: the 7 non-lazy imports in the Facts table, `__CFConstantStringClassReference`, the three type-info vtables, and `__cxa_pure_virtual`.)
 4. For each external relocation: `word += address of the symbol` (trap address for a function such as `__cxa_pure_virtual`, resolver address for data). The stored word is the addend (`0x8` for the type-info vtables).
-5. The `__dyld` section's two words point at a trap named `dyld_stub_binding_helper` that crashes ("a lazy pointer was not bound"). Nothing should reach it.
+5. The `__dyld` section's two words point at a trap named `dyld_stub_binding_helper` that crashes ("a lazy pointer was not bound"). Nothing should reach it. The loader only binds it; `libc_register` (Task 4) installs the crashing handler.
+8. Crash reports print a Mach-O code address as `code+<linked address>` (`code_base` 0, `code_len` the end of `__TEXT`), so they match a disassembly of the file.
 6. `main`: from `entry`, decode the first `bl` (opcode 18, LK=1) to reach `_start`; in `_start`, find the first `bl` whose target is the `_exit` stub, and take the target of the `bl` before it. If either step fails, the load fails with "can't find main".
 7. `__mod_init_func`: copy its words to `init_addrs`.
 
-- [ ] **Step 1: Failing tests**, on `macho_build.h` files: `macho_load_places_segments_at_their_addresses`; `macho_load_binds_lazy_pointers_to_traps`; `macho_load_binds_data_imports_through_the_resolver`; `macho_load_leaves_local_indirect_slots_alone`; `macho_load_adds_at_external_relocations` (addend 8 + address); `macho_load_fails_naming_an_unknown_data_symbol`; `macho_load_finds_main_after_start`; `macho_load_lists_static_initializers`. On the real file (`SKIP_UNLESS_MF`): `macho_load_monster_fair` (main `0x41ca8`, 13 initializers, slot `0x5b144` holds a trap address, `0x5d2c8` holds the class-reference object's address).
-- [ ] **Step 2: Failing tests for direct calls:** `guest_call_direct_jumps_to_the_address` (a two-instruction function `li r3,42; blr` at a scratch address returns 42 with direct calls on); `guest_call_default_still_reads_a_tvector`.
-- [ ] **Step 3: Implement.** In `guest_call`, with direct calls on, `code = fn`, and `r12 = fn` (GCC's Darwin code expects the callee address in r12 when called through a pointer); `r2` is left as is.
-- [ ] **Step 4: Run** `./build/loony_tests macho_load guest_call loader_`.
-- [ ] **Step 5: Commit** `Load Mach-O programs at their addresses and bind their imports to traps`.
+- [x] **Step 1: Failing tests**, on `macho_build.h` files: `macho_load_places_segments_at_their_addresses`; `macho_load_binds_lazy_pointers_to_traps`; `macho_load_binds_data_imports_through_the_resolver`; `macho_load_leaves_local_indirect_slots_alone`; `macho_load_adds_at_external_relocations` (addend 8 + address); `macho_load_fails_naming_an_unknown_data_symbol`; `macho_load_finds_main_after_start`; `macho_load_lists_static_initializers`. On the real file (`SKIP_UNLESS_MF`): `macho_load_monster_fair` (main `0x41ca8`, 13 initializers, slot `0x5b144` holds a trap address, `0x5d2c8` holds the class-reference object's address).
+- [x] **Step 2: Failing tests for direct calls:** `guest_call_direct_jumps_to_the_address` (a two-instruction function `li r3,42; blr` at a scratch address returns 42 with direct calls on); `guest_call_default_still_reads_a_tvector`.
+- [x] **Step 3: Implement.** In `guest_call`, with direct calls on, `code = fn`, and `r12 = fn` (GCC's Darwin code expects the callee address in r12 when called through a pointer); `r2` is left as is.
+- [x] **Step 4: Run** `./build/loony_tests macho_load guest_call loader_`.
+- [x] **Step 5: Commit** `Load Mach-O programs at their addresses and bind their imports to traps`.
 
 ---
 

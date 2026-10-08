@@ -330,3 +330,35 @@ TEST(trap_trace_lowmem_logs_first_write_per_address) {
     const char *first = strstr(out, "lowmem: write 0x0910");
     CHECK(first && !strstr(first + 1, "lowmem: write 0x0910"));
 }
+
+TEST(guest_call_direct_jumps_to_the_address) {
+    static const char *const names[] = {"Unused"};
+    setup(names, 1);
+    uint32_t code[] = {
+        0x3860002A, /* li   r3,42 */
+        0x7C6C1A14, /* add  r3,r12,r3: r12 holds the callee's address */
+        0x4E800020, /* blr */
+    };
+    put_words(INNER, code, 3);
+    cpu_set_gpr(2, 0x5555);
+    trap_set_direct_calls(true);
+    CHECK_EQ(guest_call(INNER, 0, NULL), INNER + 42);
+    CHECK_EQ(cpu_gpr(2), 0x5555);
+    trap_set_direct_calls(false);
+}
+
+TEST(guest_call_default_still_reads_a_tvector) {
+    static const char *const names[] = {"TestDouble"};
+    setup(names, 1);
+    trap_register("TestDouble", h_double);
+    trap_set_direct_calls(true);
+    trap_set_direct_calls(false);
+    uint32_t arg = 20;
+    CHECK_EQ(guest_call(TV_OUTER, 1, &arg), 41);
+
+    /* trap_init turns direct calls off. */
+    trap_set_direct_calls(true);
+    setup(names, 1);
+    trap_register("TestDouble", h_double);
+    CHECK_EQ(guest_call(TV_OUTER, 1, &arg), 41);
+}

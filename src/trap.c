@@ -28,6 +28,7 @@ static struct {
     bool trace_imports;
     bool trace_calls;
     bool stub_all;
+    bool direct_calls;
     uint8_t lowmem_seen[GUEST_LOWMEM_SIZE / 8]; /* one bit per address already logged */
 } T;
 
@@ -89,6 +90,8 @@ void trap_register(const char *name, trap_handler fn) {
             T.handlers[i] = fn;
 }
 
+void trap_set_direct_calls(bool on) { T.direct_calls = on; }
+
 bool trap_has_handler(uint32_t index) { return index < T.n && T.handlers[index]; }
 
 const char *trap_import_name(uint32_t index) {
@@ -145,7 +148,10 @@ static const hist_entry *record(uint32_t index) {
 uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
     if (nargs < 0 || nargs > 8)
         fatal("guest_call: bad argument count %d", nargs);
-    uint32_t code = gm_r32(tvector), toc = gm_r32(tvector + 4);
+    /* GCC's Darwin code expects the callee's address in r12 when it's called
+       through a pointer, and has no TOC: r2 is left as it is. */
+    uint32_t code = T.direct_calls ? tvector : gm_r32(tvector);
+    uint32_t toc = T.direct_calls ? cpu_gpr(2) : gm_r32(tvector + 4);
     cpu_context *saved = cpu_save();
 
     uint32_t old_sp = cpu_gpr(1);

@@ -21,8 +21,14 @@ void trap_register(const char *name, trap_handler fn);
 
 /* Calls the guest function whose transition vector is at tvector, with up to
    8 word arguments in r3..r10. Returns the guest's r3. Re-entrant: handlers
-   may call it again. All registers are restored before it returns. */
+   may call it again. All registers are restored before it returns. With
+   direct calls on, tvector is the function's code address instead. */
 uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args);
+
+/* On: guest_call's first argument is a code address, as a Mach-O program's
+   function pointers are. Off (the default, for PEF): a transition vector.
+   trap_init() turns it off. */
+void trap_set_direct_calls(bool on);
 
 const char *trap_import_name(uint32_t index);
 
