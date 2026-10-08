@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include "cf.h"
+#include "cgimage.h"
 #include "cpu.h"
 #include "cxxrt.h"
 #include "dialogs.h"
@@ -245,6 +246,7 @@ int main(int argc, char **argv) {
     }
     qd_init(800, 600, macho ? 32 : 8);
     dialogs_init();
+    cgimage_init();
     events_init();
     sound_init();
     display_init();
@@ -278,6 +280,7 @@ int main(int argc, char **argv) {
     cf_register();
     qd_register();
     dialogs_register();
+    cgimage_register();
     events_register();
     files_register();
     sound_register();

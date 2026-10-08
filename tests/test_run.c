@@ -121,11 +121,11 @@ static int by_tick(const void *a, const void *b) {
     return x < y ? -1 : x > y;
 }
 
-/* Runs the game with a script (lines in any order, sorted by tick here),
+/* Runs the game in dir with a script (lines in any order, sorted by tick here),
    returning the exit status; shots[i] gets the hash of the screenshot taken
    at ticks[i]. */
-static int run_script(const char *actions, const uint32_t *ticks, uint32_t *shots, int nshots,
-                      char *out, size_t outlen) {
+static int run_script_in(const char *dir, const char *actions, const uint32_t *ticks, uint32_t *shots,
+                         int nshots, char *out, size_t outlen) {
     char pngs[4][1024], lines[32][1100];
     char *order[32];
     int n = 0;
@@ -150,7 +150,7 @@ static int run_script(const char *actions, const uint32_t *ticks, uint32_t *shot
     bool own_data = !run_data[0];
     if (own_data)
         test_tmp_dir(run_data, sizeof run_data);
-    int status = test_run_child(run_loony_scripted, (void *)test_game_dir(), out, outlen);
+    int status = test_run_child(run_loony_scripted, (void *)dir, out, outlen);
     if (own_data) {
         test_remove_tree(run_data);
         run_data[0] = '\0';
@@ -164,6 +164,12 @@ static int run_script(const char *actions, const uint32_t *ticks, uint32_t *shot
     }
     unlink(script_path);
     return status;
+}
+
+/* The same, with Loony Labyrinth. */
+static int run_script(const char *actions, const uint32_t *ticks, uint32_t *shots, int nshots,
+                      char *out, size_t outlen) {
+    return run_script_in(test_game_dir(), actions, ticks, shots, nshots, out, outlen);
 }
 
 TEST(run_opening_frames_match_their_goldens) {
@@ -417,6 +423,49 @@ TEST(run_monster_fair_reaches_main) {
     CHECK_CONTAINS(out, "Gestalt(0x73797376, ");
     CHECK_CONTAINS(out, "from code+0x41d1c");
     CHECK(!strstr(out, "the game threw"));
+}
+
+/* With no preferences, MONSTER FAIR opens with its Welcome window (from its
+   nib) and waits in its modal loop. */
+TEST(run_monster_fair_shows_the_welcome_window) {
+    SKIP_UNLESS_MF();
+    real_alerts = true;
+    setenv("LOONY_EXIT_AFTER", "150", 1);
+    uint32_t ticks[1] = {120}, shots[1];
+    char out[32768];
+    int status = run_script_in(test_mf_app(), "", ticks, shots, 1, out, sizeof out);
+    unsetenv("LOONY_EXIT_AFTER");
+    real_alerts = false;
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: nib window Welcome: 510x144, 6 controls");
+    CHECK_CONTAINS(out, "loony: nib window Welcome: shown");
+    CHECK(!strstr(out, "command '"));
+    CHECK_EQ(shots[0], 0xCF4FD1C9u); /* the Welcome window, appl.png beside its text */
+}
+
+/* "Enter Key-Code" opens the Register window; a key code that isn't one
+   gets AuthorizeFailed, whose OK goes back to the Welcome window. The
+   address and key are made up. */
+TEST(run_monster_fair_wrong_key_code_shows_authorize_failed) {
+    SKIP_UNLESS_MF();
+    real_alerts = true;
+    setenv("LOONY_EXIT_AFTER", "400", 1);
+    const char *actions = "60 click 456 265\n130 type someone@example.com\n140 down tab\n142 up tab\n"
+                          "150 type 0000-1111-2222-3333\n180 down return\n182 up return\n"
+                          "280 down return\n282 up return\n";
+    char out[32768];
+    int status = run_script_in(test_mf_app(), actions, NULL, NULL, 0, out, sizeof out);
+    unsetenv("LOONY_EXIT_AFTER");
+    real_alerts = false;
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: nib window Welcome: command 'Ans3' (Enter Key-Code)");
+    CHECK_CONTAINS(out, "loony: nib window Register: shown");
+    CHECK_CONTAINS(out, "loony: nib window Register: command 'ok  ' (Register)");
+    CHECK_CONTAINS(out, "loony: nib window AuthorizeFailed: shown");
+    CHECK_CONTAINS(out, "loony: nib window AuthorizeFailed: command 'ok  ' (OK)");
+    const char *again = strstr(out, "AuthorizeFailed: command");
+    CHECK(again && strstr(again, "loony: nib window Welcome: shown"));
+    CHECK(!strstr(out, "0000-1111-2222-3333"));
 }
 
 TEST(run_reports_missing_game_folder) {

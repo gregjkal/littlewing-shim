@@ -58,6 +58,9 @@ const char *cf_string_text(const char *call, uint32_t ref);
    <path>/Contents/Resources. Kept across cf_init(). */
 void cf_set_bundle(const char *path);
 
+/* The path cf_set_bundle was given, or NULL. */
+const char *cf_bundle_path(void);
+
 /* Creates a CFURL (retain count 1) for a host path. */
 uint32_t cf_url(const char *path);
 

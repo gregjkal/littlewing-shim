@@ -27,7 +27,7 @@
 #define TYPE_CHAR     0x54455854u /* 'TEXT' */
 #define TYPE_WILDCARD 0x2A2A2A2Au /* '****' */
 #define TYPE_HICOMMAND 0x68636D64u /* 'hcmd' */
-#define HICOMMAND_SIZE 16 /* attributes, commandID, menu.menuRef, menu.menuItemIndex (padded) */
+#define HICOMMAND_SIZE 14 /* attributes, commandID, menu.menuRef, menu.menuItemIndex (Carbon packs to 2) */
 #define AE_CLASS_CORE 0x61657674u /* 'aevt' */
 #define AE_ID_QUIT    0x71756974u /* 'quit' */
 

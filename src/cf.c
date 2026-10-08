@@ -195,6 +195,8 @@ void cf_set_bundle(const char *path) {
         fatal("out of memory");
 }
 
+const char *cf_bundle_path(void) { return bundle_path; }
+
 int cf_retain_count(uint32_t ref) {
     cf_obj *o = lookup(ref);
     return o ? o->refs : 0;
