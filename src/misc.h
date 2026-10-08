@@ -20,6 +20,19 @@ void misc_init(void);
    uses it to go back to the picker). */
 void misc_set_exit_hook(void (*fn)(void));
 
+/* What ExitToShell and the C library's exit do: logs why, runs the exit
+   hook, and exits with status. */
+_Noreturn void misc_exit(const char *why, int status);
+
+/* Seconds since 1970 (UTC). On the virtual clock, the same calendar as
+   GetDateTime: 2003-01-01 00:00:00 plus the virtual time. */
+int64_t misc_unix_time(void);
+
+/* Sleeps us microseconds the way Delay does: in steps of at most a quarter
+   tick on the real clock, or by moving the virtual one, running the idle
+   hook at each new tick. A sleep of 0 counts as a time poll. */
+void misc_sleep_us(uint64_t us);
+
 /* True if the virtual clock is in use. */
 bool misc_fixed_clock(void);
 

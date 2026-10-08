@@ -178,6 +178,28 @@ static void h_microseconds(void) {
     gm_w32(out + 4, (uint32_t)us);
 }
 
+void misc_sleep_us(uint64_t us) {
+    if (us == 0) {
+        misc_poll();
+        return;
+    }
+    uint64_t end = elapsed_us() + us, tick_us = 1000000 / 60;
+    for (;;) {
+        idle_if_new_tick(misc_ticks());
+        uint64_t now = elapsed_us();
+        if (now >= end)
+            break;
+        if (M.fixed) {
+            uint64_t next = (now / tick_us + 1) * tick_us;
+            M.virtual_us = next < end ? next : end;
+            M.polls = 0;
+        } else {
+            uint64_t step = end - now < tick_us / 4 ? end - now : tick_us / 4;
+            misc_wait((double)step / 1e6);
+        }
+    }
+}
+
 /* Delay(ticks, &finalTicks): sleeps in steps of at most one tick, running
    the idle hook between steps. */
 static void h_delay(void) {
@@ -202,6 +224,15 @@ static void h_delay(void) {
 /* The virtual clock's calendar starts at 2003-01-01 00:00:00 (Mac time), so
    fixed-clock runs see the same date every time. */
 #define FIXED_CLOCK_EPOCH 3124224000u
+
+/* The same instant in Unix time: 2003-01-01 00:00:00 UTC. */
+#define FIXED_CLOCK_UNIX 1041379200
+
+int64_t misc_unix_time(void) {
+    if (M.fixed)
+        return FIXED_CLOCK_UNIX + (int64_t)(M.virtual_us / 1000000);
+    return (int64_t)time(NULL);
+}
 
 static void h_get_date_time(void) {
     if (M.fixed) {
@@ -390,11 +421,15 @@ static void h_num2dec(void) {
 
 void misc_set_exit_hook(void (*fn)(void)) { M.exit_hook = fn; }
 
-static void h_exit_to_shell(void) {
-    log_msg("ExitToShell");
+void misc_exit(const char *why, int status) {
+    log_msg("%s", why);
     if (M.exit_hook)
         M.exit_hook();
-    exit(0);
+    exit(status);
+}
+
+static void h_exit_to_shell(void) {
+    misc_exit("ExitToShell", 0);
 }
 
 void misc_register(void) {

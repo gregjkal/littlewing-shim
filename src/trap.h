@@ -32,6 +32,9 @@ void trap_set_direct_calls(bool on);
 
 const char *trap_import_name(uint32_t index);
 
+/* Index of the import called name, or -1. */
+int32_t trap_find(const char *name);
+
 /* True if import index has a handler. */
 bool trap_has_handler(uint32_t index);
 

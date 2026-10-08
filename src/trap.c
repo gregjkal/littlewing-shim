@@ -92,6 +92,13 @@ void trap_register(const char *name, trap_handler fn) {
 
 void trap_set_direct_calls(bool on) { T.direct_calls = on; }
 
+int32_t trap_find(const char *name) {
+    for (uint32_t i = 0; i < T.n; i++)
+        if (strcmp(T.names[i], name) == 0)
+            return (int32_t)i;
+    return -1;
+}
+
 bool trap_has_handler(uint32_t index) { return index < T.n && T.handlers[index]; }
 
 const char *trap_import_name(uint32_t index) {

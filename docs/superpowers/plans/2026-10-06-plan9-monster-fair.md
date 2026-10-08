@@ -264,7 +264,8 @@ Binding rules:
 - Test: `tests/test_libc.c` (through `harness.h`'s `call_import`, with direct calls on)
 
 **Interfaces:**
-- Produces: `void libc_init(const char *exe_path); void libc_register(void); uint32_t libc_data_symbol(const char *name);` (the last is Task 3's resolver for libSystem's data).
+- Produces: `void libc_init(const char *exe_path); void libc_register(void); uint32_t libc_data_symbol(const char *name);` (the last is Task 3's resolver for libSystem's data). Also `libc_main_args(&argv, &envp, &apple)`, which Task 6 uses to write `main`'s arguments into the heap. `libc_init` allocates the data objects, so it runs after `mm_init` and before `image_load_macho`.
+- `misc` gains `misc_unix_time` (the `GetDateTime` calendar in Unix time), `misc_sleep_us` (`Delay`'s loop in microseconds) and `misc_exit` (what `ExitToShell` does, with a status). `trap` gains `trap_find(name)`. `localtime` is UTC on the fixed clock, so runs match in any time zone.
 
 The calls MONSTER FAIR imports from libSystem, and what each does:
 
@@ -286,10 +287,10 @@ The calls MONSTER FAIR imports from libSystem, and what each does:
 
 Data symbols from `libc_data_symbol`: `errno` (a word), `_DefaultRuneLocale` (a 32-bit `_RuneLocale`: `__runetype[256]` at offset 52, `__maplower` at 1076, `__mapupper` at 2100, filled from the host's C-locale table), `__keymgr_global`, `mach_init_routine` and `_cthread_init_routine` (words holding 0).
 
-- [ ] **Step 1: Failing tests**, one per row, for example: `libc_malloc_and_free_use_the_pointer_heap`, `libc_qsort_calls_the_guest_comparator` (a tiny PPC comparator built with `tests/ppc.h`), `libc_time_follows_the_fixed_clock`, `libc_localtime_fills_a_32_bit_tm`, `libc_strftime_formats_a_high_score_date` (`"%Y-%m-%d %X"`), `libc_maskrune_matches_the_host`, `libc_dlsym_finds_sprintf_ldbl128`, `libc_sprintf_formats_the_games_conversions` (`"%03d,"`, `"%d00"`, `"%6d"`, `"%s"`), `libc_sprintf_refuses_floats`, `libc_rand_is_darwins`.
-- [ ] **Step 2: Implement.** Check Darwin's 10.4 `rand` in Apple's Libc source before writing it, and note the source in a comment.
-- [ ] **Step 3: Run** `./build/loony_tests libc_`.
-- [ ] **Step 4: Commit** `A C library for Mach-O games, on the shim's heap and clock`.
+- [x] **Step 1: Failing tests**, one per row, for example: `libc_malloc_and_free_use_the_pointer_heap`, `libc_qsort_calls_the_guest_comparator` (a tiny PPC comparator built with `tests/ppc.h`), `libc_time_follows_the_fixed_clock`, `libc_localtime_fills_a_32_bit_tm`, `libc_strftime_formats_a_high_score_date` (`"%Y-%m-%d %X"`), `libc_maskrune_matches_the_host`, `libc_dlsym_finds_sprintf_ldbl128`, `libc_sprintf_formats_the_games_conversions` (`"%03d,"`, `"%d00"`, `"%6d"`, `"%s"`), `libc_sprintf_refuses_floats`, `libc_rand_is_darwins`.
+- [x] **Step 2: Implement.** Check Darwin's 10.4 `rand` in Apple's Libc source before writing it, and note the source in a comment.
+- [x] **Step 3: Run** `./build/loony_tests libc_`.
+- [x] **Step 4: Commit** `A C library for Mach-O games, on the shim's heap and clock`.
 
 ---
 
