@@ -22,8 +22,10 @@ cmake --build build-release --target app                # build-release/LittleWi
 
 ## Play
 
-The app needs an Apple Silicon Mac with macOS 26 or later. It plays the games
-from these folders, which must hold the game's file:
+A release needs an Apple Silicon Mac with macOS 26 or later. An app you build
+yourself needs the macOS you built it on, or later, because Homebrew's Unicorn
+and SDL3 do. It plays the games from these folders, which must hold the game's
+file:
 
 | Game | Folder | File | Download |
 |---|---|---|---|
@@ -168,8 +170,10 @@ clean `main` that matches GitHub:
 LOONY_SIGN_ID="Developer ID Application: Your Name (TEAMID)" tools/release.sh 0.1.0
 ```
 
-This builds a fresh Release build in `build-dist` and runs the tests, then
-builds and notarizes the app as version 0.1.0. It tags the commit `v0.1.0`,
+This builds Unicorn and SDL3 from their sources (`tools/build_deps.sh`) and a
+fresh Release build against them in `build-dist`, all for macOS 26, and runs
+the tests. It then builds the app as version 0.1.0, checks that it runs on
+macOS 26, and notarizes it. It tags the commit `v0.1.0`,
 pushes the tag, and makes a draft release with `LittleWing-0.1.0.zip`. Check
 the draft on GitHub, then publish it. Other builds of the app say version
 0.0.0 (set `LOONY_VERSION` to change it).
