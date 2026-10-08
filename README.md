@@ -35,13 +35,16 @@ To get a game, download its disk image from LittleWing's
 open it, and drag the game's folder onto the Applications shortcut next to it.
 Keep the folder's name.
 
-Copy `build-release/LittleWing.app` to `/Applications` (or anywhere) and
-double-click it. With both games installed, it opens on a picker showing each
+Download `LittleWing-<version>.zip` from
+[Releases](https://github.com/gregjkal/littlewing-shim/releases), unzip it,
+and move `LittleWing.app` to `/Applications` (or anywhere); or build it as
+above and copy `build-release/LittleWing.app`. Double-click it. With both games installed, it opens on a picker showing each
 game's title picture: Left and Right (or the mouse) choose, and Return (or a
 click) plays. It starts on the last game played. With one game installed, it
 plays that game. Choosing QUIT in a game's own menu goes back to the picker;
-Cmd-Q or closing the window quits. The app carries its own copies of Unicorn and SDL3, so Homebrew
-upgrades don't affect it. Built as above, it is signed ad hoc, which is enough
+Cmd-Q or closing the window quits. The app carries its own copies of Unicorn
+and SDL3, so Homebrew upgrades don't affect it. A release is notarized and
+opens without a warning. Built as above, it is signed ad hoc, which is enough
 on the Mac that built it. On another Mac, Gatekeeper blocks the first launch;
 open System Settings, then Privacy & Security, and click Open Anyway near the
 bottom. (Right-click and Open no longer gets past it on recent macOS.) To give
@@ -155,6 +158,22 @@ leaves `build-release/LittleWing.zip` to send. The other person
 downloads the games as in [Play](#play), unzips the app into Applications,
 and double-clicks it. They need their own key codes to register.
 
+### Releases
+
+To publish a version on the
+[Releases](https://github.com/gregjkal/littlewing-shim/releases) page, from a
+clean `main` that matches GitHub:
+
+```bash
+LOONY_SIGN_ID="Developer ID Application: Your Name (TEAMID)" tools/release.sh 0.1.0
+```
+
+This builds a fresh Release build in `build-dist` and runs the tests, then
+builds and notarizes the app as version 0.1.0. It tags the commit `v0.1.0`,
+pushes the tag, and makes a draft release with `LittleWing-0.1.0.zip`. Check
+the draft on GitHub, then publish it. Other builds of the app say version
+0.0.0 (set `LOONY_VERSION` to change it).
+
 ## Debugging
 
 ```bash
@@ -205,3 +224,15 @@ The original game files are only ever read, never modified. The emulated screen
 is 800x600, the size the game expects.
 
 Design: `docs/superpowers/specs/2026-09-30-loony-shim-design.md`
+
+## License
+
+littlewing-shim is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 2 of the License, or (at your option) any
+later version. See `LICENSE`.
+
+The app bundles Unicorn (GPLv2) and SDL3 (zlib license). Their licenses are in
+`LittleWing.app/Contents/Resources/Licenses`. The games, and the art in
+`hd-art/` made from them, belong to LittleWing and aren't covered by this
+license.
