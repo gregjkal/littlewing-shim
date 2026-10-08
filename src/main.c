@@ -24,6 +24,7 @@
 #include "qd.h"
 #include "rsrc.h"
 #include "script.h"
+#include "settings.h"
 #include "sound.h"
 #include "trap.h"
 #include "util.h"
@@ -132,6 +133,9 @@ static void back_to_picker(void) {
 int main(int argc, char **argv) {
     log_to_file_if_app(argv[0]);
     files_move_old_data_root(); /* before the picker reads its file there */
+    int64_t volume;
+    if (settings_get_int(SETTINGS_VOLUME, &volume)) /* before the Sound menu shows it */
+        sound_set_volume((int)volume);
     const char *dir_arg = NULL;
     int nargs = 0;
     for (int i = 1; i < argc; i++) {

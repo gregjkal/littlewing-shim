@@ -88,12 +88,17 @@ same keys by default:
 The keys can be changed from the game's OPTIONS menu. Unregistered, games are
 time-limited.
 
+The **Sound** menu in the menu bar has a volume slider, from silent at the left
+to the game's own level at the right. It starts at 80%, 6 dB below the game's
+level. The slider follows how loudness is heard, not the signal, so 50% is
+18 dB down. The volume is remembered, and is the same for every game.
+
 Each game's preferences (options, keys, the high-score table and the license)
 are saved when it quits (and at any exit but a crash), in
 `~/Library/Application Support/littlewing-shim/<game>/prefs.plist`, where `<game>`
 is `loony-labyrinth` or `crystal-caliburn`. Any file a game writes goes to its
 own folder there, never into the game folder. Delete a game's folder to start
-it over. The picker remembers the last game in `littlewing-shim/picker.plist`.
+it over. The picker's last game and the volume are kept in `littlewing-shim/picker.plist`.
 Saves from before the project was renamed (`loony-shim/`) move to
 `littlewing-shim/` on the next launch, and saves from before there were two
 games (`prefs.plist` at the top) move into `loony-labyrinth/`.
