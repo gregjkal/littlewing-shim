@@ -32,6 +32,18 @@ void sound_init(void);
    recording. */
 void sound_start_output(void);
 
+/* The volume the sound is played at, from 0 (silent) to 100 (as the game
+   made it); SOUND_DEFAULT_VOLUME until set. It scales what the audio device
+   is given, not what is mixed, so a LOONY_WAV recording doesn't change with
+   it. Values outside 0-100 are clamped. Can be set before sound_start_output. */
+#define SOUND_DEFAULT_VOLUME 80
+void sound_set_volume(int percent);
+int sound_volume(void);
+
+/* The gain for a volume: cubed, so equal steps of the volume sound about
+   equally large (80 is about 6 dB down; 50 is 18 dB down). */
+float sound_gain(int percent);
+
 /* Renders up to now if clock-driven, then delivers the callbacks the queues
    have reached (guest_call), oldest first. The event loop calls this on every
    iteration. */

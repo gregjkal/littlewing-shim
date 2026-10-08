@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(loony_shim C)
+project(loony_shim C OBJC)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -13,17 +13,22 @@ add_compile_options(-Wall -Wextra -Werror)
 set(CMAKE_C_FLAGS_DEBUG "-g -O1 -fno-omit-frame-pointer -fsanitize=address,undefined")
 set(CMAKE_EXE_LINKER_FLAGS_DEBUG "-fsanitize=address,undefined")
 set(CMAKE_C_FLAGS_RELEASE "-O2")
+set(CMAKE_OBJC_FLAGS "-fobjc-arc")
+set(CMAKE_OBJC_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
+set(CMAKE_OBJC_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}")
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(UNICORN REQUIRED IMPORTED_TARGET unicorn)
 pkg_check_modules(SDL3 REQUIRED IMPORTED_TARGET sdl3)
 
-file(GLOB CORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.c)
+# Objective-C only where AppKit is needed (menu.m: the Sound menu).
+file(GLOB CORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.c ${CMAKE_SOURCE_DIR}/src/*.m)
 list(REMOVE_ITEM CORE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.c)
 
 add_library(loony_core STATIC ${CORE_SOURCES})
 target_include_directories(loony_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(loony_core PUBLIC PkgConfig::UNICORN PkgConfig::SDL3 "-framework CoreFoundation")
+target_link_libraries(loony_core PUBLIC PkgConfig::UNICORN PkgConfig::SDL3 "-framework CoreFoundation"
+                                        "-framework AppKit")
 
 add_executable(loony src/main.c)
 target_link_libraries(loony PRIVATE loony_core)

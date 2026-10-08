@@ -29,7 +29,8 @@ static struct {
     uint64_t rendered;       /* clock-driven: frames rendered since sound_init */
     wav_file wav;
     bool recording;
-} SND;
+    int volume;
+} SND = {.volume = SOUND_DEFAULT_VOLUME};
 
 /* The audio thread holds the stream's lock while it renders. */
 static void lock(void) {
@@ -119,9 +120,23 @@ void sound_start_output(void) {
         return;
     }
     catch_up(); /* the clock-driven frames so far */
+    SDL_SetAudioStreamGain(s, sound_gain(SND.volume));
     SND.stream = s;
     SDL_ResumeAudioStreamDevice(s);
 }
+
+float sound_gain(int percent) {
+    float v = (float)percent / 100.0f;
+    return v * v * v;
+}
+
+void sound_set_volume(int percent) {
+    SND.volume = percent < 0 ? 0 : percent > 100 ? 100 : percent;
+    if (SND.stream)
+        SDL_SetAudioStreamGain(SND.stream, sound_gain(SND.volume));
+}
+
+int sound_volume(void) { return SND.volume; }
 
 static int find(uint32_t chan) {
     for (int i = 0; i < MIX_CHANNELS; i++)
