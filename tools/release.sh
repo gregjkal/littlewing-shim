@@ -39,14 +39,18 @@ mv "$build/LittleWing.zip" "$zip"
 
 unicorn=$(pkg-config --modversion unicorn)
 sdl=$(pkg-config --modversion sdl3)
-git tag -a "$tag" -m "LittleWing $version"
-git push origin "$tag"
-gh release create "$tag" "$zip" --verify-tag --draft --title "LittleWing $version" --generate-notes --notes "$(cat <<NOTES
+# The notes go through a file: macOS's sh (bash 3.2) misreads an apostrophe
+# in a here-document inside "$(...)".
+notes=$(mktemp)
+cat >"$notes" <<NOTES
 Plays LittleWing's *Loony Labyrinth 3.0.1* and *Crystal Caliburn 3.0.1* on an Apple Silicon Mac with macOS 26 or later. This is an unofficial project, not made or endorsed by LittleWing.
 
 **To install:** download \`LittleWing-$version.zip\`, unzip it, move \`LittleWing.app\` to Applications, and install the games as described in [Play](https://github.com/gregjkal/littlewing-shim#play). The app is notarized, so it opens without a warning. It contains no game files.
 
 The app bundles [Unicorn $unicorn](https://github.com/unicorn-engine/unicorn/releases/tag/$unicorn) (GPLv2) and [SDL $sdl](https://github.com/libsdl-org/SDL/releases/tag/release-$sdl) (zlib). Their licenses are in \`LittleWing.app/Contents/Resources/Licenses\`.
 NOTES
-)"
+git tag -a "$tag" -m "LittleWing $version"
+git push origin "$tag"
+gh release create "$tag" "$zip" --verify-tag --draft --title "LittleWing $version" --generate-notes --notes "$(cat "$notes")"
+rm -f "$notes"
 echo "made a draft release of $tag: check it on GitHub, then publish it"
