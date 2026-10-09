@@ -22,6 +22,12 @@ static struct {
     bool no_vsync;
     bool cursor_hidden;
     const char *title;
+    /* What presenting costs, logged at exit: presents that reached the
+       window, bytes uploaded, and nanoseconds in the upload alone and in the
+       upload plus drawing and presenting (which waits for vsync when on). */
+    unsigned shown;
+    uint64_t bytes, upload_ns, upload_max_ns, total_ns, total_max_ns;
+    bool stats_logged;
 } D;
 
 void display_set_title(const char *title) {
@@ -64,6 +70,16 @@ static void write_screenshot(void) {
         log_msg("can't write the screenshot %s", D.screenshot);
 }
 
+void display_log_stats(void) {
+    if (D.stats_logged || !D.shown)
+        return;
+    D.stats_logged = true;
+    log_msg("display: %u presents, %llu bytes uploaded per present on average; upload %.2f ms "
+            "average, %.2f ms max; upload and present %.2f ms average, %.2f ms max",
+            D.shown, (unsigned long long)(D.bytes / D.shown), D.upload_ns / 1e6 / D.shown,
+            D.upload_max_ns / 1e6, D.total_ns / 1e6 / D.shown, D.total_max_ns / 1e6);
+}
+
 void display_init(void) {
     D.screenshot = getenv("LOONY_SCREENSHOT");
     if (D.screenshot && *D.screenshot)
@@ -98,8 +114,10 @@ static bool open_window(int w, int h) {
    coordinates are reported in. */
 static void present(const uint8_t *rgba, int w, int h, int lw, int lh) {
     D.frames++;
-    if (!D.tried)
+    if (!D.tried) {
         D.sdl_ok = open_window(lw, lh);
+        atexit(display_log_stats);
+    }
     if (D.sdl_ok) {
         if (!D.texture || D.tex_w != w || D.tex_h != h) {
             if (D.texture)
@@ -112,11 +130,22 @@ static void present(const uint8_t *rgba, int w, int h, int lw, int lh) {
             D.tex_w = w;
             D.tex_h = h;
         }
+        uint64_t t0 = SDL_GetTicksNS();
         SDL_UpdateTexture(D.texture, NULL, rgba, w * 4);
+        uint64_t t1 = SDL_GetTicksNS();
         SDL_SetRenderDrawColor(D.renderer, 0, 0, 0, 255);
         SDL_RenderClear(D.renderer);
         SDL_RenderTexture(D.renderer, D.texture, NULL, NULL);
         SDL_RenderPresent(D.renderer);
+        uint64_t t2 = SDL_GetTicksNS();
+        D.shown++;
+        D.bytes += (uint64_t)w * (uint64_t)h * 4;
+        D.upload_ns += t1 - t0;
+        D.total_ns += t2 - t0;
+        if (t1 - t0 > D.upload_max_ns)
+            D.upload_max_ns = t1 - t0;
+        if (t2 - t0 > D.total_max_ns)
+            D.total_max_ns = t2 - t0;
     }
 }
 

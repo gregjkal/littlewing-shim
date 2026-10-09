@@ -212,6 +212,14 @@ LOONY_AUTO_ALERTS=1 ./build/loony     # answer alerts with their default button,
 LOONY_DATA_DIR=/tmp/fresh ./build/loony   # use another folder for preferences and saved files
 ```
 
+At exit (and before going back to the picker) the log has a line on what
+showing frames cost: `display: <n> presents, <bytes> bytes uploaded per present
+on average; upload <ms> average, <ms> max; upload and present <ms> average,
+<ms> max`. The upload copies the frame into the window's texture; the present
+also draws it and waits for the display's refresh (not with
+`LOONY_FIXED_CLOCK=1`). With `SDL_VIDEO_DRIVER=dummy` the bytes are right but
+the times mean little: run in a real window for those.
+
 `LOONY_FIXED_CLOCK=1` makes time advance only when the game waits, so a run is
 the same every time and doesn't depend on the host's speed, as long as it
 starts from the same preferences: point `LOONY_DATA_DIR` at an empty folder.
