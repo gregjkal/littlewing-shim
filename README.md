@@ -220,6 +220,14 @@ host window keeps its size and scales it to fit.
 
 Tests that need a game's files skip when it isn't installed (`SKIP_UNLESS_GAME`,
 `SKIP_UNLESS_CC` and `SKIP_UNLESS_MF` in `tests/test.h`). `LOONY_GAME_DIR`,
-`LOONY_CC_DIR` and `LOONY_MF_APP` point them at copies elsewhere.
+`LOONY_CC_DIR` and `LOONY_MF_APP` point them at copies elsewhere. The tests
+that register take the address and key code from the environment and skip
+without them: `LOONY_TEST_EMAIL` and `LOONY_TEST_KEY` (Loony Labyrinth), and
+`LOONY_TEST_MF_EMAIL` and `LOONY_TEST_MF_KEY` (MONSTER FAIR; the public key in
+`docs/test_key.txt` is one the game refuses in play, which that test checks).
+
+MONSTER FAIR checks its license a second time during play, a couple of
+minutes in, and erases a license it refuses there, such as a key code posted
+publicly, even though the Register window accepted it.
 
 Design: `docs/superpowers/specs/2026-09-30-loony-shim-design.md`

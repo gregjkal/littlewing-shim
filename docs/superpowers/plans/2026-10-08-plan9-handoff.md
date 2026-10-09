@@ -6,10 +6,10 @@ Tasks 9, 10, 11 and 13 are done, and Task 12 is not needed so far. Their notes i
 
 Next:
 - **Task 14** is done too: the full suite gave 426 passed, 0 failed, 1 skipped.
-- **Task 15**: the soak and the determinism check (steps 1 and 2) passed. Next is step 3, the user's playtest, then the goldens with their approval.
+- **Task 15** is done (2026-10-09): the soak, the determinism check, the user's playtest and the goldens. The full suite gives 429 passed, 0 failed, 2 skipped (both skips need key codes in the environment). Plan 9 is complete.
 
 Waiting on the user:
-- Goldens for the three-card picker and MONSTER FAIR's frames, in Task 15.
+- Their `docs/test_key.txt` in the main checkout has a MONSTER FAIR block that isn't committed. The game refuses that key in play (see Task 15's notes); a test of a lasting registration needs a key it accepts, in `LOONY_TEST_MF_EMAIL` and `LOONY_TEST_MF_KEY`.
 
 Worktree notes from this session:
 - The guard refuses shell loops, heredoc appends and `sh -c`-like constructs. Put helper scripts in the job's tmp dir and call each with plain arguments.

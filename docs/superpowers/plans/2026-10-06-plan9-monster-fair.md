@@ -541,11 +541,21 @@ The design, if needed: a host-side two-phase unwinder over the guest's registers
 - **The soak** (Release build, `LOONY_AUTO_ALERTS=1`, `LOONY_FIXED_CLOCK=1`, `LOONY_WAV`, empty save folder): exit status 0 in about 790 seconds of host time for the hour. No crash, no unknown selector, nothing unimplemented, nothing thrown; the log is 74 lines, mostly the 13 initializers' `dlopen`/`dlsym` lines. The quit Apple Event ends it cleanly: the display goes back to 800×600, 32 bits, and `main` returns 0. The 5-minute screenshots show tryout games under way (up to 303,600 points), the menu and the self-playing table. `prefs.plist` holds 40 keys (key codes, the high-score table, `mode screen size` 2, the sound and music switches, an empty license). No soak game beat the default high scores, so name entry wasn't exercised; that's for the playtest.
 - **Determinism.** Two soaks run at the same time from separate empty save folders matched byte for byte: the 634,866,584-byte WAV (SHA-256 `edeeba644e355050…`), all 12 screenshots, the last frame (`90b49b9d634cd0eb…`), `prefs.plist` and the log. The scripts differ only in their screenshot paths.
 
+*Steps 3 to 5 (2026-10-09).* The user played from the picker and approved; the high-score table saved ("GREG", with its timestamp). What the playtest found:
+- **The game checks a license twice.** The Register window's check accepts the public key in `docs/test_key.txt` (archive.org, made for 1.1.2), and the ThankYou window follows. A second check runs in the key handler (`0x41b3c`): at an Esc (key code 53) more than 7200 ticks after the first key event, `0x42310` tests the license against a blacklist (an address ending in ".NNN", as an IP address does, and six hashes of known keys compared with `strcmp`) and `0x42be0` recomputes it. Either failing sets the flag at `0x5f3a4`; at quit, `main` then erases "user email" and "user id" (`0x42d78`) and calls `Alert(136)` (`0x422d4`). The public key fails the first test (its address ends in ".198"), so the game is right to refuse it.
+- **The fix.** The game has no resources, so `Alert(136)` crashed the shim ("ALRT 136 doesn't exist"). On Mac OS, `Alert` returns -1 when it finds no ALRT, showing nothing. A program with no resources now gets that, with a log line; a classic game's missing ALRT still crashes. Tests: `dialogs_alert_without_resources_returns_minus_one`, `dialogs_a_classic_games_missing_alrt_crashes`, and `run_monster_fair_erases_a_license_it_refuses_in_play` (it takes the address and key from `LOONY_TEST_MF_EMAIL` and `LOONY_TEST_MF_KEY`, and skips without them).
+- **Not done:** making the public key pass the second check. That would defeat the game's copy protection, so it stays refused; testing a lasting registration needs a key the game accepts.
+- **Goldens,** after the user's approval. Hashes match between Debug and Release builds:
+  - the title at tick 900 (`run_monster_fair_plays_its_opening_headless`): `3f03d118`
+  - the self-playing table and ball 1 served (`run_monster_fair_starts_a_game`): `fa497979 e962c1a4`
+  - the three-card picker (`run_the_picker_shows_three_games_and_starts_monster_fair`): `a1fb5138`
+  - three minutes of play started from the menu, with the classic games' plunger, flippers and nudges (`run_three_minutes_of_monster_fair_match_the_recording`): frames `f0797114 9453e91a f7f53dc9`, recording `ef2e653a`. The regression script's start sequence is now a parameter; the classic games' is unchanged.
+
 - [x] **Step 1:** A 216,000-tick fixed-clock soak with `tools/soak_script.py` (adapted for MONSTER FAIR's keys): no crash, no unknown selector, a clean quit, preferences saved.
 - [x] **Step 2:** Run the soak twice from empty save folders and compare frames and `LOONY_WAV` output. They must match byte for byte (Review Focus 5).
-- [ ] **Step 3:** Ask the user to play: windowed and full screen, Cmd-F, registering with their own key code (they type it; it is never logged or written anywhere but the preferences), quitting to the picker, Cmd-Q. Fix what they find.
-- [ ] **Step 4:** With the user's approval, add MONSTER FAIR's golden frames and recording, and the facts the soak measured.
-- [ ] **Step 5:** Commit.
+- [x] **Step 3:** Ask the user to play: windowed and full screen, Cmd-F, registering with their own key code (they type it; it is never logged or written anywhere but the preferences), quitting to the picker, Cmd-Q. Fix what they find.
+- [x] **Step 4:** With the user's approval, add MONSTER FAIR's golden frames and recording, and the facts the soak measured.
+- [x] **Step 5:** Commit.
 
 ## What comes next (not part of this plan)
 

@@ -469,6 +469,47 @@ TEST(run_monster_fair_wrong_key_code_shows_authorize_failed) {
     CHECK(!strstr(out, "0000-1111-2222-3333"));
 }
 
+/* A key code that the Register window accepts, but that the game checks
+   again in play and refuses (the public one in docs/test_key.txt does: its
+   address ends in an IP address). The second check runs at an Esc more
+   than 7200 ticks after the first key the game sees; it erases the license
+   and, as the game quits, calls Alert(136), which it has no resource for.
+   The address and key come from LOONY_TEST_MF_EMAIL and LOONY_TEST_MF_KEY. */
+TEST(run_monster_fair_erases_a_license_it_refuses_in_play) {
+    SKIP_UNLESS_MF();
+    const char *email = getenv("LOONY_TEST_MF_EMAIL"), *key = getenv("LOONY_TEST_MF_KEY");
+    if (!email || !*email || !key || !*key) {
+        test_skip("LOONY_TEST_MF_EMAIL and LOONY_TEST_MF_KEY aren't set");
+        return;
+    }
+    test_tmp_dir(run_data, sizeof run_data);
+    char prefs[1100];
+    snprintf(prefs, sizeof prefs, "%s/prefs.plist", run_data);
+    real_alerts = true;
+    char actions[1024];
+    snprintf(actions, sizeof actions,
+             "60 click 456 265\n130 type %s\n140 down tab\n142 up tab\n150 type %s\n"
+             "180 down return\n182 up return\n280 down return\n282 up return\n"
+             "2400 down esc\n2404 up esc\n9800 down esc\n9804 up esc\n10000 quit\n",
+             email, key);
+    char out[32768];
+    int status = run_script_in(test_mf_app(), actions, NULL, NULL, 0, out, sizeof out);
+    real_alerts = false;
+    char *xml = read_text(prefs);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: nib window ThankYou: shown");
+    CHECK_CONTAINS(out, "loony: Alert 136: the game has no ALRT 136; returning -1, as Mac OS does");
+    CHECK_CONTAINS(out, "loony: main returned 0");
+    CHECK(!strstr(out, email));
+    CHECK(!strstr(out, key));
+    CHECK(xml != NULL);
+    CHECK_CONTAINS(xml, "<key>user email</key>\n\t<string></string>");
+    CHECK_CONTAINS(xml, "<key>user id</key>\n\t<string></string>");
+    free(xml);
+}
+
 static void run_monster_fair_headless(void *unused) {
     (void)unused;
     setenv("LOONY_FIXED_CLOCK", "1", 1);
@@ -502,7 +543,9 @@ TEST(run_monster_fair_plays_its_opening_headless) {
     CHECK(len > 33);
     CHECK_EQ(rd_be32(png + 16), 1024);
     CHECK_EQ(rd_be32(png + 20), 768);
+    uint32_t h = fnv1a32(png, len);
     free(png);
+    CHECK_EQ(h, 0x3F03D118u); /* the title, "PRESS ESC TO START" */
 }
 
 /* Whether the line under the score, at (80, 344)-(166, 359), differs
@@ -538,6 +581,14 @@ TEST(run_monster_fair_starts_a_game) {
     char out[32768];
     int status = run_script_in(test_mf_app(), actions, NULL, NULL, 0, out, sizeof out);
     bool differs = status_line_differs(attract, playing);
+    char got[32] = "";
+    size_t len;
+    for (int i = 0; i < 2; i++) {
+        uint8_t *png = read_file(i ? playing : attract, &len);
+        size_t used = strlen(got);
+        snprintf(got + used, sizeof got - used, "%s%08x", i ? " " : "", png ? fnv1a32(png, len) : 0);
+        free(png);
+    }
     unlink(attract);
     unlink(playing);
     CHECK_EQ(status, 0);
@@ -546,6 +597,8 @@ TEST(run_monster_fair_starts_a_game) {
     CHECK_CONTAINS(out, "loony: display mode 800x600, 32 bits");
     CHECK_CONTAINS(out, "loony: main returned 0");
     CHECK(differs);
+    /* The table playing by itself, "GAME OVER"; then ball 1 served. */
+    CHECK_STR(got, "fa497979 e962c1a4");
 }
 
 TEST(run_reports_missing_game_folder) {
@@ -798,6 +851,11 @@ TEST(run_the_picker_shows_three_games_and_starts_monster_fair) {
     cgimage_pixels px = {0};
     char err[256];
     bool decoded = cgimage_decode_png(pick_shot, &px, err, sizeof err);
+    size_t len = 0;
+    uint8_t *png = read_file(pick_shot, &len);
+    char got[16];
+    snprintf(got, sizeof got, "%08x", png ? fnv1a32(png, len) : 0);
+    free(png);
     unlink(pick_shot);
     pick_shot[0] = '\0';
     test_remove_tree(run_data);
@@ -821,6 +879,7 @@ TEST(run_the_picker_shows_three_games_and_starts_monster_fair) {
     CHECK_CONTAINS(out, "loony: nib window Welcome: command 'ok  ' (Play Demo)");
     CHECK_CONTAINS(out, "loony: main returned 0");
     CHECK(!strstr(out, "back to the picker")); /* the host's quit (Cmd-Q) quits the app */
+    CHECK_STR(got, "a1fb5138"); /* approved by the user on 2026-10-09 */
 }
 
 /* Review Focus 1: the picker remembers the last game in the save root,
@@ -997,13 +1056,28 @@ TEST(run_the_app_bundle_is_self_contained_and_plays) {
    Recorded on 2026-10-02 after the user approved Plan 6's build. */
 #define REGRESSION_TICKS 10800
 
-static void write_regression_script(const char *path, char shots[3][1024]) {
+/* How a game starts: the keys, then the tick of the first plunger. */
+typedef struct {
+    const char *keys;
+    int play_from;
+} regression_start;
+
+/* The classic games: Esc ends the demo, Esc opens the menu, Return twice. */
+static const regression_start classic_start = {
+    "1720 down esc\n1724 up esc\n1800 down esc\n1804 up esc\n"
+    "1900 down return\n1906 up return\n2000 down return\n2006 up return\n",
+    2100};
+
+/* MONSTER FAIR: before its table plays by itself, one Esc opens the menu;
+   Return picks NEW GAME, then 1 PLAYER. */
+static const regression_start mf_start = {
+    "2200 down esc\n2204 up esc\n2320 down return\n2326 up return\n2440 down return\n2446 up return\n", 2600};
+
+static void write_regression_script(const char *path, const regression_start *start, char shots[3][1024]) {
     FILE *f = fopen(path, "w");
-    /* Start a game: Esc ends the demo, Esc opens the menu, Return twice. */
-    fprintf(f, "1720 down esc\n1724 up esc\n1800 down esc\n1804 up esc\n"
-               "1900 down return\n1906 up return\n2000 down return\n2006 up return\n");
+    fputs(start->keys, f);
     int shot = 0;
-    for (int t = 2100; t < REGRESSION_TICKS - 200;) {
+    for (int t = start->play_from; t < REGRESSION_TICKS - 200;) {
         fprintf(f, "%d down return\n%d up return\n", t, t + 80); /* the plunger */
         t += 120;
         for (int i = 0; i < 12; i++, t += 25)
@@ -1024,13 +1098,13 @@ static void write_regression_script(const char *path, char shots[3][1024]) {
 /* Plays the regression script on the fixed clock in the game folder dir.
    h gets the three frames' hashes, *wav_hash and *wav_len the recording's.
    Returns the exit status; out gets stderr. */
-static int play_regression(const char *dir, uint32_t h[3], uint32_t *wav_hash, size_t *wav_len, char *out,
-                           size_t outlen) {
+static int play_regression(const char *dir, const regression_start *start, uint32_t h[3], uint32_t *wav_hash,
+                           size_t *wav_len, char *out, size_t outlen) {
     char shots[3][1024];
     for (int i = 0; i < 3; i++)
         tmp_name(shots[i], sizeof shots[i], "shot");
     tmp_name(script_path, sizeof script_path, "script");
-    write_regression_script(script_path, shots);
+    write_regression_script(script_path, start, shots);
     tmp_name(wav_path, sizeof wav_path, "wav");
     test_tmp_dir(run_data, sizeof run_data);
     char ticks[16];
@@ -1063,7 +1137,7 @@ TEST(run_three_minutes_of_play_match_the_recording) {
     uint32_t h[3], wh;
     size_t len;
     char out[32768];
-    int status = play_regression(test_game_dir(), h, &wh, &len, out, sizeof out);
+    int status = play_regression(test_game_dir(), &classic_start, h, &wh, &len, out, sizeof out);
     CHECK_EQ(status, 0);
     CHECK(!strstr(out, "runtime error"));
     CHECK_EQ(len, 44 + (size_t)REGRESSION_TICKS * 44100 / 60 * 4);
@@ -1080,7 +1154,7 @@ TEST(run_three_minutes_of_crystal_caliburn_match_the_recording) {
     uint32_t h[3], wh;
     size_t len;
     char out[32768];
-    int status = play_regression(test_cc_dir(), h, &wh, &len, out, sizeof out);
+    int status = play_regression(test_cc_dir(), &classic_start, h, &wh, &len, out, sizeof out);
     CHECK_EQ(status, 0);
     CHECK(!strstr(out, "runtime error"));
     CHECK_EQ(len, 44 + (size_t)REGRESSION_TICKS * 44100 / 60 * 4);
@@ -1090,4 +1164,23 @@ TEST(run_three_minutes_of_crystal_caliburn_match_the_recording) {
        play, 26,780 points. Minute 2: ball 3, 13 seconds of demo time left.
        Minute 3: the time ran out; the attract display shows the copyright. */
     CHECK_STR(got, "18e601a7 bdd31ce9 88136063 f331fd82");
+}
+
+/* Three minutes of MONSTER FAIR, started from its menu, with the same
+   plunger, flippers and nudges. Recorded after the user's Plan 9 playtest. */
+TEST(run_three_minutes_of_monster_fair_match_the_recording) {
+    SKIP_UNLESS_MF();
+    uint32_t h[3], wh;
+    size_t len;
+    char out[32768];
+    int status = play_regression(test_mf_app(), &mf_start, h, &wh, &len, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "runtime error"));
+    CHECK_EQ(len, 44 + (size_t)REGRESSION_TICKS * 44100 / 60 * 4);
+    char got[64];
+    snprintf(got, sizeof got, "%08x %08x %08x %08x", h[0], h[1], h[2], wh);
+    /* Frames at minutes 1, 2 and 3, then the recording. Minute 1: ball 1,
+       82 seconds of tryout time left. Minute 2: ball 2, 161,500 points, 33
+       seconds left. Minute 3: TIME UP, GAME OVER. */
+    CHECK_STR(got, "f0797114 9453e91a f7f53dc9 ef2e653a");
 }

@@ -305,6 +305,7 @@ static const char *const nib_names[] = {
     "InstallEventHandler", "ShowWindow", "DisposeWindow", "RunAppModalLoopForWindow",
     "QuitAppModalLoopForWindow", "GetEventParameter", "GetControlByID", "GetControlData",
     "HIViewGetRoot", "HIViewFindByID", "HIViewSetVisible", "CreateStandardAlert", "RunStandardAlert",
+    "Alert",
 };
 
 /* A window like MONSTER FAIR's Register window: a label, an edit text with
@@ -568,6 +569,37 @@ static void child_standard_alert(void *bundle) {
     script("10 down return\n12 up return\n");
     call_import("RunStandardAlert", 3, gm_r32(out), 0u, hit);
     fprintf(stderr, "hit: %u\n", gm_r16(hit));
+}
+
+/* MONSTER FAIR calls Alert(136) as it quits after rejecting a license, but
+   has no resources: as on Mac OS, Alert returns -1 and shows nothing. */
+static void child_alert_without_resources(void *bundle) {
+    nib_setup(bundle);
+    fprintf(stderr, "Alert returned %d\n", (int32_t)call_import("Alert", 2, 136u, 0u));
+}
+
+TEST(dialogs_alert_without_resources_returns_minus_one) {
+    char bundle[1024], out[16384];
+    write_bundle(bundle, sizeof bundle);
+    int status = test_run_child(child_alert_without_resources, bundle, out, sizeof out);
+    test_remove_tree(bundle);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "Alert 136: the game has no ALRT 136; returning -1, as Mac OS does");
+    CHECK_CONTAINS(out, "Alert returned -1");
+}
+
+/* A classic game has its ALRTs, so a missing one is the shim's bug. */
+static void child_missing_alrt(void *unused) {
+    (void)unused;
+    setup();
+    call_import("Alert", 2, 9999u, 0u);
+}
+
+TEST(dialogs_a_classic_games_missing_alrt_crashes) {
+    SKIP_UNLESS_GAME();
+    char out[16384];
+    CHECK_EQ(test_run_child(child_missing_alrt, NULL, out, sizeof out), 2);
+    CHECK_CONTAINS(out, "Alert: ALRT 9999 doesn't exist");
 }
 
 TEST(dialogs_standard_alert_shows_its_text_and_answers_ok) {

@@ -622,10 +622,19 @@ static const char *button_title(dialog *d, int item1, char *buf, size_t cap) {
 }
 
 /* Alert(id, filter) and StopAlert. The default item: bit 3 of the first
-   stage's 4 bits in the ALRT's stages word picks item 2, otherwise item 1. */
+   stage's 4 bits in the ALRT's stages word picks item 2, otherwise item 1.
+   A program with no resources at all (MONSTER FAIR) still calls Alert on
+   a few paths it kept from Mac OS 9; there Alert finds no ALRT and returns
+   -1, as Mac OS does, showing nothing. In a classic game a missing ALRT is
+   a bug in the shim, so it crashes. */
 static void h_alert(void) {
     int16_t id = (int16_t)trap_arg(0);
     rsrc_entry *alrt = rsrc_find(FOURCC('A', 'L', 'R', 'T'), id);
+    if (!alrt && rsrc_total() == 0) {
+        log_msg("Alert %d: the game has no ALRT %d; returning -1, as Mac OS does", id, id);
+        trap_return((uint32_t)-1);
+        return;
+    }
     if (!alrt || alrt->len < 12)
         trap_crash("Alert: ALRT %d doesn't exist", id);
     if (trap_arg(1))
