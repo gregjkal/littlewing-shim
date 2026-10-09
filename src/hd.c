@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "pict.h"
 #include "png.h"
@@ -82,9 +83,24 @@ void hd_configure(int scale, const char *art_dir, const char *dump_dir) {
     snprintf(H.dump_dir, sizeof H.dump_dir, "%s", dump_dir ? dump_dir : "");
 }
 
-void hd_init(void) {
+bool hd_bundled_art(const char *exe_path, const char *game_id, char *out, size_t cap) {
+    const char *macos = exe_path ? strstr(exe_path, ".app/Contents/MacOS/") : NULL;
+    if (!macos)
+        return false;
+    int n = snprintf(out, cap, "%.*s.app/Contents/Resources/hd-art/%s", (int)(macos - exe_path),
+                     exe_path, game_id);
+    struct stat st;
+    return n > 0 && (size_t)n < cap && stat(out, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+void hd_init(const char *game_id, const char *exe_path) {
     const char *dir = getenv("LOONY_HD"), *sc = getenv("LOONY_HD_SCALE");
     const char *dump = getenv("LOONY_HD_DUMP");
+    char bundled[1024];
+    if (dir && strcmp(dir, "off") == 0)
+        dir = NULL;
+    else if (!(dir && *dir) && hd_bundled_art(exe_path, game_id, bundled, sizeof bundled))
+        dir = bundled;
     int scale = 0;
     if (dir && *dir) {
         scale = sc && *sc ? atoi(sc) : 4;
