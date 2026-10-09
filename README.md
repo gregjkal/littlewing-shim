@@ -228,6 +228,15 @@ without them: `LOONY_TEST_EMAIL` and `LOONY_TEST_KEY` (Loony Labyrinth), and
 
 MONSTER FAIR checks its license a second time during play, a couple of
 minutes in, and erases a license it refuses there, such as a key code posted
-publicly, even though the Register window accepted it.
+publicly, even though the Register window accepted it. For testing with such
+a key, `LOONY_MF_SKIP_LICENSE_RECHECK=1` keeps the license: the check still
+runs, but the shim drops its verdict (it changes two instructions in MONSTER
+FAIR 1.2.5's code after loading, and refuses to start with any other
+version). The Register window's check is unchanged.
+
+```bash
+LOONY_MF_SKIP_LICENSE_RECHECK=1 ./build-release/loony "/Applications/MONSTER FAIR.app"
+open --env LOONY_MF_SKIP_LICENSE_RECHECK=1 build-release/LittleWing.app
+```
 
 Design: `docs/superpowers/specs/2026-09-30-loony-shim-design.md`
