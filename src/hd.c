@@ -14,12 +14,17 @@
    redrawn as a block. A new copy starts with ref the complement of the 1x
    pixels, so each pixel is drawn the first time it's needed. */
 typedef struct {
+    int16_t left, right; /* 1x columns from bounds.left; none when left >= right */
+} span;
+
+typedef struct {
     const uint8_t *base;
     qd_rect bounds;
     int depth;
     uint32_t row_bytes;
     uint8_t *ref;
     uint8_t *rgba; /* (w * N) x (h * N) RGBA */
+    span *changed; /* per 1x row: the columns whose HD pixels changed since hd_take_changes */
     bool sprite;   /* small, with art: see match_sprite */
     /* A larger buffer with art: its 1x pixels just after the art was drawn,
        and the art (an index into H.arts) and where it went, so pixels the
@@ -59,6 +64,7 @@ static void free_twin(twin *t) {
     free(t->ref);
     free(t->rgba);
     free(t->orig);
+    free(t->changed);
     free(t);
 }
 
@@ -102,6 +108,18 @@ void hd_forget(const uint8_t *base) {
         }
 }
 
+/* Notes that t's HD pixels for the 1x rect r (inside t's bounds) changed. */
+static void touch(twin *t, qd_rect r) {
+    int16_t left = (int16_t)(r.left - t->bounds.left), right = (int16_t)(r.right - t->bounds.left);
+    for (int y = r.top; y < r.bottom; y++) {
+        span *c = &t->changed[y - t->bounds.top];
+        if (left < c->left)
+            c->left = left;
+        if (right > c->right)
+            c->right = right;
+    }
+}
+
 static twin *twin_for(const qd_pixels *px) {
     for (int i = 0; i < H.ntwins; i++) {
         twin *t = H.twins[i];
@@ -116,7 +134,9 @@ static twin *twin_for(const qd_pixels *px) {
     size_t n = (size_t)px->row_bytes * (size_t)rect_h(px->bounds);
     size_t hd = (size_t)rect_w(px->bounds) * H.scale * (size_t)rect_h(px->bounds) * H.scale * 4;
     twin *t = calloc(1, sizeof *t);
-    if (!t || !(t->ref = malloc(n ? n : 1)) || !(t->rgba = calloc(hd ? hd : 1, 1)))
+    int h = rect_h(px->bounds);
+    if (!t || !(t->ref = malloc(n ? n : 1)) || !(t->rgba = calloc(hd ? hd : 1, 1)) ||
+        !(t->changed = malloc(sizeof *t->changed * (size_t)(h ? h : 1))))
         fatal("out of memory for a %dx%d HD copy", rect_w(px->bounds), rect_h(px->bounds));
     for (size_t i = 0; i < n; i++)
         t->ref[i] = (uint8_t)~px->base[i];
@@ -124,6 +144,8 @@ static twin *twin_for(const qd_pixels *px) {
     t->bounds = px->bounds;
     t->depth = px->depth;
     t->row_bytes = px->row_bytes;
+    for (int y = 0; y < h; y++) /* all of it: nothing has shown its pixels yet */
+        t->changed[y] = (span){0, (int16_t)rect_w(px->bounds)};
     if (H.ntwins == H.twin_cap)
         H.twins = grow(H.twins, &H.twin_cap, sizeof *H.twins);
     H.twins[H.ntwins++] = t;
@@ -233,6 +255,7 @@ static void match_sprite(twin *t, const qd_pixels *px, qd_rect r, qd_rect b, con
                         if (qd_get_pixel(&sp, s->bounds.left + i, s->bounds.top + j) != v)
                             continue;
                         copy_block(s, s->bounds.left + i, s->bounds.top + j, t, x, y);
+                        touch(t, (qd_rect){(int16_t)y, (int16_t)x, (int16_t)(y + 1), (int16_t)(x + 1)});
                         qd_set_pixel(&ref, x, y, v);
                     }
                 return;
@@ -340,7 +363,9 @@ static void sync(twin *t, const qd_pixels *px, qd_rect r) {
                 uint32_t v = qd_get_pixel(px, x, y);
                 if (!*d || v != qd_get_pixel(&orig, x, y))
                     continue;
-                draw_art(t, &H.arts[t->orig_art], t->orig_dst, (qd_rect){y, x, y + 1, x + 1});
+                qd_rect one = {(int16_t)y, (int16_t)x, (int16_t)(y + 1), (int16_t)(x + 1)};
+                draw_art(t, &H.arts[t->orig_art], t->orig_dst, one);
+                touch(t, one);
                 qd_set_pixel(&ref, x, y, v);
                 *d = 0;
             }
@@ -361,6 +386,7 @@ static void sync(twin *t, const qd_pixels *px, qd_rect r) {
             for (int j = 0; j < n; j++)
                 for (int i = 0; i < n; i++)
                     memcpy(hd_px(t, hx + i, hy + j), rgba, 4);
+            touch(t, (qd_rect){(int16_t)y, (int16_t)x, (int16_t)(y + 1), (int16_t)(x + 1)});
         }
     }
 }
@@ -385,6 +411,27 @@ static void mark(twin *t, const qd_pixels *px, qd_rect r) {
             qd_set_pixel(&ref, x, y, qd_get_pixel(px, x, y));
 }
 
+/* Of n RGBA pixels in a and b: the first that differs (n when none do), and
+   one past the last that differs (0 when none do). Equal runs are skipped 16
+   pixels at a time. */
+static int first_diff(const uint8_t *a, const uint8_t *b, int n) {
+    int i = 0;
+    while (i + 16 <= n && memcmp(a + (size_t)i * 4, b + (size_t)i * 4, 64) == 0)
+        i += 16;
+    while (i < n && memcmp(a + (size_t)i * 4, b + (size_t)i * 4, 4) == 0)
+        i++;
+    return i;
+}
+
+static int last_diff(const uint8_t *a, const uint8_t *b, int n) {
+    int i = n;
+    while (i >= 16 && memcmp(a + (size_t)(i - 16) * 4, b + (size_t)(i - 16) * 4, 64) == 0)
+        i -= 16;
+    while (i > 0 && memcmp(a + (size_t)(i - 1) * 4, b + (size_t)(i - 1) * 4, 4) == 0)
+        i--;
+    return i;
+}
+
 void hd_copy(const qd_pixels *src, qd_rect sr, const qd_pixels *dst, qd_rect dr, qd_rect clip) {
     /* A 1-bit source is colorized with the port's colors: left to sync. */
     if (!H.scale || src->depth == 1 || rect_empty(sr) || rect_empty(dr))
@@ -402,7 +449,10 @@ void hd_copy(const qd_pixels *src, qd_rect sr, const qd_pixels *dst, qd_rect dr,
     if (sw == dw && sh == dh) {
         /* No scaling: whole rows, limited to the source. HD x in dst plus ox
            is x in src's copy (and y plus oy). Moving rows down within one
-           copy goes bottom-up, so no row is read after it's overwritten. */
+           copy goes bottom-up, so no row is read after it's overwritten.
+           The game often copies pixels that are already there (the whole
+           table, each frame), so only the part of a row that differs is
+           copied, and noted as changed. */
         int ox = (sr.left - dr.left - src->bounds.left) * n, oy = (sr.top - dr.top - src->bounds.top) * n;
         int x0 = area.left * n > -ox ? area.left * n : -ox;
         int x1 = area.right * n < shw - ox ? area.right * n : shw - ox;
@@ -411,7 +461,17 @@ void hd_copy(const qd_pixels *src, qd_rect sr, const qd_pixels *dst, qd_rect dr,
         bool up = s == d && oy < -dy0;
         for (int i = 0; x0 < x1 && i < y1 - y0; i++) {
             int y = up ? y1 - 1 - i : y0 + i;
-            memmove(hd_px(d, x0 - dx0, y - dy0), hd_px(s, x0 + ox, y + oy), (size_t)(x1 - x0) * 4);
+            uint8_t *to = hd_px(d, x0 - dx0, y - dy0);
+            const uint8_t *from = hd_px(s, x0 + ox, y + oy);
+            int first = first_diff(to, from, x1 - x0);
+            if (first == x1 - x0)
+                continue;
+            int last = last_diff(to, from, x1 - x0);
+            memmove(to + (size_t)first * 4, from + (size_t)first * 4, (size_t)(last - first) * 4);
+            int hx = x0 - dx0 + first, hy = y - dy0; /* in d's copy */
+            touch(d, (qd_rect){(int16_t)(d->bounds.top + hy / n), (int16_t)(d->bounds.left + hx / n),
+                               (int16_t)(d->bounds.top + hy / n + 1),
+                               (int16_t)(d->bounds.left + (x0 - dx0 + last + n - 1) / n)});
         }
         mark(d, dst, area);
         return;
@@ -444,6 +504,7 @@ void hd_copy(const qd_pixels *src, qd_rect sr, const qd_pixels *dst, qd_rect dr,
     }
     free(xs);
     free(snap);
+    touch(d, area);
     mark(d, dst, area);
 }
 
@@ -532,6 +593,7 @@ void hd_picture(const uint8_t *data, size_t len, qd_rect dst, const qd_pixels *t
     if (!a->opaque) /* what shows through must be up to date */
         sync(t, target, area);
     draw_art(t, a, dst, area);
+    touch(t, area);
     mark(t, target, area);
     if (rect_w(t->bounds) <= SPRITE_MAX && rect_h(t->bounds) <= SPRITE_MAX) {
         t->sprite = true;
@@ -552,4 +614,36 @@ const uint8_t *hd_frame(const qd_pixels *screen, int *w, int *h) {
     *w = hd_w(t);
     *h = rect_h(t->bounds) * H.scale;
     return t->rgba;
+}
+
+int hd_take_changes(const qd_pixels *screen, qd_rect *out, int max) {
+    if (!H.scale)
+        return 0;
+    twin *t = twin_for(screen);
+    int n = H.scale, h = rect_h(t->bounds), count = 0;
+    for (int y = 0; y < h && max > 0; y++) { /* the y++ skips the row after a run: unchanged */
+        if (t->changed[y].left >= t->changed[y].right)
+            continue;
+        qd_rect r = {(int16_t)y, INT16_MAX, (int16_t)y, 0};
+        for (; y < h && t->changed[y].left < t->changed[y].right; y++) { /* a run of rows */
+            span *c = &t->changed[y];
+            if (c->left < r.left)
+                r.left = c->left;
+            if (c->right > r.right)
+                r.right = c->right;
+            *c = (span){INT16_MAX, 0};
+        }
+        r.bottom = (int16_t)y;
+        if (count < max) {
+            out[count++] = r;
+            continue;
+        }
+        qd_rect *last = &out[max - 1]; /* out of room: the last rect grows to hold the rest */
+        *last = (qd_rect){last->top, r.left < last->left ? r.left : last->left, r.bottom,
+                          r.right > last->right ? r.right : last->right};
+    }
+    for (int i = 0; i < count; i++) /* HD pixels of the copy */
+        out[i] = (qd_rect){(int16_t)(out[i].top * n), (int16_t)(out[i].left * n),
+                           (int16_t)(out[i].bottom * n), (int16_t)(out[i].right * n)};
+    return count;
 }

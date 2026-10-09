@@ -20,6 +20,10 @@
      that holds exactly a small picture with art (a sprite: a lit lamp, a
      flipper) gets that picture's art; any other pixel is drawn as an NxN
      block of its color.
+   - Each HD copy notes which of its rows changed, and how wide, so the
+     window uploads only those parts of the screen's copy (hd_take_changes).
+     An unscaled CopyBits of pixels already there (the game copies its
+     whole table each frame) changes nothing.
 
    Environment: LOONY_HD=<art dir> turns it on, LOONY_HD_SCALE=<2..8> sets N
    (default 4), and LOONY_HD_DUMP=<dir> writes each distinct picture the game
@@ -47,3 +51,10 @@ void hd_picture(const uint8_t *data, size_t len, qd_rect dst, const qd_pixels *t
 
 /* The HD copy of screen, brought up to date: RGBA rows, *w x *h pixels. */
 const uint8_t *hd_frame(const qd_pixels *screen, int *w, int *h);
+
+/* The parts of screen's HD copy that changed since the last call (all of it
+   the first time), and forgets them: rects in the copy's own pixels, one per
+   run of 1x rows with changes, each as wide as the changes in its rows, top
+   to bottom. Returns how many, at most max; when there are more runs, the
+   last rect covers all of the rest. Call after hd_frame, which can change it. */
+int hd_take_changes(const qd_pixels *screen, qd_rect *out, int max);

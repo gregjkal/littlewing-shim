@@ -54,3 +54,10 @@ void display_present_if_dirty(void);
 
 /* Number of presents so far. */
 unsigned display_frames(void);
+
+/* Logs what presenting has cost: the presents that reached the window, the
+   bytes uploaded to the texture per present on average, and the average and
+   longest time spent uploading, and uploading plus drawing and presenting.
+   Runs at exit (registered on the first present) and before going back to
+   the picker; logs once, and only if something was presented. */
+void display_log_stats(void);

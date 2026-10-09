@@ -139,6 +139,7 @@ static void back_to_picker(void) {
     setenv("LOONY_FULLSCREEN", display_fullscreen() ? "1" : "0", 1);
     if (log_path[0])
         setenv("LOONY_LOG_INHERITED", "1", 1);
+    display_log_stats(); /* exec skips the atexit handlers */
     log_msg("back to the picker");
     fflush(stderr);
     execv(self, (char *const[]){self, NULL});
