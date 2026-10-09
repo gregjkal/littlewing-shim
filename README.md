@@ -218,7 +218,11 @@ on average; upload <ms> average, <ms> max; upload and present <ms> average,
 <ms> max`. The upload copies the frame into the window's texture; the present
 also draws it and waits for the display's refresh (not with
 `LOONY_FIXED_CLOCK=1`). With `SDL_VIDEO_DRIVER=dummy` the bytes are right but
-the times mean little: run in a real window for those.
+the times mean little: run in a real window for those. In HD mode only the
+parts of the frame that changed are uploaded. `LOONY_HD_VERIFY=1` checks that
+at every present, by applying the same uploads to a copy of the frame before
+and comparing it with the whole new frame, and logs at exit how many presents
+matched (slow: it compares 30 MB a frame).
 
 `LOONY_FIXED_CLOCK=1` makes time advance only when the game waits, so a run is
 the same every time and doesn't depend on the host's speed, as long as it

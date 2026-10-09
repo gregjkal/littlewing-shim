@@ -16,6 +16,7 @@ static struct {
     SDL_Renderer *renderer;
     SDL_Texture *texture;
     int tex_w, tex_h;
+    bool tex_hd; /* holds the last HD frame, so the next one's changes can go on top */
     unsigned frames;
     const char *screenshot;
     display_input input;
@@ -28,7 +29,15 @@ static struct {
     unsigned shown;
     uint64_t bytes, upload_ns, upload_max_ns, total_ns, total_max_ns;
     bool stats_logged;
+    /* LOONY_HD_VERIFY: a copy of the frame built from the same uploads as the
+       texture, and how many presents it matched the whole frame after. */
+    bool verify;
+    uint8_t *shadow;
+    int shadow_w, shadow_h;
+    unsigned verified, verify_ok;
 } D;
+
+#define MAX_CHANGES 64 /* rects uploaded per HD present; more are merged by hd_take_changes */
 
 void display_set_title(const char *title) {
     D.title = title;
@@ -78,9 +87,14 @@ void display_log_stats(void) {
             "average, %.2f ms max; upload and present %.2f ms average, %.2f ms max",
             D.shown, (unsigned long long)(D.bytes / D.shown), D.upload_ns / 1e6 / D.shown,
             D.upload_max_ns / 1e6, D.total_ns / 1e6 / D.shown, D.total_max_ns / 1e6);
+    if (D.verify)
+        log_msg("display: LOONY_HD_VERIFY: the uploads made the whole frame after %u of %u presents",
+                D.verify_ok, D.verified);
 }
 
 void display_init(void) {
+    const char *v = getenv("LOONY_HD_VERIFY");
+    D.verify = v && strcmp(v, "1") == 0;
     D.screenshot = getenv("LOONY_SCREENSHOT");
     if (D.screenshot && *D.screenshot)
         atexit(write_screenshot);
@@ -110,9 +124,41 @@ static bool open_window(int w, int h) {
     return true;
 }
 
+/* Copies the rects of rgba (w x h) into the same rects of to. */
+static void copy_rects(uint8_t *to, const uint8_t *rgba, int w, const qd_rect *rects, int n) {
+    for (int i = 0; i < n; i++)
+        for (int y = rects[i].top; y < rects[i].bottom; y++) {
+            size_t at = ((size_t)y * (size_t)w + (size_t)rects[i].left) * 4;
+            memcpy(to + at, rgba + at, (size_t)rect_w(rects[i]) * 4);
+        }
+}
+
+/* LOONY_HD_VERIFY: applies an upload (the whole frame when n < 0) to the
+   shadow copy, as to the texture, and checks that it now equals the frame. */
+static void verify_upload(const uint8_t *rgba, int w, int h, const qd_rect *changes, int n) {
+    size_t len = (size_t)w * (size_t)h * 4;
+    if (D.shadow_w != w || D.shadow_h != h) {
+        free(D.shadow);
+        if (!(D.shadow = malloc(len)))
+            fatal("out of memory");
+        D.shadow_w = w;
+        D.shadow_h = h;
+    }
+    if (n < 0)
+        memcpy(D.shadow, rgba, len);
+    else
+        copy_rects(D.shadow, rgba, w, changes, n);
+    D.verified++;
+    D.verify_ok += memcmp(D.shadow, rgba, len) == 0;
+}
+
 /* Shows a w x h frame of a screen whose own size is lw x lh, the size mouse
-   coordinates are reported in. */
-static void present(const uint8_t *rgba, int w, int h, int lw, int lh) {
+   coordinates are reported in. changes (n of them, in the frame's pixels)
+   cover everything that differs from the HD frame before; n < 0 means the
+   frame isn't an HD one, and is uploaded whole. So is the first frame in a
+   new texture, or after a frame that wasn't HD. */
+static void present(const uint8_t *rgba, int w, int h, int lw, int lh, const qd_rect *changes,
+                    int n) {
     D.frames++;
     if (!D.tried) {
         D.sdl_ok = open_window(lw, lh);
@@ -129,9 +175,23 @@ static void present(const uint8_t *rgba, int w, int h, int lw, int lh) {
             SDL_SetRenderLogicalPresentation(D.renderer, lw, lh, SDL_LOGICAL_PRESENTATION_LETTERBOX);
             D.tex_w = w;
             D.tex_h = h;
+            D.tex_hd = false;
         }
-        uint64_t t0 = SDL_GetTicksNS();
-        SDL_UpdateTexture(D.texture, NULL, rgba, w * 4);
+        bool hd = n >= 0;
+        if (!D.tex_hd)
+            n = -1;
+        D.tex_hd = hd;
+        uint64_t bytes = 0, t0 = SDL_GetTicksNS();
+        if (n < 0) {
+            SDL_UpdateTexture(D.texture, NULL, rgba, w * 4);
+            bytes = (uint64_t)w * (uint64_t)h * 4;
+        }
+        for (int i = 0; i < n; i++) {
+            const qd_rect *c = &changes[i];
+            SDL_Rect r = {c->left, c->top, rect_w(*c), rect_h(*c)};
+            SDL_UpdateTexture(D.texture, &r, rgba + ((size_t)r.y * (size_t)w + (size_t)r.x) * 4, w * 4);
+            bytes += (uint64_t)r.w * (uint64_t)r.h * 4;
+        }
         uint64_t t1 = SDL_GetTicksNS();
         SDL_SetRenderDrawColor(D.renderer, 0, 0, 0, 255);
         SDL_RenderClear(D.renderer);
@@ -139,23 +199,35 @@ static void present(const uint8_t *rgba, int w, int h, int lw, int lh) {
         SDL_RenderPresent(D.renderer);
         uint64_t t2 = SDL_GetTicksNS();
         D.shown++;
-        D.bytes += (uint64_t)w * (uint64_t)h * 4;
+        D.bytes += bytes;
         D.upload_ns += t1 - t0;
         D.total_ns += t2 - t0;
         if (t1 - t0 > D.upload_max_ns)
             D.upload_max_ns = t1 - t0;
         if (t2 - t0 > D.total_max_ns)
             D.total_max_ns = t2 - t0;
+        if (D.verify)
+            verify_upload(rgba, w, h, changes, n);
     }
 }
 
-void display_present_rgba(const uint8_t *rgba, int w, int h) { present(rgba, w, h, w, h); }
+void display_present_rgba(const uint8_t *rgba, int w, int h) {
+    present(rgba, w, h, w, h, NULL, -1);
+}
 
 void display_present(void) {
     int w, h, lw, lh;
     uint8_t *owned;
     const uint8_t *rgba = screen_frame(&w, &h, &lw, &lh, &owned);
-    present(rgba, w, h, lw, lh);
+    static qd_rect changes[MAX_CHANGES];
+    int n = -1;
+    if (hd_scale()) {
+        qd_pixels px;
+        qd_palette pal;
+        qd_screen(&px, &pal);
+        n = hd_take_changes(&px, changes, MAX_CHANGES);
+    }
+    present(rgba, w, h, lw, lh, changes, n);
     free(owned);
 }
 
