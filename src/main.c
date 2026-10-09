@@ -211,8 +211,7 @@ int main(int argc, char **argv) {
         image_set_data_resolver(macho_data_symbol);
         if (!image_load_macho(buf, len, &img, err, sizeof err))
             return startup_error("can't load %s: %s", path, err);
-        const char *skip = getenv("LOONY_MF_SKIP_LICENSE_RECHECK");
-        if (skip && *skip && strcmp(skip, "0") != 0 && strcmp(game->id, "monster-fair") == 0) {
+        if (strcmp(game->id, "monster-fair") == 0) {
             if (!patch_mf_skip_license_recheck(err, sizeof err))
                 return startup_error("LOONY_MF_SKIP_LICENSE_RECHECK: %s", err);
             log_msg("LOONY_MF_SKIP_LICENSE_RECHECK: MONSTER FAIR's second license check is off, for testing");

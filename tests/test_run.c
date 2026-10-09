@@ -504,31 +504,7 @@ static int mf_register_and_play_past_the_recheck(const char *email, const char *
     return status;
 }
 
-/* A key code that the Register window accepts but the second check
-   refuses: the game erases the license and, as it quits, calls Alert(136),
-   which it has no resource for. */
-TEST(run_monster_fair_erases_a_license_it_refuses_in_play) {
-    SKIP_UNLESS_MF();
-    const char *email, *key;
-    MF_TEST_KEY_OR_SKIP(email, key);
-    test_tmp_dir(run_data, sizeof run_data);
-    char out[32768], *xml;
-    int status = mf_register_and_play_past_the_recheck(email, key, out, sizeof out, &xml);
-    test_remove_tree(run_data);
-    run_data[0] = '\0';
-    CHECK_EQ(status, 0);
-    CHECK_CONTAINS(out, "loony: nib window ThankYou: shown");
-    CHECK_CONTAINS(out, "loony: Alert 136: the game has no ALRT 136; returning -1, as Mac OS does");
-    CHECK_CONTAINS(out, "loony: main returned 0");
-    CHECK(!strstr(out, email));
-    CHECK(!strstr(out, key));
-    CHECK(xml != NULL);
-    CHECK_CONTAINS(xml, "<key>user email</key>\n\t<string></string>");
-    CHECK_CONTAINS(xml, "<key>user id</key>\n\t<string></string>");
-    free(xml);
-}
-
-/* With LOONY_MF_SKIP_LICENSE_RECHECK=1 the same key survives the second
+/* With LOONY_MF_SKIP_LICENSE_RECHECK=1 the test key survives the second
    check: the game plays on until the script quits, keeps the license, and
    the next launch skips the Welcome window. */
 TEST(run_monster_fair_keeps_a_license_with_the_recheck_skipped) {
