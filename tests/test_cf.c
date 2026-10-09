@@ -6,11 +6,14 @@
 
 #include "cf.h"
 #include "harness.h"
+#include "memmgr.h"
 
 static const char *const names[] = {
     "CFStringCreateWithCString", "CFStringGetCString", "CFStringGetTypeID", "CFGetTypeID",
     "CFNumberCreate", "CFRelease", "CFPreferencesSetAppValue", "CFPreferencesCopyAppValue",
-    "CFPreferencesGetAppIntegerValue", "CFPreferencesAppSynchronize",
+    "CFPreferencesGetAppIntegerValue", "CFPreferencesAppSynchronize", "CFBundleGetMainBundle",
+    "CFBundleCopyResourcesDirectoryURL", "CFBundleCopyResourceURL",
+    "CFURLCreateCopyAppendingPathComponent", "CFURLGetFileSystemRepresentation",
 };
 
 static void setup(void) {
@@ -32,6 +35,142 @@ static uint32_t num(int32_t v) {
 }
 
 static uint32_t app(void) { return cf_current_app(); }
+
+/* ---- bundles, URLs and constant strings (Mach-O) ---- */
+
+static char bundle[1024];
+
+/* A bundle in a fresh folder, with Resources/field.bin and
+   Resources/English.lproj/main.nib. */
+static void setup_bundle(void) {
+    setup();
+    mm_init();
+    char tmp[1024], path[1200];
+    test_tmp_dir(tmp, sizeof tmp);
+    snprintf(bundle, sizeof bundle, "%s/MONSTER FAIR.app", tmp);
+    snprintf(path, sizeof path, "%s/Contents/Resources/English.lproj", bundle);
+    make_dirs(path);
+    snprintf(path, sizeof path, "%s/Contents/Resources/field.bin", bundle);
+    fclose(fopen(path, "w"));
+    snprintf(path, sizeof path, "%s/Contents/Resources/English.lproj/main.nib", bundle);
+    fclose(fopen(path, "w"));
+    cf_set_bundle(bundle);
+}
+
+static void remove_bundle(void) {
+    char *slash = strrchr(bundle, '/');
+    *slash = '\0';
+    test_remove_tree(bundle);
+}
+
+/* A constant string like the compiler's: {isa, 0x7c8, bytes, length}. */
+static uint32_t constant(const char *s) {
+    uint32_t bytes = scratch((uint32_t)strlen(s)), cs = scratch(16);
+    memcpy(gm_ptr(bytes, (uint32_t)strlen(s)), s, strlen(s)); /* no NUL, as in __cstring's neighbours */
+    gm_w32(cs, cf_data_symbol("__CFConstantStringClassReference"));
+    gm_w32(cs + 4, 0x7C8);
+    gm_w32(cs + 8, bytes);
+    gm_w32(cs + 12, (uint32_t)strlen(s));
+    return cs;
+}
+
+static const char *fs_path(uint32_t url) {
+    static char out[2048];
+    uint32_t buf = scratch(1024);
+    if (!call_import("CFURLGetFileSystemRepresentation", 4, url, 1, buf, 1024))
+        return "(didn't fit)";
+    gm_read_cstr(buf, out, sizeof out);
+    return out;
+}
+
+TEST(cf_bundle_resources_url_is_the_bundles) {
+    setup_bundle();
+    uint32_t b = call_import("CFBundleGetMainBundle", 0);
+    CHECK_EQ(call_import("CFBundleGetMainBundle", 0), b);
+    uint32_t url = call_import("CFBundleCopyResourcesDirectoryURL", 1, b);
+    char want[1200];
+    snprintf(want, sizeof want, "%s/Contents/Resources", bundle);
+    CHECK_STR(fs_path(url), want);
+    CHECK_STR(cf_url_path("test", url), strcat(want, "/"));
+    call_import("CFRelease", 1, url);
+    remove_bundle();
+}
+
+TEST(cf_resource_url_names_a_file_in_resources) {
+    setup_bundle();
+    uint32_t b = call_import("CFBundleGetMainBundle", 0);
+    char want[1200];
+    uint32_t url = call_import("CFBundleCopyResourceURL", 4, b, constant("field"), str("bin"), 0);
+    snprintf(want, sizeof want, "%s/Contents/Resources/field.bin", bundle);
+    CHECK(url != 0);
+    CHECK_STR(fs_path(url), want);
+    url = call_import("CFBundleCopyResourceURL", 4, b, constant("main.nib"), 0, 0);
+    snprintf(want, sizeof want, "%s/Contents/Resources/English.lproj/main.nib", bundle);
+    CHECK(url != 0);
+    CHECK_STR(fs_path(url), want);
+    CHECK_EQ(call_import("CFBundleCopyResourceURL", 4, b, constant("appl.png"), 0, 0), 0);
+    remove_bundle();
+}
+
+TEST(cf_url_appends_a_component) {
+    setup_bundle();
+    uint32_t dir = call_import("CFBundleCopyResourcesDirectoryURL", 1,
+                               call_import("CFBundleGetMainBundle", 0));
+    uint32_t f = call_import("CFURLCreateCopyAppendingPathComponent", 4, 0, dir, str("dctm0001.bin"), 0);
+    char want[1200];
+    snprintf(want, sizeof want, "%s/Contents/Resources/dctm0001.bin", bundle);
+    CHECK_STR(fs_path(f), want);
+    uint32_t d = call_import("CFURLCreateCopyAppendingPathComponent", 4, 0, f, str("sub"), 1);
+    CHECK_STR(cf_url_path("test", d), strcat(want, "/sub/"));
+    remove_bundle();
+}
+
+TEST(cf_file_system_representation_is_utf8) {
+    setup();
+    mm_init();
+    uint32_t url = cf_url("/Applications/MONSTER FAIR.app/Contents/Resources/caf\xC3\xA9.bin");
+    CHECK_STR(fs_path(url), "/Applications/MONSTER FAIR.app/Contents/Resources/caf\xC3\xA9.bin");
+    uint32_t buf = scratch(16);
+    gm_w8(buf, 'x');
+    CHECK_EQ(call_import("CFURLGetFileSystemRepresentation", 4, url, 1, buf, 16), 0);
+    CHECK_EQ(gm_r8(buf), 'x'); /* nothing written */
+}
+
+TEST(cf_constant_strings_read_from_guest_memory) {
+    setup();
+    mm_init();
+    uint32_t cs = constant("highscore 1");
+    CHECK_STR(cf_string_text("test", cs), "highscore 1");
+    CHECK_EQ(call_import("CFGetTypeID", 1, cs), CF_STRING_TYPE_ID);
+    uint32_t buf = scratch(32);
+    CHECK_EQ(call_import("CFStringGetCString", 4, cs, buf, 32, 0x08000100u), 1);
+    CHECK_STR((const char *)gm_ptr(buf, 12), "highscore 1");
+    /* As a preferences key. */
+    call_import("CFPreferencesSetAppValue", 3, cs, num(250), app());
+    CHECK_EQ(call_import("CFPreferencesGetAppIntegerValue", 3, str("highscore 1"), app(), 0), 250);
+}
+
+TEST(cf_release_ignores_a_constant_string) {
+    setup();
+    mm_init();
+    uint32_t cs = constant("Welcome");
+    uint32_t live = cf_live_objects();
+    call_import("CFRelease", 1, cs);
+    call_import("CFRelease", 1, cs);
+    CHECK_EQ(cf_live_objects(), live);
+    CHECK_STR(cf_string_text("test", cs), "Welcome");
+}
+
+TEST(cf_data_symbols_for_a_macho_game) {
+    setup();
+    mm_init();
+    uint32_t app_var = cf_data_symbol("kCFPreferencesCurrentApplication");
+    CHECK(app_var != 0);
+    CHECK_EQ(gm_r32(app_var), cf_current_app());
+    CHECK_EQ(cf_data_symbol("kCFPreferencesCurrentApplication"), app_var);
+    CHECK(cf_data_symbol("__CFConstantStringClassReference") != 0);
+    CHECK_EQ(cf_data_symbol("kCFAllocatorDefault"), 0);
+}
 
 TEST(cf_strings_round_trip) {
     setup();

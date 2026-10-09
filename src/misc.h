@@ -3,6 +3,12 @@
 #include <stdint.h>
 
 #define MISC_GESTALT_UNDEF_SELECTOR_ERR (-5551)
+
+/* Gestalt('sysv'): Mac OS X 10.2.8 for the classic games, 10.4.11 for a
+   Mach-O game. The PEF answer is the default. */
+#define MISC_SYSTEM_VERSION_PEF   0x1028u
+#define MISC_SYSTEM_VERSION_MACHO 0x104Bu
+void misc_set_system_version(uint32_t v);
 /* The game sees a Mac that booted a minute before launch: TickCount and
    Microseconds start here, never at 0, which the game uses to mean "not
    scheduled" (BGMKickOff). misc_ticks() and scripts still count from launch. */
@@ -19,6 +25,19 @@ void misc_init(void);
 /* Called by ExitToShell before the process exits; it may not return (main
    uses it to go back to the picker). */
 void misc_set_exit_hook(void (*fn)(void));
+
+/* What ExitToShell and the C library's exit do: logs why, runs the exit
+   hook, and exits with status. */
+_Noreturn void misc_exit(const char *why, int status);
+
+/* Seconds since 1970 (UTC). On the virtual clock, the same calendar as
+   GetDateTime: 2003-01-01 00:00:00 plus the virtual time. */
+int64_t misc_unix_time(void);
+
+/* Sleeps us microseconds the way Delay does: in steps of at most a quarter
+   tick on the real clock, or by moving the virtual one, running the idle
+   hook at each new tick. A sleep of 0 counts as a time poll. */
+void misc_sleep_us(uint64_t us);
 
 /* True if the virtual clock is in use. */
 bool misc_fixed_clock(void);
@@ -38,6 +57,11 @@ double misc_seconds(void);
 
 /* False while HideCursor has hidden the cursor (until InitCursor). */
 bool misc_cursor_visible(void);
+
+/* What CGDisplayHideCursor and CGDisplayShowCursor do: hide the cursor
+   once more, and show it once more (never past visible). */
+void misc_hide_cursor(void);
+void misc_show_cursor(void);
 
 /* The handler AEInstallEventHandler recorded for (event class, event ID).
    Returns false if there is none. */

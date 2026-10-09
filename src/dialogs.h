@@ -15,13 +15,27 @@
    button titled "Cancel", typing, Delete, Tab and Shift-Tab between edit
    fields, and Cmd-V. No game timers fire meanwhile.
 
-   With LOONY_AUTO_ALERTS=1, Alert and StopAlert draw nothing and answer at
-   once with their default item, as if the user pressed Return (headless
-   runs whose golden frames predate dialogs use this). */
+   Nib windows (a Mac OS X game's): CreateNibReference, CreateWindowFromNib
+   and DisposeNibReference read the bundle's main.nib (nib.h). A nib window
+   is a window port (qd_new_window), drawn like a DLOG while it's shown, and
+   RunAppModalLoopForWindow takes the input until QuitAppModalLoopForWindow.
+   Clicking a button (or Return for the one whose command is 'ok  ', Esc for
+   'not!') sends kEventCommandProcess with its command to the window's
+   handlers (events_send_command). HIViewGetRoot, HIViewFindByID and
+   GetControlByID find controls by ControlID; HIViewSetVisible,
+   GetControlData (an edit text's text) and the HIImageView calls (the
+   image view draws a CGImage, cgimage.h) work on them.
+   CreateStandardAlert and RunStandardAlert draw the error and explanation
+   with an OK button.
+
+   With LOONY_AUTO_ALERTS=1, Alert, StopAlert and RunStandardAlert draw
+   nothing and answer at once with their default item, as if the user
+   pressed Return (headless runs whose golden frames predate dialogs use
+   this), and RunAppModalLoopForWindow presses the default button. */
 
 /* DialogRefs are opaque IDs: DLG_TAG_BASE + 16 * slot. */
 #define DLG_TAG_BASE 0x0B000000u
-#define DLG_MAX 4
+#define DLG_MAX 8
 
 /* DITL item types (the low 7 bits) and the disabled flag. */
 #define DLG_ITEM_USER 0
@@ -34,8 +48,9 @@
 #define DLG_ITEM_PICTURE 64
 #define DLG_ITEM_DISABLED 128
 
-/* Resets ParamText and closes all dialogs (without restoring the screen).
-   Reads LOONY_AUTO_ALERTS. */
+/* Resets ParamText and closes all dialogs and nibs (without restoring the
+   screen). Reads LOONY_AUTO_ALERTS. Installs the QuickDraw window hook, so
+   it runs after qd_init. */
 void dialogs_init(void);
 
 /* The text Alert would show for ALRT id, items joined with " | ". Empty if

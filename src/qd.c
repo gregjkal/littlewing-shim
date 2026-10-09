@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "cf.h"
+#include "events.h"
 #include "guest_mem.h"
 #include "hd.h"
 #include "memmgr.h"
@@ -30,6 +32,9 @@ static struct {
     uint32_t cur_port, cur_device;
     bool dirty;
     int saved_w, saved_h; /* screen size before BeginFullScreen */
+    qd_window_fn window_hook;
+    bool direct;          /* qd_set_direct_drawing */
+    bool window_sized;    /* CreateNewWindow has sized the screen */
 } Q;
 
 /* ---- guest structure helpers ---- */
@@ -273,15 +278,26 @@ void qd_screen(qd_pixels *out, qd_palette *pal) { qd_bits("screen", gm_r32(Q.scr
 void qd_mark_dirty(void) { Q.dirty = true; }
 
 bool qd_take_dirty(void) {
-    bool d = Q.dirty;
+    bool d = Q.dirty || Q.direct;
     Q.dirty = false;
     return d;
 }
 
+void qd_set_direct_drawing(bool on) { Q.direct = on; }
+
+uint32_t qd_screen_base(void) { return gm_r32(gm_r32(Q.screen_pm) + PM_BASE_ADDR); }
 
 static void resize_screen(int w, int h, int depth) {
     free_pixmap_contents(Q.screen_pm);
     make_screen(w, h, depth);
+}
+
+void qd_resize_screen(int width, int height, int depth) {
+    if (depth != 8 && depth != 16 && depth != 32)
+        trap_crash("a %d-bit screen is not supported", depth);
+    if (width < 1 || height < 1 || width > 4096 || height > 4096)
+        trap_crash("a %dx%d screen is not supported", width, height);
+    resize_screen(width, height, depth);
 }
 
 /* ---- guest calls: rectangles ---- */
@@ -463,8 +479,83 @@ static void h_get_qd_globals_screen_bits(void) {
     trap_return(out);
 }
 
-static void h_show_window(void) { need_port("ShowWindow", trap_arg(0))->visible = true; Q.dirty = true; }
-static void h_hide_window(void) { need_port("HideWindow", trap_arg(0))->visible = false; Q.dirty = true; }
+uint32_t qd_new_window(int width, int height) {
+    uint32_t w = new_port(Q.screen_pm, (qd_rect){0, 0, (int16_t)height, (int16_t)width}, KIND_WINDOW);
+    find_port(w)->visible = false;
+    return w;
+}
+
+void qd_set_window_hook(qd_window_fn fn) { Q.window_hook = fn; }
+
+static void window_changed(uint32_t w, qd_window_change change, uint32_t arg) {
+    if (Q.window_hook)
+        Q.window_hook(w, change, arg);
+}
+
+static void h_show_window(void) {
+    need_port("ShowWindow", trap_arg(0))->visible = true;
+    Q.dirty = true;
+    window_changed(trap_arg(0), QD_WINDOW_SHOWN, 0);
+}
+
+static void h_hide_window(void) {
+    need_port("HideWindow", trap_arg(0))->visible = false;
+    Q.dirty = true;
+    window_changed(trap_arg(0), QD_WINDOW_HIDDEN, 0);
+}
+
+/* DisposeWindow(WindowRef): its event handlers go with it. */
+static void h_dispose_window(void) {
+    uint32_t w = trap_arg(0);
+    port_info *info = need_port("DisposeWindow", w);
+    if (info->kind != KIND_WINDOW)
+        trap_crash("DisposeWindow: 0x%08x is not a window", w);
+    window_changed(w, QD_WINDOW_DISPOSED, 0);
+    events_forget_window(w);
+    dispose_port(find_port(w));
+    Q.dirty = true;
+}
+
+/* CreateNewWindow(WindowClass, WindowAttributes, const Rect *contentBounds,
+   WindowRef *out) -> OSStatus. A hidden window port the size of the content.
+   The first one sizes the screen to it, keeping the depth: the game's window
+   is the whole emulated screen, as BeginFullScreen's is. */
+static void h_create_new_window(void) {
+    qd_rect b = qd_read_rect(trap_arg(2));
+    int w = rect_w(b), h = rect_h(b);
+    if (w < 1 || h < 1)
+        trap_crash("CreateNewWindow: empty bounds (%d,%d,%d,%d)", b.top, b.left, b.bottom, b.right);
+    log_msg("CreateNewWindow: class %u, attributes 0x%08x, %dx%d", trap_arg(0), trap_arg(1), w, h);
+    if (!Q.window_sized) {
+        Q.window_sized = true;
+        qd_resize_screen(w, h, gm_r16(gm_r32(Q.screen_pm) + PM_PIXEL_SIZE));
+    }
+    gm_w32(trap_arg(3), qd_new_window(w, h));
+    trap_return(QD_NO_ERR);
+}
+
+/* ChangeWindowAttributes(WindowRef, set, clear) -> OSStatus: windows here
+   have no frame for attributes to change. */
+static void h_change_window_attributes(void) {
+    need_port("ChangeWindowAttributes", trap_arg(0));
+    trap_return(QD_NO_ERR);
+}
+
+/* SetWindowTitleWithCFString(WindowRef, CFStringRef) -> OSStatus: logged;
+   the host window keeps the game's title. */
+static void h_set_window_title_with_cfstring(void) {
+    need_port("SetWindowTitleWithCFString", trap_arg(0));
+    log_msg("window title: %s", cf_string_text("SetWindowTitleWithCFString", trap_arg(1)));
+    trap_return(QD_NO_ERR);
+}
+
+/* RepositionWindow(WindowRef, WindowRef parent, WindowPositionMethod) -> OSStatus */
+static void h_reposition_window(void) {
+    uint32_t w = trap_arg(0);
+    need_port("RepositionWindow", w);
+    window_changed(w, QD_WINDOW_REPOSITIONED, trap_arg(2));
+    trap_return(QD_NO_ERR);
+}
 
 static void h_inval_window_rect(void) {
     need_port("InvalWindowRect", trap_arg(0));
@@ -632,6 +723,11 @@ void qd_register(void) {
     trap_register("GetQDGlobalsScreenBits", h_get_qd_globals_screen_bits);
     trap_register("ShowWindow", h_show_window);
     trap_register("HideWindow", h_hide_window);
+    trap_register("DisposeWindow", h_dispose_window);
+    trap_register("RepositionWindow", h_reposition_window);
+    trap_register("CreateNewWindow", h_create_new_window);
+    trap_register("ChangeWindowAttributes", h_change_window_attributes);
+    trap_register("SetWindowTitleWithCFString", h_set_window_title_with_cfstring);
     trap_register("InvalWindowRect", h_inval_window_rect);
     trap_register("QDFlushPortBuffer", h_qd_flush_port_buffer);
     trap_register("BeginFullScreen", h_begin_full_screen);

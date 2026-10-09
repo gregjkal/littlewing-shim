@@ -88,6 +88,15 @@ src/
   cf.c          CFString/CFNumber objects and CFPreferences
   plist.c       prefs.plist, read and written with the host's CoreFoundation
   misc.c        Gestalt, TickCount, Microseconds, Delay, ICLaunchURL, AE, cursor calls
+  game.c        the games: id, title, folder or bundle, program path, kind (Plan 8, 9)
+  picker.c      the picker shown when more than one game is installed (Plan 8, 9)
+  loader.c      loads a PEF or Mach-O program into guest memory (Plan 9 adds Mach-O)
+  macho.c       reads the PowerPC slice of a Mach-O file (Plan 9)
+  libc.c        the C library calls of a Mach-O game (Plan 9)
+  cxxrt.c       the C++ runtime calls of a Mach-O game (Plan 9)
+  nib.c         reads the windows of an Interface Builder nib (Plan 9)
+  cgimage.c     PNG images through the host's ImageIO (Plan 9)
+  cgdisplay.c   the CoreGraphics main display: modes, capture, its memory (Plan 9)
 tests/          unit and integration tests
 ```
 
@@ -106,6 +115,8 @@ Each Carbon module registers its handlers with `trap.c` from a `*_register()` fu
 | `0x0600_0000` | 1 MB | Stack, growing down from `0x0610_0000`, with an unmapped guard page below it |
 | `0x0700_0000` | unmapped | Trap addresses: import *i* is `0x0700_0000 + 4i`, and `RETURN_MAGIC` is `0x07FF_FFF0`. Nothing is mapped here, so jumping to one of these addresses stops the CPU with that exact address |
 | `0x0800_0000` | unmapped | Tag space for opaque host objects (CFStringRef, window refs, event refs). These are IDs, never dereferenced |
+
+This is the layout for PEF programs. A Mach-O program (Plan 9) loads at its linked addresses from `0x1000`, where the PEF layout keeps low memory, so it gets a second layout (`gm_init_layout(GM_LAYOUT_MACHO)`): `0`-`0x1000` stays unmapped, so a null pointer faults as on Mac OS X; `0x1000`-`0x10_0000` holds the image; and the heap is 256 MB at `0x1000_0000`, with host pages backed only when touched. Stack, trap and tag addresses are the same in both. More tag spaces were added below `0x1000_0000`: events `0x0A00_0000`, dialogs and nib windows `0x0B00_0000` (controls `0x0B04_0000`, nib references `0x0B08_0000`), CG images and data providers `0x0C00_0000`, display modes `0x0C80_0000`.
 
 Everything the game might inspect directly lives in guest memory, in the original big-endian layout: resource data, handles, PixMap/GWorld/CGrafPort structs, FSSpecs, Rects. State the game can only reach through accessor functions stays in host C structs: SDL objects, sound channels, event handlers, timers and CF objects.
 
@@ -219,6 +230,22 @@ Used for: the init and main entry points, Carbon event handlers, event loop time
 - **`AEInstallEventHandler`** records the handler. The quit event is sent on window close and Cmd-Q.
 - **`KeyScript`, `GetMBarHeight` (returns 0), `ReadLocation`, `GetDateTime`, `NumToString`, `num2dec`, `p2cstrcpy`, `c2pstrcpy`, `BlockMoveData`, `ExitToShell`:** straightforward.
 
+## Mac OS X games (Plan 9)
+
+*MONSTER FAIR 1.2.5* (2010) is a Mac OS X application, not a Carbon program in a folder: `/Applications/MONSTER FAIR.app`, whose program `Contents/MacOS/MONSTER FAIR` is a universal Mach-O binary (PowerPC and i386) built with GCC 4 and C++. It has no resource fork; it reads its data from files in `Contents/Resources` and builds its dialogs from an Interface Builder nib. Of its 205 imports, 95 were already implemented. The game table gives each game a kind, `GAME_PEF_FOLDER` or `GAME_MACHO_BUNDLE`, and everything that differs for MONSTER FAIR is chosen by that kind, so the classic games run exactly as before.
+
+- **A second program format.** `macho.c` reads the PowerPC slice of a fat or thin Mach-O executable: segments, sections, symbols, the indirect symbol table and external relocations, with a bounds check on every offset. `image_load_macho` copies `__TEXT` and `__DATA` to their linked addresses (the program isn't position-independent), points every lazy and non-lazy symbol pointer at a trap address or a data object, and adds a symbol's address at each external relocation (the stored word is the addend). Data symbols come from a resolver chain (`libc`, then `cxxrt`, then `cf`); an import the shim can't bind fails the load by name, not at its first call. Crash reports print `code+<linked address>`, matching a disassembly of the file.
+- **No `crt1`.** The shim runs the `__mod_init_func` entries (the C++ static constructors), as dyld would, then calls `main(argc, argv, envp, apple)` directly. The loader finds `main` by following the entry point's `bl` into `_start` and taking the `bl` just before the one to the `_exit` stub. This skips dyld's private lookup interface, keymgr's dwarf2 registration and the Mach and cthread init hooks.
+- **Direct calls.** A Mach-O function pointer is a code address, not a transition vector. `trap_set_direct_calls(true)` makes `guest_call` jump straight to the address it is given, with `r12` set to it as GCC's Darwin code expects. Every caller (event handlers, timers, sound callbacks, `qsort`) still goes through `guest_call`.
+- **The C library (`libc.c`)** covers what the game imports from libSystem: `malloc` and friends on the Memory Manager's pointer heap (one allocator, so `MemError` and crash reports see everything), string and memory calls through `gm_ptr`, a stable `qsort` calling the guest comparator, Darwin 10.4's `rand`, `time`, `localtime` (UTC on the fixed clock) and `usleep` on `misc`'s clock, `dlsym` for the one symbol the game looks up (`sprintf$LDBL128`), and the `_DefaultRuneLocale` table.
+- **The C++ runtime (`cxxrt.c`):** `new` and `delete` on the same heap, static-local guards, and the type-info vtables (identity only). Exceptions are not implemented: `__cxa_throw`, `__cxa_rethrow` and `_Unwind_Resume` crash, naming the thrown type and the throw site. Nothing throws in normal play (measured through the registration flow, the menus, games and an hour-long soak), so an unwinder over `__eh_frame` was never needed.
+- **Bundles, URLs and files.** `CFBundleGetMainBundle`, `CFBundleCopyResourceURL` (also looking in `English.lproj`) and CFURLs give the game real host paths inside the bundle. Constant CFStrings in `__cfstring` are read from guest memory by every CF call that takes a string. `FSPathMakeRef` accepts paths in the bundle or the save folder; the fork calls (`FSOpenFork`, `FSGetForkSize`, ...) share refnums with the File Manager calls, since the game mixes them, and a write to a bundle file goes to the save folder's copy, as for the classic games. `sysv` is 10.4.11 (`0x104B`) for a Mach-O game.
+- **Nib windows.** `nib.c` reads the part of `objects.xib` the game uses: windows by name from the `nameTable`, with their buttons (and command IDs), static texts, edit texts, image views and icons. `dialogs.c` draws them with the DLOG code. A click, Return or Esc sends `kEventCommandProcess` with a 14-byte `HICommand` to the window's handlers; the game calls `QuitAppModalLoopForWindow`, which ends `RunAppModalLoopForWindow`. `GetControlData` returns an edit text's text, and the image view draws `appl.png`, decoded with the host's ImageIO (`cgimage.c`) and scaled to its frame. `CreateStandardAlert` and `RunStandardAlert` draw like `Alert`. `LOONY_AUTO_ALERTS=1` answers nib windows with their `'ok  '` button.
+- **The display.** MONSTER FAIR plays full screen: it asks CoreGraphics for a 1024×768, 16-bit mode, captures the display, and draws straight into the display's memory. `cgdisplay.c` makes the emulated screen the main display: `CGDisplaySwitchToMode` resizes it in place (`qd_resize_screen`: the GDevice and port addresses stay the same), `CGDisplayBaseAddress` and `CGDisplayBytesPerRow` describe its pixels, and while it is captured the screen is presented at every pump, because the game's drawing bypasses QuickDraw. A mode is an opaque ID, not a CFDictionary, since the game reads none. Capturing doesn't make the host window full screen; Cmd-F still does. On quitting, the game switches back to 800×600, 32 bits. The windowed path (`CreateNewWindow` and a GWorld) is implemented, but only runs when no mode is found, which never happens here.
+- **The picker** shows up to three cards in a row; MONSTER FAIR's shows `appl.png` over its name, since its title screen is in its own data format.
+
+*Mad Daedalus 1.1.9*, LittleWing's other Mac OS X game, is out of scope: it shares the loader and runtimes, but needs AudioToolbox sound, `mmap` and drawing without QuickDraw at all.
+
 ## Error handling and diagnostics
 
 - **Unimplemented import, guest crash (unmapped memory access, illegal instruction, stack guard hit), or an unsupported option in an implemented call:** stop and print the reason, the import name or fault address, the guest PC and LR, all registers, and the last 64 imports called with their arguments. Exit with code 2. Don't guess and keep going.
@@ -258,6 +285,8 @@ Used for: the init and main entry points, Carbon event handlers, event loop time
 | 7 | Finish | One-hour run with no crash. `.app` bundle, ad-hoc signed, with the `allow-jit` entitlement. Headless regression test recorded (three minutes of scripted play, `run_three_minutes_of_play_match_the_recording`) |
 
 Plan 8 added Crystal Caliburn 3.0.1, which runs on the same engine with the same 132 imports (`src/game.c` lists the games), and a picker showing each game's title picture (PICT 800) from the user's copy.
+
+Plan 9 added MONSTER FAIR 1.2.5, the first Mac OS X game (see Mac OS X games): a Mach-O loader, a second memory layout, C and C++ runtimes, nib windows and the CoreGraphics display.
 
 Milestones 1–3 have the most unknowns. Each later milestone's details may be adjusted based on what the import trace shows the game actually does.
 

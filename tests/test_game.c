@@ -32,11 +32,19 @@ static void restore_apps_dir(void) {
         unsetenv("LOONY_APPS_DIR");
 }
 
-TEST(game_table_knows_both_games) {
-    CHECK_EQ(game_count(), 2);
+TEST(game_table_knows_three_games) {
+    CHECK_EQ(game_count(), 3);
     CHECK_STR(game_at(0)->id, "loony-labyrinth");
     CHECK_STR(game_at(1)->id, "crystal-caliburn");
-    CHECK(game_at(2) == NULL);
+    CHECK_STR(game_at(2)->id, "monster-fair");
+    CHECK(game_at(3) == NULL);
+    CHECK_EQ(game_at(0)->kind, GAME_PEF_FOLDER);
+    CHECK_EQ(game_at(1)->kind, GAME_PEF_FOLDER);
+    const game_info *mf = game_by_id("monster-fair");
+    CHECK_EQ(mf->kind, GAME_MACHO_BUNDLE);
+    CHECK_STR(mf->title, "MONSTER FAIR");
+    CHECK_STR(mf->folder_name, "MONSTER FAIR.app");
+    CHECK_STR(mf->exe, "Contents/MacOS/MONSTER FAIR");
     const game_info *cc = game_by_id("crystal-caliburn");
     CHECK(cc != NULL);
     CHECK_STR(cc->title, "Crystal Caliburn");
@@ -94,6 +102,51 @@ TEST(game_installed_lists_what_is_in_the_apps_dir) {
     CHECK_EQ(two, 2);
     CHECK_STR(g[0]->id, "loony-labyrinth");
     CHECK_STR(g[1]->id, "crystal-caliburn");
+}
+
+/* A bundle with its program at Contents/MacOS/MONSTER FAIR. */
+static void make_bundle(const char *apps) {
+    char macos[1200];
+    snprintf(macos, sizeof macos, "%s/MONSTER FAIR.app/Contents/MacOS", apps);
+    make_dirs(macos);
+    touch(macos, "MONSTER FAIR");
+}
+
+TEST(game_installed_finds_a_bundle) {
+    char apps[1024], dir[1200];
+    test_tmp_dir(apps, sizeof apps);
+    set_apps_dir(apps);
+    const game_info *g[4];
+    /* A bundle without its program isn't installed. */
+    snprintf(dir, sizeof dir, "%s/MONSTER FAIR.app/Contents", apps);
+    make_dirs(dir);
+    int empty = game_installed(g, 4);
+    make_bundle(apps);
+    snprintf(dir, sizeof dir, "%s/Loony Labyrinth", apps);
+    make_dirs(dir);
+    touch(dir, "LOONY LABYRINTH 3.0.1");
+    int two = game_installed(g, 4);
+    char folder[1200];
+    game_folder(g[1], folder, sizeof folder);
+    restore_apps_dir();
+    test_remove_tree(apps);
+    CHECK_EQ(empty, 0);
+    CHECK_EQ(two, 2);
+    CHECK_STR(g[0]->id, "loony-labyrinth");
+    CHECK_STR(g[1]->id, "monster-fair");
+    snprintf(dir, sizeof dir, "%s/MONSTER FAIR.app", apps);
+    CHECK_STR(folder, dir);
+}
+
+TEST(game_in_folder_finds_monster_fair_in_its_bundle) {
+    char apps[1024], bundle[1200];
+    test_tmp_dir(apps, sizeof apps);
+    make_bundle(apps);
+    snprintf(bundle, sizeof bundle, "%s/MONSTER FAIR.app", apps);
+    const game_info *g = game_in_folder(bundle);
+    test_remove_tree(apps);
+    CHECK(g != NULL);
+    CHECK_STR(g->id, "monster-fair");
 }
 
 static void write_text(const char *path, const char *text) {

@@ -3,7 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* The guest's 32-bit address space. See the memory map in the spec. */
+/* The guest's 32-bit address space. See the memory map in the spec.
+   These are the PEF layout's; the Mach-O layout (below) differs only in the
+   image and the heap. */
 #define GUEST_LOWMEM_BASE  0x00000000u
 #define GUEST_LOWMEM_SIZE  0x00010000u
 #define GUEST_IMAGE_BASE   0x00100000u
@@ -21,6 +23,13 @@
 /* Opaque host-object IDs (Plan 2+). Never dereferenced. */
 #define GUEST_TAG_BASE     0x08000000u
 
+/* A Mach-O program is linked to load at 0x1000, where the PEF layout keeps
+   low memory. Page zero stays unmapped so a null pointer faults. */
+#define GUEST_MACHO_IMAGE_BASE  0x00001000u
+#define GUEST_MACHO_IMAGE_LIMIT 0x00100000u
+#define GUEST_MACHO_HEAP_BASE   0x10000000u
+#define GUEST_MACHO_HEAP_SIZE   0x10000000u
+
 #define GM_PROT_R 1
 #define GM_PROT_W 2
 #define GM_PROT_X 4
@@ -30,10 +39,19 @@ typedef struct {
     int prot;
 } gm_region;
 
-/* Allocates fresh zeroed guest memory, replacing any previous allocation.
-   Call before cpu_init(), which maps this memory into the CPU. */
+typedef enum { GM_LAYOUT_PEF, GM_LAYOUT_MACHO } gm_layout;
+
+/* Allocates fresh zeroed guest memory in the given layout, replacing any
+   previous allocation. Call before cpu_init(), which maps this memory into
+   the CPU. gm_init() is gm_init_layout(GM_LAYOUT_PEF). */
+void gm_init_layout(gm_layout layout);
 void gm_init(void);
 void gm_shutdown(void);
+gm_layout gm_current_layout(void);
+
+/* The Memory Manager's heap in the current layout. */
+uint32_t gm_heap_base(void);
+uint32_t gm_heap_size(void);
 
 /* Host address of guest address 0. Only backed regions may be touched. */
 uint8_t *gm_host_base(void);

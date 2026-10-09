@@ -4,8 +4,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "guest_mem.h"
+#include "memmgr.h"
 #include "plist.h"
 #include "trap.h"
 #include "util.h"
@@ -33,7 +35,17 @@ static struct {
     uint32_t nprefs, prefs_cap;
     uint32_t current_app;
     char *prefs_path; /* NULL: preferences are never saved */
+    uint32_t app_var;   /* Mach-O: the kCFPreferencesCurrentApplication variable */
+    uint32_t class_ref; /* Mach-O: __CFConstantStringClassReference */
+    struct {
+        uint32_t addr;
+        char *text;
+    } *consts; /* constant strings read so far */
+    uint32_t nconsts, consts_cap;
+    uint32_t main_bundle;
 } C;
+
+static char *bundle_path; /* cf_set_bundle's; survives cf_init */
 
 static uint32_t ref_of(uint32_t index) { return CF_TAG_BASE + 16u * index; }
 
@@ -84,14 +96,40 @@ void cf_init(void) {
         free(C.objs[i].str);
     for (uint32_t i = 0; i < C.nprefs; i++)
         free(C.prefs[i].key);
+    for (uint32_t i = 0; i < C.nconsts; i++)
+        free(C.consts[i].text);
     free(C.objs);
     free(C.prefs);
     free(C.prefs_path);
+    free(C.consts);
     memset(&C, 0, sizeof C);
     C.current_app = cf_string("com.littlewing.loonylabyrinth");
 }
 
 uint32_t cf_current_app(void) { return C.current_app; }
+
+static uint32_t new_data(uint32_t size) {
+    uint32_t p = mm_new_ptr(size, true);
+    if (!p)
+        fatal("can't allocate Core Foundation's data");
+    return p;
+}
+
+uint32_t cf_data_symbol(const char *name) {
+    if (strcmp(name, "kCFPreferencesCurrentApplication") == 0) {
+        if (!C.app_var) {
+            C.app_var = new_data(4);
+            gm_w32(C.app_var, C.current_app);
+        }
+        return C.app_var;
+    }
+    if (strcmp(name, "__CFConstantStringClassReference") == 0) {
+        if (!C.class_ref)
+            C.class_ref = new_data(16);
+        return C.class_ref;
+    }
+    return 0;
+}
 
 uint32_t cf_string(const char *s) {
     char *copy = strdup(s);
@@ -99,6 +137,65 @@ uint32_t cf_string(const char *s) {
         fatal("out of memory");
     return new_obj(CF_STRING_TYPE_ID, copy, 0);
 }
+
+/* One of the program's constant strings: {isa, flags, bytes, length} in
+   guest memory, with isa the class reference the loader bound. */
+static bool is_constant_string(uint32_t ref) {
+    return C.class_ref && gm_is_backed(ref, 16) && gm_r32(ref) == C.class_ref;
+}
+
+static const char *constant_text(uint32_t ref) {
+    for (uint32_t i = 0; i < C.nconsts; i++)
+        if (C.consts[i].addr == ref)
+            return C.consts[i].text;
+    uint32_t bytes = gm_r32(ref + 8), len = gm_r32(ref + 12);
+    char *text = malloc((size_t)len + 1);
+    if (!text)
+        fatal("out of memory");
+    memcpy(text, gm_ptr(bytes, len ? len : 1), len);
+    text[len] = '\0';
+    if (C.nconsts == C.consts_cap) {
+        C.consts_cap = C.consts_cap ? C.consts_cap * 2 : 16;
+        C.consts = realloc(C.consts, C.consts_cap * sizeof *C.consts);
+        if (!C.consts)
+            fatal("out of memory");
+    }
+    C.consts[C.nconsts].addr = ref;
+    C.consts[C.nconsts++].text = text;
+    return text;
+}
+
+const char *cf_string_text(const char *call, uint32_t ref) {
+    if (is_constant_string(ref))
+        return constant_text(ref);
+    cf_obj *o = need(call, ref);
+    if (o->type_id != CF_STRING_TYPE_ID)
+        trap_crash("%s: 0x%08x is not a CFString", call, ref);
+    return o->str;
+}
+
+uint32_t cf_url(const char *path) {
+    char *copy = strdup(path);
+    if (!copy)
+        fatal("out of memory");
+    return new_obj(CF_URL_TYPE_ID, copy, 0);
+}
+
+const char *cf_url_path(const char *call, uint32_t ref) {
+    cf_obj *o = need(call, ref);
+    if (o->type_id != CF_URL_TYPE_ID)
+        trap_crash("%s: 0x%08x is not a CFURL", call, ref);
+    return o->str;
+}
+
+void cf_set_bundle(const char *path) {
+    free(bundle_path);
+    bundle_path = strdup(path);
+    if (!bundle_path)
+        fatal("out of memory");
+}
+
+const char *cf_bundle_path(void) { return bundle_path; }
 
 int cf_retain_count(uint32_t ref) {
     cf_obj *o = lookup(ref);
@@ -135,23 +232,24 @@ static void h_string_create_with_cstring(void) {
 /* CFStringGetCString(str, buffer, bufferSize, encoding) -> Boolean. Writes
    nothing and returns false if the string and its NUL don't fit. */
 static void h_string_get_cstring(void) {
-    cf_obj *o = need("CFStringGetCString", trap_arg(0));
-    if (o->type_id != CF_STRING_TYPE_ID)
-        trap_crash("CFStringGetCString: 0x%08x is not a CFString", trap_arg(0));
+    const char *s = cf_string_text("CFStringGetCString", trap_arg(0));
     need_encoding("CFStringGetCString", trap_arg(3));
     int32_t size = (int32_t)trap_arg(2);
-    size_t n = strlen(o->str) + 1;
+    size_t n = strlen(s) + 1;
     if (size < 0 || n > (size_t)size) {
         trap_return(0);
         return;
     }
-    memcpy(gm_ptr(trap_arg(1), (uint32_t)n), o->str, n);
+    memcpy(gm_ptr(trap_arg(1), (uint32_t)n), s, n);
     trap_return(1);
 }
 
 static void h_string_get_type_id(void) { trap_return(CF_STRING_TYPE_ID); }
 
-static void h_get_type_id(void) { trap_return(need("CFGetTypeID", trap_arg(0))->type_id); }
+static void h_get_type_id(void) {
+    uint32_t ref = trap_arg(0);
+    trap_return(is_constant_string(ref) ? CF_STRING_TYPE_ID : need("CFGetTypeID", ref)->type_id);
+}
 
 /* CFNumberCreate(alloc, theType, valuePtr): integer types only. */
 static void h_number_create(void) {
@@ -176,7 +274,98 @@ static void h_number_create(void) {
     trap_return(new_obj(CF_NUMBER_TYPE_ID, NULL, v));
 }
 
-static void h_release(void) { release(need("CFRelease", trap_arg(0))); }
+/* A constant string lives as long as the program: releasing it does nothing. */
+static void h_release(void) {
+    uint32_t ref = trap_arg(0);
+    if (!is_constant_string(ref))
+        release(need("CFRelease", ref));
+}
+
+/* ---- CFBundle and CFURL: host paths ---- */
+
+static uint32_t main_bundle(void) {
+    if (!bundle_path)
+        trap_crash("CFBundleGetMainBundle: this game has no bundle");
+    if (!C.main_bundle) {
+        char *copy = strdup(bundle_path);
+        if (!copy)
+            fatal("out of memory");
+        C.main_bundle = new_obj(CF_BUNDLE_TYPE_ID, copy, 0); /* never released */
+    }
+    return C.main_bundle;
+}
+
+static const char *bundle_of(const char *call, uint32_t ref) {
+    cf_obj *o = need(call, ref);
+    if (o->type_id != CF_BUNDLE_TYPE_ID)
+        trap_crash("%s: 0x%08x is not a CFBundle", call, ref);
+    return o->str;
+}
+
+/* CFBundleGetMainBundle(): not retained. */
+static void h_bundle_get_main_bundle(void) { trap_return(main_bundle()); }
+
+/* CFBundleCopyResourcesDirectoryURL(bundle). Directory URLs end in '/'. */
+static void h_bundle_copy_resources_directory_url(void) {
+    char path[2048];
+    snprintf(path, sizeof path, "%s/Contents/Resources/",
+             bundle_of("CFBundleCopyResourcesDirectoryURL", trap_arg(0)));
+    trap_return(cf_url(path));
+}
+
+/* CFBundleCopyResourceURL(bundle, name, type, subdir): the resource in
+   Resources (or Resources/English.lproj), or NULL if there's none. */
+static void h_bundle_copy_resource_url(void) {
+    const char *call = "CFBundleCopyResourceURL";
+    const char *bundle = bundle_of(call, trap_arg(0));
+    const char *name = cf_string_text(call, trap_arg(1));
+    const char *type = trap_arg(2) ? cf_string_text(call, trap_arg(2)) : "";
+    const char *subdir = trap_arg(3) ? cf_string_text(call, trap_arg(3)) : "";
+    static const char *const places[] = {"", "English.lproj/"};
+    for (size_t i = 0; i < sizeof places / sizeof places[0]; i++) {
+        char path[2048];
+        snprintf(path, sizeof path, "%s/Contents/Resources/%s%s%s%s%s%s", bundle, places[i], subdir,
+                 *subdir ? "/" : "", name, *type ? "." : "", type);
+        if (access(path, F_OK) == 0) {
+            trap_return(cf_url(path));
+            return;
+        }
+    }
+    log_msg("%s: no resource %s%s%s", call, name, *type ? "." : "", type);
+    trap_return(0);
+}
+
+/* CFURLCreateCopyAppendingPathComponent(alloc, url, component, isDirectory). */
+static void h_url_create_copy_appending_path_component(void) {
+    const char *call = "CFURLCreateCopyAppendingPathComponent";
+    const char *base = cf_url_path(call, trap_arg(1));
+    const char *comp = cf_string_text(call, trap_arg(2));
+    size_t n = strlen(base);
+    char path[2048];
+    snprintf(path, sizeof path, "%s%s%s%s", base, n && base[n - 1] == '/' ? "" : "/", comp,
+             trap_arg(3) & 0xFF ? "/" : "");
+    trap_return(cf_url(path));
+}
+
+/* CFURLGetFileSystemRepresentation(url, resolveAgainstBase, buffer, maxBufLen)
+   -> Boolean: the path in UTF-8, false if it and its NUL don't fit. A
+   directory's trailing '/' is left off, as CF does. */
+static void h_url_get_file_system_representation(void) {
+    const char *path = cf_url_path("CFURLGetFileSystemRepresentation", trap_arg(0));
+    uint32_t buf = trap_arg(2);
+    int32_t max = (int32_t)trap_arg(3);
+    size_t n = strlen(path);
+    if (n > 1 && path[n - 1] == '/')
+        n--;
+    if (max < 0 || n + 1 > (size_t)max) {
+        trap_return(0);
+        return;
+    }
+    uint8_t *dst = gm_ptr(buf, (uint32_t)n + 1);
+    memcpy(dst, path, n);
+    dst[n] = '\0';
+    trap_return(1);
+}
 
 /* ---- CFPreferences ---- */
 
@@ -186,10 +375,7 @@ static void need_current_app(const char *call, uint32_t app) {
 }
 
 static const char *key_string(const char *call, uint32_t key) {
-    cf_obj *o = need(call, key);
-    if (o->type_id != CF_STRING_TYPE_ID)
-        trap_crash("%s: key 0x%08x is not a CFString", call, key);
-    return o->str;
+    return cf_string_text(call, key);
 }
 
 static pref *find_pref(const char *key) {
@@ -359,4 +545,10 @@ void cf_register(void) {
     trap_register("CFPreferencesCopyAppValue", h_prefs_copy_app_value);
     trap_register("CFPreferencesGetAppIntegerValue", h_prefs_get_app_integer_value);
     trap_register("CFPreferencesAppSynchronize", h_prefs_app_synchronize);
+    trap_register("CFBundleGetMainBundle", h_bundle_get_main_bundle);
+    trap_register("CFBundleCopyResourcesDirectoryURL", h_bundle_copy_resources_directory_url);
+    trap_register("CFBundleCopyResourceURL", h_bundle_copy_resource_url);
+    trap_register("CFURLCreateCopyAppendingPathComponent",
+                  h_url_create_copy_appending_path_component);
+    trap_register("CFURLGetFileSystemRepresentation", h_url_get_file_system_representation);
 }

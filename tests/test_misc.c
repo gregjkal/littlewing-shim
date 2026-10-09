@@ -29,6 +29,17 @@ static uint32_t gestalt(uint32_t sel, uint32_t *value) {
     return err;
 }
 
+TEST(misc_gestalt_reports_10_4_11_to_a_macho_game) {
+    setup();
+    uint32_t v;
+    misc_set_system_version(MISC_SYSTEM_VERSION_MACHO);
+    CHECK_EQ(gestalt(FOURCC('s', 'y', 's', 'v'), &v), 0);
+    CHECK_EQ(v, 0x104B);
+    misc_init(); /* back to the classic games' answer */
+    CHECK_EQ(gestalt(FOURCC('s', 'y', 's', 'v'), &v), 0);
+    CHECK_EQ(v, 0x1028);
+}
+
 TEST(misc_gestalt_reports_os_x_10_2_8_without_altivec) {
     setup();
     uint32_t v;
