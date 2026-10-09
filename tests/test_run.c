@@ -469,21 +469,26 @@ TEST(run_monster_fair_wrong_key_code_shows_authorize_failed) {
     CHECK(!strstr(out, "0000-1111-2222-3333"));
 }
 
-/* A key code that the Register window accepts, but that the game checks
-   again in play and refuses (the public one in docs/test_key.txt does: its
-   address ends in an IP address). The second check runs at an Esc more
-   than 7200 ticks after the first key the game sees; it erases the license
-   and, as the game quits, calls Alert(136), which it has no resource for.
-   The address and key come from LOONY_TEST_MF_EMAIL and LOONY_TEST_MF_KEY. */
-TEST(run_monster_fair_erases_a_license_it_refuses_in_play) {
-    SKIP_UNLESS_SLOW();
-    SKIP_UNLESS_MF();
-    const char *email = getenv("LOONY_TEST_MF_EMAIL"), *key = getenv("LOONY_TEST_MF_KEY");
-    if (!email || !*email || !key || !*key) {
-        test_skip("LOONY_TEST_MF_EMAIL and LOONY_TEST_MF_KEY aren't set");
-        return;
-    }
-    test_tmp_dir(run_data, sizeof run_data);
+/* MONSTER FAIR's license tests take the address and key code from
+   LOONY_TEST_MF_EMAIL and LOONY_TEST_MF_KEY; the public ones in
+   docs/test_key.txt are a key the game accepts at first and refuses in play
+   (the address ends in an IP address). Sets *email and *key, or skips. */
+#define MF_TEST_KEY_OR_SKIP(email, key)                                            \
+    do {                                                                           \
+        email = getenv("LOONY_TEST_MF_EMAIL");                                     \
+        key = getenv("LOONY_TEST_MF_KEY");                                         \
+        if (!email || !*email || !key || !*key) {                                  \
+            test_skip("LOONY_TEST_MF_EMAIL and LOONY_TEST_MF_KEY aren't set");     \
+            return;                                                                \
+        }                                                                          \
+    } while (0)
+
+/* Registers in run_data's save folder (which the caller made), then plays:
+   the second license check runs at an Esc more than 7200 ticks after the
+   first key the game sees, here at tick 9800. Returns the exit status;
+   *xml gets the saved prefs.plist (to free), or NULL. */
+static int mf_register_and_play_past_the_recheck(const char *email, const char *key, char *out, size_t outlen,
+                                                 char **xml) {
     char prefs[1100];
     snprintf(prefs, sizeof prefs, "%s/prefs.plist", run_data);
     real_alerts = true;
@@ -493,22 +498,44 @@ TEST(run_monster_fair_erases_a_license_it_refuses_in_play) {
              "180 down return\n182 up return\n280 down return\n282 up return\n"
              "2400 down esc\n2404 up esc\n9800 down esc\n9804 up esc\n10000 quit\n",
              email, key);
-    char out[32768];
-    int status = run_script_in(test_mf_app(), actions, NULL, NULL, 0, out, sizeof out);
+    int status = run_script_in(test_mf_app(), actions, NULL, NULL, 0, out, outlen);
     real_alerts = false;
-    char *xml = read_text(prefs);
+    *xml = read_text(prefs);
+    return status;
+}
+
+/* With LOONY_MF_SKIP_LICENSE_RECHECK=1 the test key survives the second
+   check: the game plays on until the script quits, keeps the license, and
+   the next launch skips the Welcome window. */
+TEST(run_monster_fair_keeps_a_license_with_the_recheck_skipped) {
+    SKIP_UNLESS_SLOW();
+    SKIP_UNLESS_MF();
+    const char *email, *key;
+    MF_TEST_KEY_OR_SKIP(email, key);
+    test_tmp_dir(run_data, sizeof run_data);
+    setenv("LOONY_MF_SKIP_LICENSE_RECHECK", "1", 1);
+    char out[32768], again[32768], *xml;
+    int status = mf_register_and_play_past_the_recheck(email, key, out, sizeof out, &xml);
+    setenv("LOONY_EXIT_AFTER", "300", 1);
+    int status2 = run_script_in(test_mf_app(), "", NULL, NULL, 0, again, sizeof again);
+    unsetenv("LOONY_EXIT_AFTER");
+    unsetenv("LOONY_MF_SKIP_LICENSE_RECHECK");
     test_remove_tree(run_data);
     run_data[0] = '\0';
     CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: LOONY_MF_SKIP_LICENSE_RECHECK: MONSTER FAIR's second license check is off");
     CHECK_CONTAINS(out, "loony: nib window ThankYou: shown");
-    CHECK_CONTAINS(out, "loony: Alert 136: the game has no ALRT 136; returning -1, as Mac OS does");
+    CHECK_CONTAINS(out, "loony: sending the quit Apple Event"); /* the script's quit, not the game's */
     CHECK_CONTAINS(out, "loony: main returned 0");
+    CHECK(!strstr(out, "Alert 136"));
     CHECK(!strstr(out, email));
     CHECK(!strstr(out, key));
     CHECK(xml != NULL);
-    CHECK_CONTAINS(xml, "<key>user email</key>\n\t<string></string>");
-    CHECK_CONTAINS(xml, "<key>user id</key>\n\t<string></string>");
+    CHECK(!strstr(xml, "<key>user email</key>\n\t<string></string>"));
+    CHECK(!strstr(xml, "<key>user id</key>\n\t<string></string>"));
     free(xml);
+    CHECK_EQ(status2, 0);
+    CHECK(!strstr(again, "nib window Welcome"));
 }
 
 static void run_monster_fair_headless(void *unused) {

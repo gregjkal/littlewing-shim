@@ -226,7 +226,7 @@ Tests that need a game's files skip when it isn't installed (`SKIP_UNLESS_GAME`,
 that register take the address and key code from the environment and skip
 without them: `LOONY_TEST_EMAIL` and `LOONY_TEST_KEY` (Loony Labyrinth), and
 `LOONY_TEST_MF_EMAIL` and `LOONY_TEST_MF_KEY` (MONSTER FAIR; the public key in
-`docs/test_key.txt` is one the game refuses in play, which that test checks).
+`docs/test_key.txt` is one the game refuses in play).
 The slow tests, the three-minute regression runs (`run_three_minutes_*`) and
 MONSTER FAIR's play past its second license check, take a minute or more each,
 so they skip unless `LOONY_SLOW_TESTS=1` is set (`SKIP_UNLESS_SLOW`). Run them
@@ -239,6 +239,15 @@ failures.
 
 MONSTER FAIR checks its license a second time during play, a couple of
 minutes in, and erases a license it refuses there, such as a key code posted
-publicly, even though the Register window accepted it.
+publicly, even though the Register window accepted it. For testing with such
+a key, `LOONY_MF_SKIP_LICENSE_RECHECK=1` keeps the license: the check still
+runs, but the shim drops its verdict (it changes two instructions in MONSTER
+FAIR 1.2.5's code after loading, and refuses to start with any other
+version). The Register window's check is unchanged.
+
+```bash
+LOONY_MF_SKIP_LICENSE_RECHECK=1 ./build-release/loony "/Applications/MONSTER FAIR.app"
+open --env LOONY_MF_SKIP_LICENSE_RECHECK=1 build-release/LittleWing.app
+```
 
 Design: `docs/superpowers/specs/2026-09-30-loony-shim-design.md`
