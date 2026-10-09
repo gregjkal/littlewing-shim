@@ -74,6 +74,11 @@ bool test_mf_present(void) {
     return access(test_mf_exe_path(), R_OK) == 0;
 }
 
+bool test_slow_enabled(void) {
+    const char *s = getenv("LOONY_SLOW_TESTS");
+    return s && *s && strcmp(s, "0") != 0;
+}
+
 void test_tmp_dir(char *out, size_t cap) {
     const char *t = getenv("TMPDIR");
     snprintf(out, cap, "%s/loony-test-XXXXXX", t && *t ? t : "/tmp");

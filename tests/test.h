@@ -22,6 +22,9 @@ bool test_cc_present(void);
 const char *test_mf_app(void);
 const char *test_mf_exe_path(void);
 bool test_mf_present(void);
+/* Whether to run the slow tests (minutes of play each): $LOONY_SLOW_TESTS
+   set to anything but empty or 0. */
+bool test_slow_enabled(void);
 
 /* Creates a fresh, empty folder under $TMPDIR and writes its path to out. */
 void test_tmp_dir(char *out, size_t cap);
@@ -104,6 +107,14 @@ int test_run_child(void (*fn)(void *), void *arg, char *out, size_t outlen);
     do {                                                                        \
         if (!test_mf_present()) {                                               \
             test_skip("MONSTER FAIR not found");                                \
+            return;                                                             \
+        }                                                                       \
+    } while (0)
+
+#define SKIP_UNLESS_SLOW()                                                      \
+    do {                                                                        \
+        if (!test_slow_enabled()) {                                             \
+            test_skip("slow; set LOONY_SLOW_TESTS=1 to run");                   \
             return;                                                             \
         }                                                                       \
     } while (0)

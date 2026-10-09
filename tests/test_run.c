@@ -1133,6 +1133,7 @@ static int play_regression(const char *dir, const regression_start *start, uint3
 }
 
 TEST(run_three_minutes_of_play_match_the_recording) {
+    SKIP_UNLESS_SLOW();
     SKIP_UNLESS_GAME();
     uint32_t h[3], wh;
     size_t len;
@@ -1150,6 +1151,7 @@ TEST(run_three_minutes_of_play_match_the_recording) {
 /* The same three minutes in Crystal Caliburn (the same keys). Recorded
    after the user's Plan 8 playtest. */
 TEST(run_three_minutes_of_crystal_caliburn_match_the_recording) {
+    SKIP_UNLESS_SLOW();
     SKIP_UNLESS_CC();
     uint32_t h[3], wh;
     size_t len;
@@ -1169,6 +1171,7 @@ TEST(run_three_minutes_of_crystal_caliburn_match_the_recording) {
 /* Three minutes of MONSTER FAIR, started from its menu, with the same
    plunger, flippers and nudges. Recorded after the user's Plan 9 playtest. */
 TEST(run_three_minutes_of_monster_fair_match_the_recording) {
+    SKIP_UNLESS_SLOW();
     SKIP_UNLESS_MF();
     uint32_t h[3], wh;
     size_t len;

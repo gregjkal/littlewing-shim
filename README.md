@@ -15,6 +15,7 @@ brew install unicorn sdl3 cmake pkg-config
 cmake -S . -B build                                     # Debug (sanitizers): for development
 cmake --build build
 ./build/loony_tests          # all tests; ./build/loony_tests <substring> to filter
+LOONY_SLOW_TESTS=1 ./build/loony_tests  # also the three-minute regression runs
 
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release  # for playing
 cmake --build build-release
@@ -225,6 +226,9 @@ that register take the address and key code from the environment and skip
 without them: `LOONY_TEST_EMAIL` and `LOONY_TEST_KEY` (Loony Labyrinth), and
 `LOONY_TEST_MF_EMAIL` and `LOONY_TEST_MF_KEY` (MONSTER FAIR; the public key in
 `docs/test_key.txt` is one the game refuses in play, which that test checks).
+The three-minute regression runs (`run_three_minutes_*`) take minutes each, so
+they skip unless `LOONY_SLOW_TESTS=1` is set (`SKIP_UNLESS_SLOW`). Run them
+before merging anything that could change emulation, drawing or sound.
 
 MONSTER FAIR checks its license a second time during play, a couple of
 minutes in, and erases a license it refuses there, such as a key code posted
