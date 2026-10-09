@@ -1,17 +1,18 @@
 # Plan 9 handoff (2026-10-08)
 
-## Update, later on 2026-10-08: read this first
+## Status on 2026-10-09: read this first
 
-Tasks 9, 10, 11 and 13 are done, and Task 12 is not needed so far. Their notes in the plan say what was built and measured. **MONSTER FAIR now plays:** the Welcome and Demo windows, the registration flow, the full-screen 1024×768×16 display, the title, the menu, a game and a clean quit. Task 13's picker shows three cards. The status table below is out of date; the plan's checkboxes are current.
+**Plan 9 is complete** (all tasks ticked in the plan; Task 12 was not needed). MONSTER FAIR plays from the picker: the Welcome and Demo windows, registration, the full-screen 1024×768×16 display, the menu, games and a clean quit. Everything below "Where the code is" is the 2026-10-08 handoff, kept for its notes on how the code works; its status table and Task 10 design are history, and the plan's notes are current.
 
-Next:
-- **Task 14** is done too: the full suite gave 426 passed, 0 failed, 1 skipped.
-- **Task 15** is done (2026-10-09): the soak, the determinism check, the user's playtest and the goldens. The full suite gives 429 passed, 0 failed, 2 skipped (both skips need key codes in the environment). Plan 9 is complete.
+Since then, on `plan9-monster-fair`:
+- **#11:** `src/patch.c` can turn off MONSTER FAIR 1.2.5's second license check, which erases a license the game refuses in play (such as the public key). For now `src/main.c` applies it on every MONSTER FAIR launch, not only with `LOONY_MF_SKIP_LICENSE_RECHECK=1`; the README and `src/patch.h` still describe the switch. A MONSTER FAIR other than 1.2.5 won't start while this is so.
+- **#12:** `loony_tests` runs tests in parallel (`-j N`; `-j 1` is the old single process), and the slow ones (the three-minute recordings and the license play-through) skip unless `LOONY_SLOW_TESTS=1`. The default run takes about 40 seconds.
+- `docs/test_key.txt` has all three games' public keys. MONSTER FAIR's is refused in play, which the license patch gets past.
+- `main` is merged in: the littlewing-shim rename and its save folder move, the GPL license, release builds, and the Sound menu. `tools/make_app.sh` now refuses a sanitizer build itself, since with `main`'s `@rpath` handling it would otherwise bundle the ASan runtime.
 
-Waiting on the user:
-- Their `docs/test_key.txt` in the main checkout has a MONSTER FAIR block that isn't committed. The game refuses that key in play (see Task 15's notes); a test of a lasting registration needs a key it accepts, in `LOONY_TEST_MF_EMAIL` and `LOONY_TEST_MF_KEY`.
+Tests with every key set (`LOONY_TEST_EMAIL`/`KEY` and `LOONY_TEST_MF_EMAIL`/`KEY` from `docs/test_key.txt`) and `LOONY_SLOW_TESTS=1`: 440 passed, 0 failed, 0 skipped. Without `LOONY_SLOW_TESTS`: 436 passed, 4 skipped.
 
-Worktree notes from this session:
+Worktree notes from the 2026-10-08 session:
 - The guard refuses shell loops, heredoc appends and `sh -c`-like constructs. Put helper scripts in the job's tmp dir and call each with plain arguments.
 - A PowerPC call-site decoder lives at `<job tmp>/callsites.py` (`--range lo hi` dumps code). It is gone with the job, but it's 100 lines to rewrite if needed.
 - Tag spaces added: control refs `0x0B040000` (+256·slot + item, root `0xFF`), nib refs `0x0B080000`, display modes `0x0C800000`.
@@ -45,8 +46,8 @@ Tests: `./build/loony_tests` gives 405 passed, 0 failed, 1 skipped (the skip nee
 ## Working in this repo
 
 - **Build:** `cmake -S . -B build` (the default generator; Ninja isn't installed), then `cmake --build build -j8`. Debug builds have ASan and UBSan, with `-Werror`.
-- **Test:** `./build/loony_tests <name-substring>` runs the matching tests. The full suite takes about 4 to 10 minutes and longer when the machine is busy, so run it with a long timeout, or in the background. A slow Crystal Caliburn run is just load (it was CPU-bound under heavy load, not hung).
-- **Test limit:** `tests/test_main.c` has `MAX_TESTS 512`, and there are about 406 tests now. Raise it if new tests push past it.
+- **Test:** `./build/loony_tests <name-substring>` runs the matching tests, in parallel. The default run takes about 40 seconds; with `LOONY_SLOW_TESTS=1` it takes a few minutes more, so run that in the background.
+- **Test limit:** `tests/test_main.c` has `MAX_TESTS 512`, and there are about 440 tests now. Raise it if new tests push past it.
 - **Shell restrictions in a worktree session:** the guard refuses compound shell commands that write files (heredoc appends, `&&` chains with `$VAR`, `>>`). Use the Edit and Write tools for file changes, and keep Bash calls simple. `sed -i ''` on a single file is allowed. `timeout` isn't installed; use `perl -e 'alarm 60; exec @ARGV' cmd`.
 - **Temporary files:** use `/Users/greg/.claude/jobs/bfdfbdf3/tmp/` or the new job's tmp dir, not `/tmp`.
 - **Running the game headless:**
