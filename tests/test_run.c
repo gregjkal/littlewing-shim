@@ -997,8 +997,11 @@ TEST(run_as_the_app_logs_to_library_logs) {
 }
 
 static char bundle_bin[1300];
+static bool bundle_hd; /* else HD is turned off, for the approved 800x600 frame */
 
 static void run_bundle_scripted(void *dir) {
+    if (!bundle_hd)
+        setenv("LOONY_HD", "off", 1);
     setenv("HOME", run_data, 1); /* as an app it logs under HOME */
     setenv("LOONY_FIXED_CLOCK", "1", 1);
     setenv("LOONY_SCRIPT", script_path, 1);
@@ -1068,11 +1071,36 @@ TEST(run_the_app_bundle_is_self_contained_and_plays) {
     size_t len = 0;
     uint8_t *shot = read_file(png, &len);
     unlink(png);
+
+    /* The app carries the HD art and plays in HD with it, unasked. */
+    char art[1300];
+    snprintf(art, sizeof art, "%s/LittleWing.app/Contents/Resources/hd-art/loony-labyrinth/454708e3.png",
+             out_dir);
+    bool has_art = access(art, R_OK) == 0;
+    f = fopen(script_path, "w");
+    fprintf(f, "300 screenshot %s\n320 quit\n", png);
+    fclose(f);
+    test_tmp_dir(run_data, sizeof run_data);
+    bundle_hd = true;
+    int hd_status = test_run_child(run_bundle_scripted, (void *)test_game_dir(), out, sizeof out);
+    bundle_hd = false;
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    unlink(script_path);
+    size_t hd_len = 0;
+    uint8_t *hd_shot = read_file(png, &hd_len);
+    unlink(png);
     test_remove_tree(out_dir);
     CHECK_EQ(status, 0);
     CHECK(shot != NULL);
     CHECK_EQ(fnv1a32(shot, len), 0xADE78151u); /* the menu */
     free(shot);
+    CHECK(has_art);
+    CHECK_EQ(hd_status, 0);
+    CHECK(hd_shot != NULL && hd_len > 24);
+    CHECK_EQ(rd_be32(hd_shot + 16), 3200);
+    CHECK_EQ(rd_be32(hd_shot + 20), 2400);
+    free(hd_shot);
 }
 
 /* The regression run: three minutes of scripted play on the fixed clock,

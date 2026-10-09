@@ -116,11 +116,16 @@ renamed (`loony-shim/`) move to `littlewing-shim/` on the next launch, and
 saves from before there were two games (`prefs.plist` at the top) move into
 `loony-labyrinth/`.
 
-## HD art (a prototype)
+## HD art
 
 HD mode draws the game at 4 times its size (3200×2400), with replacement art
-for the game's pictures. The game itself still runs at 800×600. Art for Loony
-Labyrinth is in `hd-art/loony-labyrinth`:
+for the game's pictures. The game itself still runs at 800×600. The app
+carries the art in `hd-art/` (`tools/make_app.sh` copies it in) and plays a
+game in HD whenever it has art for it: so far, Loony Labyrinth. There is no
+setting.
+
+A build run from a terminal isn't an app, so it plays in HD only when told
+where the art is. `LOONY_HD=off` turns HD off, in the app too:
 
 ```bash
 LOONY_HD=hd-art/loony-labyrinth ./build-release/loony "/Applications/Loony Labyrinth"
@@ -147,8 +152,8 @@ upscaler, or redrawn by hand, can replace the generated file. `LOONY_HD_SCALE`
   tiles, such as the score display's font (`0e4f700e`), neighbouring tiles
   blur together. That file is left out of `hd-art/loony-labyrinth`, so the
   score display keeps the original font.
-- **Where it works:** only Loony Labyrinth has been tried, and only from a
-  terminal; the app doesn't pass these settings on.
+- **Other games:** art for another game goes in `hd-art/<game id>`
+  (`crystal-caliburn`, `monster-fair`), and the app uses it from then on.
 
 ## Giving it to someone
 

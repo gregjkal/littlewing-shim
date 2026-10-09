@@ -63,6 +63,29 @@ static bool shows_art(const uint8_t *rgba, int fw, int x, int y, int aw, int ax,
            p[2] == (uint8_t)(i / 3 + seed);
 }
 
+TEST(hd_finds_the_art_bundled_with_the_app) {
+    char dir[1024], art[1200], exe[1200], out[1300];
+    test_tmp_dir(dir, sizeof dir);
+    snprintf(art, sizeof art, "%s/LittleWing.app/Contents/Resources/hd-art/loony-labyrinth", dir);
+    CHECK(make_dirs(art));
+    snprintf(exe, sizeof exe, "%s/LittleWing.app/Contents/MacOS/loony", dir);
+    bool found = hd_bundled_art(exe, "loony-labyrinth", out, sizeof out);
+    bool same = found && strcmp(out, art) == 0;
+    bool other_game = hd_bundled_art(exe, "crystal-caliburn", out, sizeof out); /* no art for it */
+    char tiny[8];
+    bool too_long = hd_bundled_art(exe, "loony-labyrinth", tiny, sizeof tiny);
+    bool no_path = hd_bundled_art(NULL, "loony-labyrinth", out, sizeof out);
+    snprintf(exe, sizeof exe, "%s/build-release/loony", dir);
+    bool outside_app = hd_bundled_art(exe, "loony-labyrinth", out, sizeof out);
+    test_remove_tree(dir);
+    CHECK(found);
+    CHECK(same);
+    CHECK(!other_game);
+    CHECK(!too_long);
+    CHECK(!no_path);
+    CHECK(!outside_app);
+}
+
 TEST(hd_repeats_copybits_on_the_hd_copies) {
     hd_configure(2, NULL, NULL);
     qd_pixels src = buffer(3, 2, 8), dst = buffer(4, 4, 16);
