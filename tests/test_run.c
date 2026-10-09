@@ -476,6 +476,7 @@ TEST(run_monster_fair_wrong_key_code_shows_authorize_failed) {
    and, as the game quits, calls Alert(136), which it has no resource for.
    The address and key come from LOONY_TEST_MF_EMAIL and LOONY_TEST_MF_KEY. */
 TEST(run_monster_fair_erases_a_license_it_refuses_in_play) {
+    SKIP_UNLESS_SLOW();
     SKIP_UNLESS_MF();
     const char *email = getenv("LOONY_TEST_MF_EMAIL"), *key = getenv("LOONY_TEST_MF_KEY");
     if (!email || !*email || !key || !*key) {

@@ -15,7 +15,8 @@ brew install unicorn sdl3 cmake pkg-config
 cmake -S . -B build                                     # Debug (sanitizers): for development
 cmake --build build
 ./build/loony_tests          # all tests; ./build/loony_tests <substring> to filter
-LOONY_SLOW_TESTS=1 ./build/loony_tests  # also the three-minute regression runs
+LOONY_SLOW_TESTS=1 ./build/loony_tests  # also the slow tests (minutes of play each)
+./build/loony_tests -j 1     # one at a time in one process (for a debugger)
 
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release  # for playing
 cmake --build build-release
@@ -226,9 +227,15 @@ that register take the address and key code from the environment and skip
 without them: `LOONY_TEST_EMAIL` and `LOONY_TEST_KEY` (Loony Labyrinth), and
 `LOONY_TEST_MF_EMAIL` and `LOONY_TEST_MF_KEY` (MONSTER FAIR; the public key in
 `docs/test_key.txt` is one the game refuses in play, which that test checks).
-The three-minute regression runs (`run_three_minutes_*`) take minutes each, so
-they skip unless `LOONY_SLOW_TESTS=1` is set (`SKIP_UNLESS_SLOW`). Run them
+The slow tests, the three-minute regression runs (`run_three_minutes_*`) and
+MONSTER FAIR's play past its second license check, take a minute or more each,
+so they skip unless `LOONY_SLOW_TESTS=1` is set (`SKIP_UNLESS_SLOW`). Run them
 before merging anything that could change emulation, drawing or sound.
+
+The tests run in parallel, one child process per test and one test per CPU at
+a time (`-j N` to change that), each with a save folder of its own; a test's
+output prints as one block when it finishes, and the summary names the
+failures.
 
 MONSTER FAIR checks its license a second time during play, a couple of
 minutes in, and erases a license it refuses there, such as a key code posted
