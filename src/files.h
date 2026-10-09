@@ -32,9 +32,14 @@
 #define FSSPEC_SIZE 70
 
 /* The folder holding each game's save folder (and the picker's file):
-   ~/Library/Application Support/loony-shim. False if LOONY_DATA_DIR is
+   ~/Library/Application Support/littlewing-shim. False if LOONY_DATA_DIR is
    set (it is then the save folder itself) or HOME isn't. */
 bool files_data_root(char *out, size_t cap);
+
+/* Moves the save root from its name before the rename,
+   ~/Library/Application Support/loony-shim, to files_data_root's, unless
+   that already exists. Returns whether it moved. */
+bool files_move_old_data_root(void);
 
 /* The writable folder: $LOONY_DATA_DIR, or <files_data_root>/<game_id>.
    False if neither LOONY_DATA_DIR nor HOME is set. */

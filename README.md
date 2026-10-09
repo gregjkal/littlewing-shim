@@ -1,12 +1,12 @@
-# loony-shim
+# littlewing-shim
 
 Runs three PowerPC Mac pinball games by LittleWing natively on Apple Silicon:
 *Loony Labyrinth 3.0.1* and *Crystal Caliburn 3.0.1* (2003, Carbon programs for
 Mac OS 9 and X) and *MONSTER FAIR 1.2.5* (2010, a Mac OS X application). It
 emulates their CPU (Unicorn) and reimplements the Mac OS calls they make in C.
-Personal use only. This repo contains no game files; point it at your own
-copies. The one exception is `hd-art/`, enlarged art made from the game's
-pictures (see HD art below).
+This repo contains no game files: you need your own copies of the games. The
+one exception is `hd-art/`, enlarged art made from the game's pictures (see HD
+art below). It is an unofficial project, not made or endorsed by LittleWing.
 
 ## Build
 
@@ -25,8 +25,10 @@ cmake --build build-release --target app                # build-release/LittleWi
 
 ## Play
 
-The app needs an Apple Silicon Mac with macOS 26 or later. It plays the games
-from these places, which must hold the game's file:
+A release needs an Apple Silicon Mac with macOS 26 or later. An app you build
+yourself needs the macOS you built it on, or later, because Homebrew's Unicorn
+and SDL3 do. It plays the games from these places, which must hold the game's
+file:
 
 | Game | Where | File | Download |
 |---|---|---|---|
@@ -41,20 +43,24 @@ it: the game's folder for Loony Labyrinth and Crystal Caliburn, the app itself
 for MONSTER FAIR. Keep its name. MONSTER FAIR's own app doesn't run on Apple
 Silicon; LittleWing.app runs it.
 
-Copy `build-release/LittleWing.app` to `/Applications` (or anywhere) and
-double-click it. With two or three games installed, it opens on a picker
-showing each game's title picture (MONSTER FAIR's card shows its icon): Left
-and Right (or the mouse) choose, and Return (or a click) plays. It starts on
-the last game played. With one game installed, it plays that game. Choosing
-QUIT in a game's own menu goes back to the picker; Cmd-Q or closing the window
-quits. The app carries its own copies of Unicorn and SDL3, so Homebrew
-upgrades don't affect it. Built as above, it is signed ad hoc, which is enough
+Download `LittleWing-<version>.zip` from
+[Releases](https://github.com/gregjkal/littlewing-shim/releases), unzip it,
+and move `LittleWing.app` to `/Applications` (or anywhere); or build it as
+above and copy `build-release/LittleWing.app`. Double-click it. With two or
+three games installed, it opens on a picker showing each game's title picture
+(MONSTER FAIR's card shows its icon): Left and Right (or the mouse) choose,
+and Return (or a click) plays. It starts on the last game played. With one
+game installed, it plays that game. Choosing QUIT in a game's own menu goes
+back to the picker; Cmd-Q or closing the window quits. The app carries its own
+copies of Unicorn and SDL3, so Homebrew upgrades don't affect it. A release is
+notarized and opens without a warning. Built as above, it is signed ad hoc,
+which is enough
 on the Mac that built it. On another Mac, Gatekeeper blocks the first launch;
 open System Settings, then Privacy & Security, and click Open Anyway near the
 bottom. (Right-click and Open no longer gets past it on recent macOS.) To give
 the app to someone without that step, sign and notarize it (below). When the app can't
 start or the game crashes, it says so in a message box; its log is
-`~/Library/Logs/loony-shim/loony.log` (the run before is kept as
+`~/Library/Logs/littlewing-shim/loony.log` (the run before is kept as
 `loony.previous.log`).
 
 From a terminal:
@@ -94,14 +100,21 @@ and right sides):
 The keys can be changed from the game's OPTIONS menu. Unregistered, games are
 time-limited.
 
+The **Sound** menu in the menu bar has a volume slider, from silent at the left
+to the game's own level at the right. It starts at 80%, 6 dB below the game's
+level. The slider follows how loudness is heard, not the signal, so 50% is
+18 dB down. The volume is remembered, and is the same for every game.
+
 Each game's preferences (options, keys, the high-score table and the license)
 are saved when it quits (and at any exit but a crash), in
-`~/Library/Application Support/loony-shim/<game>/prefs.plist`, where `<game>`
+`~/Library/Application Support/littlewing-shim/<game>/prefs.plist`, where `<game>`
 is `loony-labyrinth`, `crystal-caliburn` or `monster-fair`. Any file a game
-writes goes to its own folder there, never into the game's folder or app. Delete a game's folder to start
-it over. Saves from before there were two games (`loony-shim/prefs.plist`)
-move into `loony-labyrinth/` on the next launch. The picker remembers the last
-game in `loony-shim/picker.plist`.
+writes goes to its own folder there, never into the game's folder or app.
+Delete a game's folder to start it over. The picker's last game and the volume
+are kept in `littlewing-shim/picker.plist`. Saves from before the project was
+renamed (`loony-shim/`) move to `littlewing-shim/` on the next launch, and
+saves from before there were two games (`prefs.plist` at the top) move into
+`loony-labyrinth/`.
 
 ## HD art (a prototype)
 
@@ -164,6 +177,24 @@ This sends the app to Apple for checking, staples the ticket to it, and
 leaves `build-release/LittleWing.zip` to send. The other person
 downloads the games as in [Play](#play), unzips the app into Applications,
 and double-clicks it. They need their own key codes to register.
+
+### Releases
+
+To publish a version on the
+[Releases](https://github.com/gregjkal/littlewing-shim/releases) page, from a
+clean `main` that matches GitHub:
+
+```bash
+LOONY_SIGN_ID="Developer ID Application: Your Name (TEAMID)" tools/release.sh 0.1.0
+```
+
+This builds Unicorn and SDL3 from their sources (`tools/build_deps.sh`) and a
+fresh Release build against them in `build-dist`, all for macOS 26, and runs
+the tests. It then builds the app as version 0.1.0, checks that it runs on
+macOS 26, and notarizes it. It tags the commit `v0.1.0`,
+pushes the tag, and makes a draft release with `LittleWing-0.1.0.zip`. Check
+the draft on GitHub, then publish it. Other builds of the app say version
+0.0.0 (set `LOONY_VERSION` to change it).
 
 ## Debugging
 
@@ -251,3 +282,15 @@ open --env LOONY_MF_SKIP_LICENSE_RECHECK=1 build-release/LittleWing.app
 ```
 
 Design: `docs/superpowers/specs/2026-09-30-loony-shim-design.md`
+
+## License
+
+littlewing-shim is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 2 of the License, or (at your option) any
+later version. See `LICENSE`.
+
+The app bundles Unicorn (GPLv2) and SDL3 (zlib license). Their licenses are in
+`LittleWing.app/Contents/Resources/Licenses`. The games, and the art in
+`hd-art/` made from them, belong to LittleWing and aren't covered by this
+license.

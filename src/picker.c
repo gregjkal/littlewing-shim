@@ -11,12 +11,11 @@
 #include "blit.h"
 #include "cgimage.h"
 #include "display.h"
-#include "files.h"
 #include "font.h"
 #include "pict.h"
-#include "plist.h"
 #include "png.h"
 #include "rsrc.h"
+#include "settings.h"
 #include "util.h"
 
 #define ART_SRC_W 512
@@ -229,37 +228,6 @@ static void on_mouse(int x, int y, bool down) {
 
 static void on_quit(void) { P.quit = true; }
 
-static void last_path(char *out, size_t cap, bool *ok) {
-    char root[PATH_MAX];
-    *ok = files_data_root(root, sizeof root);
-    if (*ok)
-        snprintf(out, cap, "%s/" GAME_PICKER_FILE, root);
-}
-
-static void load_last(char *id, size_t cap) {
-    id[0] = '\0';
-    char path[PATH_MAX], err[256];
-    bool ok;
-    last_path(path, sizeof path, &ok);
-    plist_entry *e;
-    uint32_t n;
-    if (!ok || plist_read(path, &e, &n, err, sizeof err) != PLIST_OK)
-        return;
-    for (uint32_t i = 0; i < n; i++)
-        if (strcmp(e[i].key, "last game") == 0 && !e[i].is_number)
-            snprintf(id, cap, "%s", e[i].str);
-    plist_free(e, n);
-}
-
-static void save_last(const char *id) {
-    char path[PATH_MAX], err[256];
-    bool ok;
-    last_path(path, sizeof path, &ok);
-    plist_entry e = {.key = "last game", .str = (char *)id};
-    if (ok && !plist_write(path, &e, 1, err, sizeof err))
-        log_msg("picker: can't remember the last game: %s", err);
-}
-
 /* The next LOONY_PICK item into item ("" if none), passing the rest on. */
 static void next_scripted_pick(char *item, size_t cap) {
     item[0] = '\0';
@@ -296,8 +264,8 @@ const game_info *picker_run(const game_info *const *games, int n) {
             e[i].art = NULL;
         }
     }
-    char last[64];
-    load_last(last, sizeof last);
+    char last[64] = "";
+    settings_get_str(SETTINGS_LAST_GAME, last, sizeof last);
     memset(&P, 0, sizeof P);
     P.n = n;
     P.selected = picker_initial(e, n, last);
@@ -340,6 +308,6 @@ const game_info *picker_run(const game_info *const *games, int n) {
         exit(0);
     }
     log_msg("picker: %s", e[P.selected].game->id);
-    save_last(e[P.selected].game->id);
+    settings_set_str(SETTINGS_LAST_GAME, e[P.selected].game->id);
     return e[P.selected].game;
 }

@@ -197,3 +197,16 @@ TEST(sound_unknown_commands_are_logged_once) {
     CHECK(first != NULL);
     CHECK(strstr(first + strlen(msg), msg) == NULL);
 }
+
+TEST(sound_volume_is_clamped_and_cubed) {
+    CHECK_EQ(sound_volume(), SOUND_DEFAULT_VOLUME);
+    sound_set_volume(150);
+    CHECK_EQ(sound_volume(), 100);
+    sound_set_volume(-5);
+    CHECK_EQ(sound_volume(), 0);
+    sound_set_volume(SOUND_DEFAULT_VOLUME);
+    CHECK(sound_gain(100) == 1.0f);
+    CHECK(sound_gain(0) == 0.0f);
+    CHECK(sound_gain(50) == 0.125f);
+    CHECK(sound_gain(80) > 0.511f && sound_gain(80) < 0.513f);
+}

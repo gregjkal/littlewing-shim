@@ -40,7 +40,8 @@ const game_info *game_in_folder(const char *dir);
    most cap) and returns how many there are. */
 int game_installed(const game_info **out, int cap);
 
-/* The picker's file in the save root (files_data_root): the last game picked. */
+/* The app's own file in the save root (files_data_root): settings.c's, the
+   last game picked and the volume. Named for the picker, which came first. */
 #define GAME_PICKER_FILE "picker.plist"
 
 /* Before Plan 8 there was one game, and its files (prefs.plist) were saved

@@ -1,11 +1,13 @@
 #include "test.h"
 
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include "files.h"
 #include "harness.h"
+#include "util.h"
 
 static const char *const names[] = {
     "FSMakeFSSpec", "FSpOpenDF", "PBReadSync", "GetEOF", "SetFPos", "GetFPos", "FSClose",
@@ -426,9 +428,9 @@ TEST(files_data_dir_is_per_game_under_home) {
     bool have_dir = files_data_dir("crystal-caliburn", dir, sizeof dir);
     restore_env();
     CHECK(have_root);
-    CHECK_STR(root, "/Users/someone/Library/Application Support/loony-shim");
+    CHECK_STR(root, "/Users/someone/Library/Application Support/littlewing-shim");
     CHECK(have_dir);
-    CHECK_STR(dir, "/Users/someone/Library/Application Support/loony-shim/crystal-caliburn");
+    CHECK_STR(dir, "/Users/someone/Library/Application Support/littlewing-shim/crystal-caliburn");
 }
 
 /* Review Focus 5: LOONY_DATA_DIR is the save folder itself, for any game,
@@ -556,4 +558,70 @@ TEST(files_writing_a_bundle_file_writes_the_save_folders_copy) {
     snprintf(host, sizeof host, "%s/LL Data/effect.bin", data);
     CHECK_EQ(make_ref(host, scratch(80), 0), 0);
     teardown();
+}
+
+/* Saves from before the rename to littlewing-shim move to the new root. */
+static void make_save(const char *home, const char *root_name) {
+    char path[1300];
+    snprintf(path, sizeof path, "%s/Library/Application Support/%s/loony-labyrinth", home, root_name);
+    make_dirs(path);
+    strcat(path, "/prefs.plist");
+    FILE *f = fopen(path, "w");
+    if (f) {
+        fputs(root_name, f);
+        fclose(f);
+    }
+}
+
+static bool save_is(const char *home, const char *root_name, const char *text) {
+    char path[1300];
+    snprintf(path, sizeof path, "%s/Library/Application Support/%s/loony-labyrinth/prefs.plist", home,
+             root_name);
+    size_t len = 0;
+    char *got = (char *)read_file(path, &len);
+    bool same = got && len == strlen(text) && memcmp(got, text, len) == 0;
+    free(got);
+    return same;
+}
+
+TEST(files_old_data_root_moves_to_the_new_name) {
+    char home[1024], old[1300];
+    test_tmp_dir(home, sizeof home);
+    make_save(home, "loony-shim");
+    set_env(home, NULL);
+    bool moved = files_move_old_data_root();
+    bool again = files_move_old_data_root();
+    restore_env();
+    CHECK(moved);
+    CHECK(!again); /* nothing left to move */
+    CHECK(save_is(home, "littlewing-shim", "loony-shim"));
+    snprintf(old, sizeof old, "%s/Library/Application Support/loony-shim", home);
+    CHECK(access(old, F_OK) != 0);
+    test_remove_tree(home);
+}
+
+TEST(files_old_data_root_never_overwrites) {
+    char home[1024];
+    test_tmp_dir(home, sizeof home);
+    make_save(home, "loony-shim");
+    make_save(home, "littlewing-shim");
+    set_env(home, NULL);
+    bool moved = files_move_old_data_root();
+    restore_env();
+    CHECK(!moved);
+    CHECK(save_is(home, "littlewing-shim", "littlewing-shim"));
+    CHECK(save_is(home, "loony-shim", "loony-shim")); /* left in place, and logged */
+    test_remove_tree(home);
+}
+
+TEST(files_old_data_root_stays_with_loony_data_dir) {
+    char home[1024];
+    test_tmp_dir(home, sizeof home);
+    make_save(home, "loony-shim");
+    set_env(home, "/tmp/somewhere");
+    bool moved = files_move_old_data_root();
+    restore_env();
+    CHECK(!moved);
+    CHECK(save_is(home, "loony-shim", "loony-shim"));
+    test_remove_tree(home);
 }
