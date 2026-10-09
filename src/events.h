@@ -36,6 +36,8 @@
 #define EV_APP_ACTIVATED   1
 #define EV_APP_DEACTIVATED 2
 #define EV_APPLE_EVENT     1
+#define EV_CLASS_COMMAND     0x636D6473u /* 'cmds' */
+#define EV_COMMAND_PROCESS 1
 
 typedef struct {
     uint32_t target, handler, user_data;
@@ -49,6 +51,16 @@ void events_init(void);
 
 /* The event target for a window. */
 uint32_t events_window_target(uint32_t window);
+
+/* What clicking a control with a command does: sends kEventCommandProcess,
+   whose direct object is an HICommand holding command, to the window's
+   handlers, then the application's. Returns the first answer that isn't
+   eventNotHandledErr, or eventNotHandledErr. */
+int32_t events_send_command(uint32_t window, uint32_t command);
+
+/* A window was disposed of: its handlers go, and keyboard focus moves to
+   the newest window that still has one (or none). */
+void events_forget_window(uint32_t window);
 
 /* Installed handlers, in installation order. */
 int events_handlers(const ev_handler **out);

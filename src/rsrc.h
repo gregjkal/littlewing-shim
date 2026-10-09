@@ -24,6 +24,10 @@ typedef struct {
 bool rsrc_open(const uint8_t *fork, size_t len, char *err, size_t errlen);
 void rsrc_close(void);
 
+/* For a program with no resource fork (a Mach-O bundle): every lookup fails
+   as if the resource were absent. */
+void rsrc_open_empty(void);
+
 uint32_t rsrc_type_count(void);
 uint32_t rsrc_total(void);
 uint32_t rsrc_count(uint32_t type);

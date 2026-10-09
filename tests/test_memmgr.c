@@ -55,6 +55,26 @@ TEST(mm_freeing_everything_restores_the_whole_heap) {
     CHECK_EQ(mm_free_bytes(), FULL);
 }
 
+TEST(mm_allocates_in_the_macho_heap) {
+    gm_init_layout(GM_LAYOUT_MACHO);
+    mm_init();
+    CHECK_EQ(mm_free_bytes(), GUEST_MACHO_HEAP_SIZE - MM_HEADER_SIZE);
+    uint32_t p = mm_new_ptr(10, true);
+    CHECK(p >= GUEST_MACHO_HEAP_BASE && p < GUEST_MACHO_HEAP_BASE + GUEST_MACHO_HEAP_SIZE);
+    CHECK(mm_is_ptr(p));
+    uint32_t h = mm_new_handle(200, false);
+    CHECK(mm_is_handle(h));
+    CHECK(gm_r32(h) >= GUEST_MACHO_HEAP_BASE);
+    /* The game's data files total about 50 MB. */
+    uint32_t big = mm_new_ptr(80u << 20, false);
+    CHECK(big != 0);
+    CHECK_EQ(mm_dispose_ptr(big), MM_NO_ERR);
+    CHECK_EQ(mm_dispose_ptr(p), MM_NO_ERR);
+    CHECK_EQ(mm_dispose_handle(h), MM_NO_ERR);
+    CHECK_EQ(mm_free_bytes(), GUEST_MACHO_HEAP_SIZE - MM_HEADER_SIZE);
+    fresh_heap();
+}
+
 TEST(mm_first_fit_reuses_a_freed_hole) {
     fresh_heap();
     uint32_t a = mm_new_ptr(256, false);

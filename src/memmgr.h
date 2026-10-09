@@ -2,7 +2,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Memory Manager: Ptrs and Handles in the guest heap (GUEST_HEAP_BASE, 64 MB).
+/* Memory Manager: Ptrs and Handles in the guest heap (gm_heap_base(): 64 MB
+   for a PEF program, 256 MB for a Mach-O one).
    Every block has a 16-byte big-endian header in guest memory. A handle is the
    address of a master pointer block, whose 4-byte payload points at the data
    block. Handles never move and are never purged. */

@@ -16,6 +16,7 @@ static struct {
     const char *const *names;
     uint32_t n;
     uint32_t scratch_next;
+    bool direct; /* Mach-O style: guest_call takes code addresses */
 } harness;
 
 /* Fresh machine and trap table with these import names. Register handlers after. */
@@ -29,6 +30,15 @@ static inline void harness_init(const char *const *names, uint32_t n) {
     harness.names = names;
     harness.n = n;
     harness.scratch_next = HARNESS_SCRATCH;
+    harness.direct = false;
+}
+
+/* The same, with direct calls on, as for a Mach-O game: call_import jumps
+   straight to the trap address, and guest_call takes code addresses. */
+static inline void harness_init_direct(const char *const *names, uint32_t n) {
+    harness_init(names, n);
+    trap_set_direct_calls(true);
+    harness.direct = true;
 }
 
 /* Calls the named import with nargs word arguments and returns its r3. */
@@ -41,7 +51,8 @@ static inline uint32_t call_import(const char *name, int nargs, ...) {
     va_end(ap);
     for (uint32_t i = 0; i < harness.n; i++)
         if (strcmp(harness.names[i], name) == 0)
-            return guest_call(HARNESS_TV_BASE + 8 * i, nargs, args);
+            return guest_call(harness.direct ? GUEST_TRAP_ADDR(i) : HARNESS_TV_BASE + 8 * i, nargs,
+                              args);
     fatal("harness: %s is not in the import table", name);
 }
 

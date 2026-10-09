@@ -6,30 +6,68 @@
 
 #include "util.h"
 
-#define GUEST_MEM_SIZE GUEST_STACK_TOP
+#define COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
 static uint8_t *mem;
+static size_t mem_size;
 static gm_fault_fn fault_handler;
 
-static const gm_region regions[] = {
+static const gm_region pef_regions[] = {
     {GUEST_LOWMEM_BASE, GUEST_LOWMEM_SIZE, GM_PROT_R | GM_PROT_W},
     {GUEST_IMAGE_BASE, GUEST_IMAGE_LIMIT - GUEST_IMAGE_BASE, GM_PROT_R | GM_PROT_W | GM_PROT_X},
     {GUEST_HEAP_BASE, GUEST_HEAP_SIZE, GM_PROT_R | GM_PROT_W},
     {GUEST_STACK_BASE, GUEST_STACK_SIZE, GM_PROT_R | GM_PROT_W},
 };
 
-void gm_init(void) {
+static const gm_region macho_regions[] = {
+    {GUEST_MACHO_IMAGE_BASE, GUEST_MACHO_IMAGE_LIMIT - GUEST_MACHO_IMAGE_BASE,
+     GM_PROT_R | GM_PROT_W | GM_PROT_X},
+    {GUEST_STACK_BASE, GUEST_STACK_SIZE, GM_PROT_R | GM_PROT_W},
+    {GUEST_MACHO_HEAP_BASE, GUEST_MACHO_HEAP_SIZE, GM_PROT_R | GM_PROT_W},
+};
+
+static gm_layout layout = GM_LAYOUT_PEF;
+static const gm_region *regions = pef_regions;
+static int nregions = COUNT(pef_regions);
+
+void gm_init_layout(gm_layout l) {
     gm_shutdown();
-    void *p = mmap(NULL, GUEST_MEM_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    layout = l;
+    regions = l == GM_LAYOUT_MACHO ? macho_regions : pef_regions;
+    nregions = l == GM_LAYOUT_MACHO ? COUNT(macho_regions) : COUNT(pef_regions);
+    /* One reservation from address 0 to the end of the highest region. The
+       host backs only the pages the guest touches. */
+    uint64_t end = 0;
+    for (int i = 0; i < nregions; i++)
+        if ((uint64_t)regions[i].base + regions[i].size > end)
+            end = (uint64_t)regions[i].base + regions[i].size;
+    mem_size = (size_t)end;
+    void *p = mmap(NULL, mem_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (p == MAP_FAILED)
-        fatal("can't allocate %u bytes of guest memory", GUEST_MEM_SIZE);
+        fatal("can't allocate %zu bytes of guest memory", mem_size);
     mem = p;
+}
+
+void gm_init(void) {
+    gm_init_layout(GM_LAYOUT_PEF);
 }
 
 void gm_shutdown(void) {
     if (mem)
-        munmap(mem, GUEST_MEM_SIZE);
+        munmap(mem, mem_size);
     mem = NULL;
+}
+
+gm_layout gm_current_layout(void) {
+    return layout;
+}
+
+uint32_t gm_heap_base(void) {
+    return layout == GM_LAYOUT_MACHO ? GUEST_MACHO_HEAP_BASE : GUEST_HEAP_BASE;
+}
+
+uint32_t gm_heap_size(void) {
+    return layout == GM_LAYOUT_MACHO ? GUEST_MACHO_HEAP_SIZE : GUEST_HEAP_SIZE;
 }
 
 uint8_t *gm_host_base(void) {
@@ -38,11 +76,11 @@ uint8_t *gm_host_base(void) {
 
 int gm_regions(const gm_region **out) {
     *out = regions;
-    return (int)(sizeof regions / sizeof regions[0]);
+    return nregions;
 }
 
 bool gm_is_backed(uint32_t addr, uint32_t len) {
-    for (size_t i = 0; i < sizeof regions / sizeof regions[0]; i++) {
+    for (int i = 0; i < nregions; i++) {
         uint64_t start = regions[i].base, end = start + regions[i].size;
         if (addr >= start && addr < end && (uint64_t)addr + len <= end)
             return true;

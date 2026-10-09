@@ -8,14 +8,18 @@
 /* The game picker LittleWing.app shows when more than one game is
    installed: each game's title picture (PICT 800 in its own resource fork,
    read from the user's copy) on a card, its name under it, and the
-   selection marked in gold. This file draws and reads input; picker_run
-   (Task 5) shows it. Pixels here are QuickDraw 32-bit: big-endian xRGB. */
+   selection marked in gold. A bundle game (MONSTER FAIR) has no title
+   picture the shim reads: its card shows its icon, appl.png, centered.
+   Two games get two large cards side by side; three get three smaller
+   ones (240x180) in a row, the art reduced to fit. This file draws and
+   reads input; picker_run (Task 5) shows it. Pixels here are QuickDraw
+   32-bit: big-endian xRGB. */
 
 #define PICKER_W 800
 #define PICKER_H 600
 #define PICKER_ART_W 384 /* PICT 800 (512x384) at 3/4 */
 #define PICKER_ART_H 288
-#define PICKER_MAX 2     /* the layout fits two games */
+#define PICKER_MAX 3     /* the layouts fit two or three games */
 
 typedef struct {
     const game_info *game;
@@ -28,6 +32,11 @@ typedef struct {
    Opens and closes the Resource Manager's fork, so call it before the
    game's own is opened. */
 bool picker_load_art(const char *exe_path, uint8_t *art, char *err, size_t errlen);
+
+/* A bundle game's card: the PNG at png_path (at most PICKER_ART_W x
+   PICKER_ART_H), centered on the plain card color, into art. False, with
+   err saying why, if it can't be read or is too large. */
+bool picker_load_icon(const char *png_path, uint8_t *art, char *err, size_t errlen);
 
 /* Draws the whole picker into screen (PICKER_W x PICKER_H) with entry
    `selected` marked. n is at most PICKER_MAX. */

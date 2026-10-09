@@ -8,3 +8,7 @@ Code = 761956149062368478713072
 # Crystal Caliburn, Mac
 Email = KCN@demo.user.org
 Code = 671428156153220608212701
+
+# Monster Fair 1.1.2, Unknown Platform
+EMail: santaclaus@192.168.180.198 
+S/N : 771400160065453700552749

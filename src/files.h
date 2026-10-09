@@ -56,5 +56,9 @@ bool files_init(const char *game_dir, const char *data_dir);
 void files_mac_to_utf8(const char *mac, char *out, size_t cap);
 
 /* Registers FSMakeFSSpec, FSpCreate, FSpOpenDF, PBReadSync, FSWrite, GetEOF,
-   SetEOF, SetFPos, GetFPos, PBFlushFileSync and FSClose. */
+   SetEOF, SetFPos, GetFPos, PBFlushFileSync and FSClose, and for a Mach-O
+   game the FSRef and fork calls: FSPathMakeRef (host paths inside the game
+   or data folder), FSGetDataForkName, FSOpenFork, FSGetForkSize,
+   FSGetForkPosition, FSSetForkPosition and FSCloseFork. Fork refnums are
+   File Manager refnums, so the game can mix the two. */
 void files_register(void);

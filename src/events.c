@@ -26,6 +26,8 @@
 #define TYPE_UINT32   0x6D61676Eu /* 'magn' */
 #define TYPE_CHAR     0x54455854u /* 'TEXT' */
 #define TYPE_WILDCARD 0x2A2A2A2Au /* '****' */
+#define TYPE_HICOMMAND 0x68636D64u /* 'hcmd' */
+#define HICOMMAND_SIZE 14 /* attributes, commandID, menu.menuRef, menu.menuItemIndex (Carbon packs to 2) */
 #define AE_CLASS_CORE 0x61657674u /* 'aevt' */
 #define AE_ID_QUIT    0x71756974u /* 'quit' */
 
@@ -43,6 +45,7 @@ typedef struct {
     uint32_t cls, kind;
     uint32_t key_code, modifiers;
     uint8_t chr;
+    uint32_t command; /* kEventClassCommand: the HICommand's commandID */
 } ev_event;
 
 static struct {
@@ -118,7 +121,7 @@ static ev_event *post(uint32_t cls, uint32_t kind) {
         E.warned_full = true;
         return NULL;
     }
-    E.events[i] = (ev_event){1, true, false, cls, kind, 0, 0, 0};
+    E.events[i] = (ev_event){1, true, false, cls, kind, 0, 0, 0, 0};
     E.queue[(E.qhead + E.qcount) % EV_MAX_EVENTS] = i;
     E.qcount++;
     return &E.events[i];
@@ -252,8 +255,10 @@ int events_active_timers(void) {
 }
 
 /* Window targets are TAG_WINDOW + the window's address / 16, which is
-   unique and reversible. */
-uint32_t events_window_target(uint32_t window) { return TAG_WINDOW + window / 16u; }
+   unique and reversible. Windows live in the guest heap, which is below
+   0x10000000 for a PEF game and 0x10000000-0x1FFFFFFF for a Mach-O one, so
+   the address's low 28 bits are enough and keep the target in range. */
+uint32_t events_window_target(uint32_t window) { return TAG_WINDOW + (window & 0x0FFFFFFFu) / 16u; }
 
 static bool is_window_target(uint32_t t) { return t >= TAG_WINDOW && t < TAG_WINDOW + 0x01000000u; }
 
@@ -468,6 +473,34 @@ static void h_install_standard_event_handler(void) {
 
 /* ---- guest calls: events ---- */
 
+int32_t events_send_command(uint32_t window, uint32_t command) {
+    int i = 0;
+    while (i < EV_MAX_EVENTS && E.events[i].refs)
+        i++;
+    if (i == EV_MAX_EVENTS)
+        trap_crash("no room for a command event (%d events live)", EV_MAX_EVENTS);
+    E.events[i] = (ev_event){.refs = 1, .cls = EV_CLASS_COMMAND, .kind = EV_COMMAND_PROCESS,
+                             .command = command};
+    int32_t r = dispatch(i, events_window_target(window));
+    release(&E.events[i]);
+    return r;
+}
+
+void events_forget_window(uint32_t window) {
+    uint32_t t = events_window_target(window);
+    int kept = 0;
+    for (int i = 0; i < E.nhandlers; i++)
+        if (E.handlers[i].target != t)
+            E.handlers[kept++] = E.handlers[i];
+    E.nhandlers = kept;
+    if (E.focus_window == t) {
+        E.focus_window = 0;
+        for (int i = 0; i < E.nhandlers; i++) /* the newest window still with a handler */
+            if (is_window_target(E.handlers[i].target))
+                E.focus_window = E.handlers[i].target;
+    }
+}
+
 /* SendEventToEventTarget(EventRef, EventTargetRef) -> OSStatus */
 static void h_send_event_to_event_target(void) {
     ev_event *e = need_event("SendEventToEventTarget", trap_arg(0));
@@ -475,6 +508,11 @@ static void h_send_event_to_event_target(void) {
 }
 
 static void h_get_event_kind(void) { trap_return(need_event("GetEventKind", trap_arg(0))->kind); }
+
+/* FlushEvents(EventMask, EventMask stopMask): does nothing. It empties the
+   classic Event Manager's queue, which nothing here fills. MONSTER FAIR
+   imports it but never calls it. */
+static void h_flush_events(void) {}
 
 static void h_release_event(void) {
     ev_event *e = need_event("ReleaseEvent", trap_arg(0));
@@ -493,9 +531,13 @@ static void h_get_event_parameter(void) {
     ev_event *e = need_event("GetEventParameter", trap_arg(0));
     uint32_t name = trap_arg(1), desired = trap_arg(2), out_type = trap_arg(3);
     uint32_t buf_size = trap_arg(4), out_size = trap_arg(5), out = trap_arg(6);
-    uint8_t data[4];
+    uint8_t data[HICOMMAND_SIZE] = {0};
     uint32_t type, size;
-    if (e->cls == EV_CLASS_KEYBOARD && name == PARAM_KEY_CODE && e->kind != EV_RAW_KEY_MODIFIERS_CHANGED) {
+    if (e->cls == EV_CLASS_COMMAND && name == PARAM_DIRECT_OBJECT) {
+        type = TYPE_HICOMMAND;
+        size = HICOMMAND_SIZE;
+        wr_be32(data + 4, e->command); /* attributes and the menu fields stay 0 */
+    } else if (e->cls == EV_CLASS_KEYBOARD && name == PARAM_KEY_CODE && e->kind != EV_RAW_KEY_MODIFIERS_CHANGED) {
         type = TYPE_UINT32;
         size = 4;
         wr_be32(data, e->key_code);
@@ -643,6 +685,7 @@ void events_register(void) {
     trap_register("InstallStandardEventHandler", h_install_standard_event_handler);
     trap_register("SendEventToEventTarget", h_send_event_to_event_target);
     trap_register("GetEventKind", h_get_event_kind);
+    trap_register("FlushEvents", h_flush_events);
     trap_register("GetEventParameter", h_get_event_parameter);
     trap_register("ReleaseEvent", h_release_event);
     trap_register("ReceiveNextEvent", h_receive_next_event);

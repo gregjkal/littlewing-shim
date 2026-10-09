@@ -11,7 +11,8 @@
 
 static const char *const names[] = {
     "FSMakeFSSpec", "FSpOpenDF", "PBReadSync", "GetEOF", "SetFPos", "GetFPos", "FSClose",
-    "FSpCreate", "FSWrite", "SetEOF", "PBFlushFileSync",
+    "FSpCreate", "FSWrite", "SetEOF", "PBFlushFileSync", "FSPathMakeRef", "FSGetDataForkName",
+    "FSOpenFork", "FSGetForkSize", "FSGetForkPosition", "FSSetForkPosition", "FSCloseFork",
 };
 
 static char dir[1024], data[1100];
@@ -453,6 +454,110 @@ TEST(files_data_dir_without_home_or_loony_data_dir) {
     restore_env();
     CHECK(!have_root);
     CHECK(!have_dir);
+}
+
+/* ---- FSRefs and forks (Mach-O) ---- */
+
+/* FSPathMakeRef on a host path; returns the OSStatus. */
+static int16_t make_ref(const char *host, uint32_t ref, uint32_t is_dir) {
+    uint32_t p = scratch((uint32_t)strlen(host) + 1);
+    gm_write_cstr(p, host);
+    return (int16_t)call_import("FSPathMakeRef", 3, p, ref, is_dir);
+}
+
+static uint16_t open_fork(const char *rel, int perm) {
+    char host[1200];
+    snprintf(host, sizeof host, "%s/%s", dir, rel);
+    uint32_t ref = scratch(80), out = scratch(2);
+    if (make_ref(host, ref, 0) != 0)
+        return 0;
+    if (call_import("FSOpenFork", 5, ref, 0u, 0u, (uint32_t)perm, out) != 0)
+        return 0;
+    return gm_r16(out);
+}
+
+TEST(files_path_make_ref_finds_a_resource) {
+    setup();
+    char host[1200];
+    uint32_t ref = scratch(80), is_dir = scratch(1);
+    snprintf(host, sizeof host, "%s/LL Data/effect.bin", dir);
+    gm_w8(is_dir, 7);
+    CHECK_EQ(make_ref(host, ref, is_dir), 0);
+    CHECK_EQ(gm_r8(is_dir), 0);
+    CHECK_EQ(gm_r32(ref), 0x4C576673u);
+    snprintf(host, sizeof host, "%s/LL Data", dir);
+    CHECK_EQ(make_ref(host, ref, is_dir), 0);
+    CHECK_EQ(gm_r8(is_dir), 1);
+    snprintf(host, sizeof host, "%s/LL Data/missing.bin", dir);
+    CHECK_EQ(make_ref(host, ref, 0), FILES_FNF_ERR);
+    uint32_t name = scratch(512);
+    gm_w16(name, 0xFFFF);
+    CHECK_EQ(call_import("FSGetDataForkName", 1, name), 0);
+    CHECK_EQ(gm_r16(name), 0);
+    teardown();
+}
+
+TEST(files_path_make_ref_refuses_outside_paths) {
+    setup();
+    char host[1200];
+    uint32_t ref = scratch(80);
+    snprintf(host, sizeof host, "%s/../outside.txt", dir);
+    FILE *f = fopen(host, "w");
+    fclose(f);
+    CHECK_EQ(make_ref(host, ref, 0), FILES_FNF_ERR);
+    CHECK_EQ(make_ref("/etc/hosts", ref, 0), FILES_FNF_ERR);
+    snprintf(host, sizeof host, "%sX/LL Data/effect.bin", dir); /* a sibling whose name starts the same */
+    CHECK_EQ(make_ref(host, ref, 0), FILES_FNF_ERR);
+    teardown();
+}
+
+TEST(files_open_fork_reads_with_pbreadsync) {
+    setup();
+    uint16_t r = open_fork("LL Data/effect.bin", 1);
+    CHECK(r != 0);
+    CHECK_STR(read_at(r, 6, 5), "world");
+    CHECK_EQ(eof_of(r), 11);
+    CHECK_EQ(call_import("FSCloseFork", 1, (uint32_t)r), 0);
+    CHECK_EQ((int16_t)call_import("FSCloseFork", 1, (uint32_t)r), FILES_RF_NUM_ERR);
+    teardown();
+}
+
+TEST(files_fork_size_and_position) {
+    setup();
+    uint16_t r = open_fork("LL Data/effect.bin", 1);
+    uint32_t v = scratch(8);
+    CHECK_EQ(call_import("FSGetForkSize", 2, (uint32_t)r, v), 0);
+    CHECK_EQ(gm_r32(v), 0);
+    CHECK_EQ(gm_r32(v + 4), 11);
+    CHECK_EQ(call_import("FSSetForkPosition", 4, (uint32_t)r, 1u, 0u, 6u), 0);
+    CHECK_EQ(call_import("FSGetForkPosition", 2, (uint32_t)r, v), 0);
+    CHECK_EQ(gm_r32(v + 4), 6);
+    CHECK_EQ(call_import("FSSetForkPosition", 4, (uint32_t)r, 2u, 0xFFFFFFFFu, 0xFFFFFFFEu), 0);
+    CHECK_EQ(call_import("GetFPos", 2, (uint32_t)r, v), 0); /* the File Manager sees the same mark */
+    CHECK_EQ(gm_r32(v), 9);
+    CHECK_EQ((int16_t)call_import("FSSetForkPosition", 4, (uint32_t)r, 1u, 1u, 0u), FILES_POS_ERR);
+    CHECK_EQ((int16_t)call_import("FSGetForkSize", 2, 99u, v), FILES_RF_NUM_ERR);
+    call_import("FSCloseFork", 1, (uint32_t)r);
+    teardown();
+}
+
+/* Review Focus 4: nothing is written into the bundle. */
+TEST(files_writing_a_bundle_file_writes_the_save_folders_copy) {
+    setup();
+    uint16_t r = open_fork("LL Data/effect.bin", 3);
+    CHECK(r != 0);
+    CHECK_EQ(fs_write(r, "HELLO"), 0);
+    call_import("FSCloseFork", 1, (uint32_t)r);
+    CHECK_STR(contents(dir, "LL Data/effect.bin"), "hello world");
+    CHECK_STR(contents(data, "LL Data/effect.bin"), "HELLO world");
+    /* The copy is what the bundle path now opens, and its own path names the same file. */
+    r = open_fork("LL Data/effect.bin", 1);
+    CHECK_STR(read_at(r, 0, 11), "HELLO world");
+    call_import("FSCloseFork", 1, (uint32_t)r);
+    char host[1200];
+    snprintf(host, sizeof host, "%s/LL Data/effect.bin", data);
+    CHECK_EQ(make_ref(host, scratch(80), 0), 0);
+    teardown();
 }
 
 /* Saves from before the rename to littlewing-shim move to the new root. */

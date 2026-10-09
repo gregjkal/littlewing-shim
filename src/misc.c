@@ -34,6 +34,8 @@ static struct {
     void (*exit_hook)(void);
 } M;
 
+static uint32_t system_version = MISC_SYSTEM_VERSION_PEF; /* Gestalt('sysv') */
+
 extern char **environ;
 
 static bool open_with_open(const char *url) {
@@ -53,6 +55,7 @@ void misc_init(void) {
     misc_idle_fn idle = M.idle;
     misc_url_fn open_url = M.open_url;
     memset(&M, 0, sizeof M);
+    system_version = MISC_SYSTEM_VERSION_PEF;
     M.idle = idle;
     M.open_url = open_url ? open_url : open_with_open;
     clock_gettime(CLOCK_MONOTONIC, &M.start);
@@ -109,6 +112,13 @@ void misc_poll(void) {
 
 bool misc_cursor_visible(void) { return M.cursor_level == 0; }
 
+void misc_hide_cursor(void) { M.cursor_level--; }
+
+void misc_show_cursor(void) {
+    if (M.cursor_level < 0)
+        M.cursor_level++;
+}
+
 bool misc_ae_handler(uint32_t event_class, uint32_t event_id, uint32_t *handler,
                      uint32_t *refcon) {
     for (int i = 0; i < M.nae; i++) {
@@ -123,10 +133,12 @@ bool misc_ae_handler(uint32_t event_class, uint32_t event_id, uint32_t *handler,
 
 /* ---- Gestalt ---- */
 
+void misc_set_system_version(uint32_t v) { system_version = v; }
+
 static const struct {
     uint32_t selector, value;
 } gestalt_table[] = {
-    {FOURCC('s', 'y', 's', 'v'), 0x1028},     /* Mac OS X 10.2.8 */
+    {FOURCC('s', 'y', 's', 'v'), 0},          /* system_version */
     {FOURCC('c', 'b', 'o', 'n'), 0x0160},     /* Carbon 1.6 */
     {FOURCC('p', 'p', 'c', 'f'), 0x0003},     /* G3: graphics ops and stfiwx, no AltiVec (bit 4) */
     {FOURCC('v', 'm', ' ', ' '), 0x0001},     /* virtual memory present */
@@ -139,7 +151,7 @@ static void h_gestalt(void) {
     uint32_t sel = trap_arg(0), resp = trap_arg(1);
     for (size_t i = 0; i < sizeof gestalt_table / sizeof gestalt_table[0]; i++) {
         if (gestalt_table[i].selector == sel) {
-            gm_w32(resp, gestalt_table[i].value);
+            gm_w32(resp, sel == FOURCC('s', 'y', 's', 'v') ? system_version : gestalt_table[i].value);
             trap_return(0);
             return;
         }
@@ -178,6 +190,28 @@ static void h_microseconds(void) {
     gm_w32(out + 4, (uint32_t)us);
 }
 
+void misc_sleep_us(uint64_t us) {
+    if (us == 0) {
+        misc_poll();
+        return;
+    }
+    uint64_t end = elapsed_us() + us, tick_us = 1000000 / 60;
+    for (;;) {
+        idle_if_new_tick(misc_ticks());
+        uint64_t now = elapsed_us();
+        if (now >= end)
+            break;
+        if (M.fixed) {
+            uint64_t next = (now / tick_us + 1) * tick_us;
+            M.virtual_us = next < end ? next : end;
+            M.polls = 0;
+        } else {
+            uint64_t step = end - now < tick_us / 4 ? end - now : tick_us / 4;
+            misc_wait((double)step / 1e6);
+        }
+    }
+}
+
 /* Delay(ticks, &finalTicks): sleeps in steps of at most one tick, running
    the idle hook between steps. */
 static void h_delay(void) {
@@ -202,6 +236,15 @@ static void h_delay(void) {
 /* The virtual clock's calendar starts at 2003-01-01 00:00:00 (Mac time), so
    fixed-clock runs see the same date every time. */
 #define FIXED_CLOCK_EPOCH 3124224000u
+
+/* The same instant in Unix time: 2003-01-01 00:00:00 UTC. */
+#define FIXED_CLOCK_UNIX 1041379200
+
+int64_t misc_unix_time(void) {
+    if (M.fixed)
+        return FIXED_CLOCK_UNIX + (int64_t)(M.virtual_us / 1000000);
+    return (int64_t)time(NULL);
+}
 
 static void h_get_date_time(void) {
     if (M.fixed) {
@@ -390,11 +433,15 @@ static void h_num2dec(void) {
 
 void misc_set_exit_hook(void (*fn)(void)) { M.exit_hook = fn; }
 
-static void h_exit_to_shell(void) {
-    log_msg("ExitToShell");
+void misc_exit(const char *why, int status) {
+    log_msg("%s", why);
     if (M.exit_hook)
         M.exit_hook();
-    exit(0);
+    exit(status);
+}
+
+static void h_exit_to_shell(void) {
+    misc_exit("ExitToShell", 0);
 }
 
 void misc_register(void) {

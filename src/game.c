@@ -12,8 +12,12 @@
 #include "util.h"
 
 static const game_info games[] = {
-    {"loony-labyrinth", "Loony Labyrinth", "Loony Labyrinth", "LOONY LABYRINTH 3.0.1"},
-    {"crystal-caliburn", "Crystal Caliburn", "Crystal Caliburn", "CRYSTAL CALIBURN 3.0.1"},
+    {"loony-labyrinth", "Loony Labyrinth", "Loony Labyrinth", "LOONY LABYRINTH 3.0.1",
+     GAME_PEF_FOLDER},
+    {"crystal-caliburn", "Crystal Caliburn", "Crystal Caliburn", "CRYSTAL CALIBURN 3.0.1",
+     GAME_PEF_FOLDER},
+    {"monster-fair", "MONSTER FAIR", "MONSTER FAIR.app", "Contents/MacOS/MONSTER FAIR",
+     GAME_MACHO_BUNDLE},
 };
 #define NGAMES (sizeof games / sizeof games[0])
 

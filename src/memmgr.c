@@ -17,7 +17,9 @@
 #define MAGIC_DATA   0x44415441u /* 'DATA': a handle's data block */
 #define MAGIC_MASTER 0x4D415354u /* 'MAST': a master pointer block */
 
-#define HEAP_END (GUEST_HEAP_BASE + GUEST_HEAP_SIZE)
+#define HEAP_BASE gm_heap_base()
+#define HEAP_SIZE gm_heap_size()
+#define HEAP_END (HEAP_BASE + HEAP_SIZE)
 #define MIN_SPLIT 32u /* header + 16 bytes */
 
 static int16_t last_error;
@@ -55,7 +57,7 @@ static uint32_t next_block(uint32_t p) {
 
 /* True if p is the payload address of a block whose header has magic m. */
 static bool is_block(uint32_t p, uint32_t m) {
-    if (p < GUEST_HEAP_BASE + MM_HEADER_SIZE || p >= HEAP_END || (p & 15u) != 0)
+    if (p < HEAP_BASE + MM_HEADER_SIZE || p >= HEAP_END || (p & 15u) != 0)
         return false;
     return magic(p) == m;
 }
@@ -78,18 +80,18 @@ static void coalesce(uint32_t p) {
 }
 
 void mm_init(void) {
-    uint32_t first = GUEST_HEAP_BASE + MM_HEADER_SIZE;
-    set_header(first, MAGIC_FREE, GUEST_HEAP_SIZE - MM_HEADER_SIZE, 0, 0);
+    uint32_t first = HEAP_BASE + MM_HEADER_SIZE;
+    set_header(first, MAGIC_FREE, HEAP_SIZE - MM_HEADER_SIZE, 0, 0);
     last_error = MM_NO_ERR;
 }
 
 static uint32_t alloc_block(uint32_t size, uint32_t m, uint32_t own, bool clear) {
-    if (size > GUEST_HEAP_SIZE)
+    if (size > HEAP_SIZE)
         return 0;
     uint32_t need = (size + 15u) & ~15u;
     if (need == 0)
         need = 16;
-    for (uint32_t p = GUEST_HEAP_BASE + MM_HEADER_SIZE; p < HEAP_END; p = next_block(p)) {
+    for (uint32_t p = HEAP_BASE + MM_HEADER_SIZE; p < HEAP_END; p = next_block(p)) {
         if (magic(p) != MAGIC_FREE)
             continue;
         coalesce(p);
@@ -222,7 +224,7 @@ void mm_set_handle_state(uint32_t h, uint8_t state) { gm_w32(hdr(h) + 12, state)
 
 uint32_t mm_free_bytes(void) {
     uint32_t total = 0;
-    for (uint32_t p = GUEST_HEAP_BASE + MM_HEADER_SIZE; p < HEAP_END; p = next_block(p)) {
+    for (uint32_t p = HEAP_BASE + MM_HEADER_SIZE; p < HEAP_END; p = next_block(p)) {
         if (magic(p) == MAGIC_FREE) {
             coalesce(p);
             total += capacity(p);
@@ -290,6 +292,21 @@ static void h_set_ptr_size(void) {
     uint32_t p = trap_arg(0);
     need_ptr("SetPtrSize", p);
     last_error = mm_set_ptr_size(p, trap_arg(1));
+}
+
+static void h_new_handle(void) {
+    uint32_t h = mm_new_handle(trap_arg(0), false);
+    last_error = h ? MM_NO_ERR : MM_MEM_FULL_ERR;
+    trap_return(h);
+}
+
+/* ReallocateHandle(Handle, Size): new contents of that size (the old ones
+   are lost on a Mac; here they're kept, which no caller can tell apart). */
+static void h_reallocate_handle(void) {
+    uint32_t h = trap_arg(0);
+    if (!need_handle("ReallocateHandle", h))
+        return;
+    last_error = mm_set_handle_size(h, trap_arg(1));
 }
 
 static void h_new_handle_clear(void) {
@@ -367,6 +384,8 @@ void mm_register(void) {
     trap_register("DisposePtr", h_dispose_ptr);
     trap_register("GetPtrSize", h_get_ptr_size);
     trap_register("SetPtrSize", h_set_ptr_size);
+    trap_register("NewHandle", h_new_handle);
+    trap_register("ReallocateHandle", h_reallocate_handle);
     trap_register("NewHandleClear", h_new_handle_clear);
     trap_register("DisposeHandle", h_dispose_handle);
     trap_register("GetHandleSize", h_get_handle_size);
