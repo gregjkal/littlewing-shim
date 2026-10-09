@@ -17,6 +17,12 @@ out=$2
 version=${LOONY_VERSION:-0.0.0}
 here=$(cd "$(dirname "$0")" && pwd)
 app="$out/LittleWing.app"
+# A sanitizer build (Debug) needs the compiler's runtime, which is found
+# through a search path like the other libraries but isn't for bundling.
+if otool -L "$bin" | grep -q libclang_rt; then
+    echo "make_app.sh: $bin needs libclang_rt, a sanitizer runtime, so the bundle isn't self-contained (build it from a Release build)" >&2
+    exit 1
+fi
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources"
 cp "$bin" "$app/Contents/MacOS/loony"
@@ -90,8 +96,7 @@ for rp in $(otool -l "$app/Contents/MacOS/loony" | awk '/cmd LC_RPATH/ {getline;
 done
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$app/Contents/MacOS/loony"
 # Self-contained: every library is the system's or in Frameworks, and the
-# only search path is Frameworks. (A sanitizer build fails here: it needs
-# the compiler's runtime library.)
+# only search path is Frameworks.
 bad=0
 for f in "$app/Contents/MacOS/loony" "$app"/Contents/Frameworks/*.dylib; do
     for dep in $(otool -L "$f" | tail -n +2 | awk '{print $1}'); do
