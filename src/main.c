@@ -266,7 +266,9 @@ int main(int argc, char **argv) {
     events_init();
     sound_init();
     display_init();
-    hd_init();
+    char self[PATH_MAX];
+    uint32_t self_size = sizeof self;
+    hd_init(game->id, _NSGetExecutablePath(self, &self_size) == 0 ? self : argv[0]);
     display_set_title(game->title);
     events_set_present(display_present_if_dirty);
     events_set_poll(display_poll);

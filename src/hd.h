@@ -5,7 +5,7 @@
 
 #include "blit.h"
 
-/* HD mode (a prototype): every pixel buffer the game draws into gets a
+/* HD mode: every pixel buffer the game draws into gets a
    hidden RGBA copy at N times its size, and the screen's copy is what the
    window shows. The game still sees and draws only its own 1x pixels.
 
@@ -25,11 +25,21 @@
      An unscaled CopyBits of pixels already there (the game copies its
      whole table each frame) changes nothing.
 
-   Environment: LOONY_HD=<art dir> turns it on, LOONY_HD_SCALE=<2..8> sets N
-   (default 4), and LOONY_HD_DUMP=<dir> writes each distinct picture the game
-   draws to <dir>/<hash>.png at its own size, as a starting point for art. */
+   It is on whenever the app carries art for the game being played
+   (hd_bundled_art). Environment: LOONY_HD=<art dir> uses that art instead
+   (in or out of the app), LOONY_HD=off turns HD off, LOONY_HD_SCALE=<2..8>
+   sets N (default 4), and LOONY_HD_DUMP=<dir> writes each distinct picture
+   the game draws to <dir>/<hash>.png at its own size, as a starting point for
+   art. */
 
-void hd_init(void);
+/* Turns HD on or off for the game game_id (game_info.id), from the
+   environment or the art bundled with the program at exe_path. */
+void hd_init(const char *game_id, const char *exe_path);
+
+/* When exe_path is inside an app bundle (<name>.app/Contents/MacOS/...) that
+   has a folder Contents/Resources/hd-art/<game_id>, writes that folder's
+   path to out and returns true. */
+bool hd_bundled_art(const char *exe_path, const char *game_id, char *out, size_t cap);
 
 /* Sets the mode directly (tests): scale 0 turns HD off. Either directory may
    be NULL. Drops every HD copy and all loaded art. */

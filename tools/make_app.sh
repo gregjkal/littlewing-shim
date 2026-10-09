@@ -9,7 +9,8 @@
 # version is LOONY_VERSION (x.y.z), or 0.0.0 for a build that isn't a release,
 # and the oldest macOS it claims to run on is the newest any of its binaries
 # needs (a release builds them all for macOS 26; see tools/release.sh).
-# Resources/Licenses holds this project's license and the bundled libraries'.
+# Resources/Licenses holds this project's license and the bundled libraries',
+# and Resources/hd-art the HD art (src/hd.h).
 #   [LOONY_SIGN_ID=<identity>] [LOONY_VERSION=<x.y.z>] tools/make_app.sh <loony binary> <output folder>
 set -eu
 bin=$1
@@ -35,6 +36,8 @@ for s in 16 32 128 256 512; do
 done
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
 rm -rf "$(dirname "$iconset")"
+# The HD art (hd-art/<game id>): the app plays a game in HD when it has art for it.
+cp -R "$here/../hd-art" "$app/Contents/Resources/hd-art"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
