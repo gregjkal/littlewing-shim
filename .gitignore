@@ -5,3 +5,4 @@ build-*/
 !/hd-art/**/*.png
 /game/
 .DS_Store
+.claude/worktrees/

@@ -4,7 +4,10 @@
 # build against them in build-dist, all for macOS 26 and later, runs the
 # tests, builds the app signed with LOONY_SIGN_ID, checks it runs on macOS 26,
 # notarizes it, tags the commit vx.y.z, pushes the tag and makes a draft
-# GitHub release with the zip. Check the draft on GitHub, then publish it.
+# GitHub release with the zip. The notes are tools/release_notes.md with its
+# @VERSION@, @MACOS@, @UNICORN@ and @SDL@ filled in, followed by GitHub's list
+# of the pull requests since the last release. Check the draft on GitHub, then
+# publish it.
 # The profile is notarize.sh's (default loony-notary).
 #   LOONY_SIGN_ID=<identity> tools/release.sh <x.y.z> [keychain profile]
 set -eu
@@ -27,6 +30,8 @@ git fetch -q origin
 if git rev-parse -q --verify "refs/tags/$tag" >/dev/null || [ -n "$(git ls-remote --tags origin "refs/tags/$tag")" ]; then
     die "$tag already exists"
 fi
+unknown=$(grep -o '@[A-Z]*@' tools/release_notes.md | grep -vxE '@(VERSION|MACOS|UNICORN|SDL)@' || true)
+[ -z "$unknown" ] || die "tools/release_notes.md has placeholders release.sh doesn't fill: $unknown"
 
 build=build-dist
 macos=26.0  # the oldest macOS a release runs on
@@ -46,16 +51,9 @@ mv "$build/LittleWing.zip" "$zip"
 
 unicorn=$(pkg-config --modversion unicorn)
 sdl=$(pkg-config --modversion sdl3)
-# The notes go through a file: macOS's sh (bash 3.2) misreads an apostrophe
-# in a here-document inside "$(...)".
 notes=$(mktemp)
-cat >"$notes" <<NOTES
-Plays LittleWing's *Loony Labyrinth 3.0.1* and *Crystal Caliburn 3.0.1* on an Apple Silicon Mac with macOS $macos or later. This is an unofficial project, not made or endorsed by LittleWing.
-
-**To install:** download \`LittleWing-$version.zip\`, unzip it, move \`LittleWing.app\` to Applications, and install the games as described in [Play](https://github.com/gregjkal/littlewing-shim#play). The app is notarized, so it opens without a warning. It contains no game files.
-
-The app bundles [Unicorn $unicorn](https://github.com/unicorn-engine/unicorn/releases/tag/$unicorn) (GPLv2) and [SDL $sdl](https://github.com/libsdl-org/SDL/releases/tag/release-$sdl) (zlib). Their licenses are in \`LittleWing.app/Contents/Resources/Licenses\`.
-NOTES
+sed -e "s/@VERSION@/$version/g" -e "s/@MACOS@/$macos/g" -e "s/@UNICORN@/$unicorn/g" -e "s/@SDL@/$sdl/g" \
+    tools/release_notes.md >"$notes"
 git tag -a "$tag" -m "LittleWing $version"
 git push origin "$tag"
 gh release create "$tag" "$zip" --verify-tag --draft --title "LittleWing $version" --generate-notes --notes "$(cat "$notes")"
