@@ -504,26 +504,24 @@ static int mf_register_and_play_past_the_recheck(const char *email, const char *
     return status;
 }
 
-/* With LOONY_MF_SKIP_LICENSE_RECHECK=1 the test key survives the second
-   check: the game plays on until the script quits, keeps the license, and
-   the next launch skips the Welcome window. */
+/* With the second license check's verdict dropped (patch.h), the test key
+   survives it: the game plays on until the script quits, keeps the license,
+   and the next launch skips the Welcome window. */
 TEST(run_monster_fair_keeps_a_license_with_the_recheck_skipped) {
     SKIP_UNLESS_SLOW();
     SKIP_UNLESS_MF();
     const char *email, *key;
     MF_TEST_KEY_OR_SKIP(email, key);
     test_tmp_dir(run_data, sizeof run_data);
-    setenv("LOONY_MF_SKIP_LICENSE_RECHECK", "1", 1);
     char out[32768], again[32768], *xml;
     int status = mf_register_and_play_past_the_recheck(email, key, out, sizeof out, &xml);
     setenv("LOONY_EXIT_AFTER", "300", 1);
     int status2 = run_script_in(test_mf_app(), "", NULL, NULL, 0, again, sizeof again);
     unsetenv("LOONY_EXIT_AFTER");
-    unsetenv("LOONY_MF_SKIP_LICENSE_RECHECK");
     test_remove_tree(run_data);
     run_data[0] = '\0';
     CHECK_EQ(status, 0);
-    CHECK_CONTAINS(out, "loony: LOONY_MF_SKIP_LICENSE_RECHECK: MONSTER FAIR's second license check is off");
+    CHECK_CONTAINS(out, "loony: MONSTER FAIR 1.2.5: its second license check is off");
     CHECK_CONTAINS(out, "loony: nib window ThankYou: shown");
     CHECK_CONTAINS(out, "loony: sending the quit Apple Event"); /* the script's quit, not the game's */
     CHECK_CONTAINS(out, "loony: main returned 0");

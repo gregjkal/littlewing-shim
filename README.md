@@ -34,7 +34,7 @@ file:
 |---|---|---|---|
 | Loony Labyrinth | `/Applications/Loony Labyrinth` | `LOONY LABYRINTH 3.0.1` | `loony_labyrinth_301a.dmg` |
 | Crystal Caliburn | `/Applications/Crystal Caliburn` | `CRYSTAL CALIBURN 3.0.1` | `crystal_caliburn_301a.dmg` |
-| MONSTER FAIR | `/Applications/MONSTER FAIR.app` | `Contents/MacOS/MONSTER FAIR` | the Mac OS X version |
+| MONSTER FAIR | `/Applications/MONSTER FAIR.app` | `Contents/MacOS/MONSTER FAIR` | the Mac OS X version, 1.2.5 (the only version supported) |
 
 To get a game, download it from LittleWing's
 [download page](http://www.littlewingpinball.com/doc/en/downloads/index.html),
@@ -257,7 +257,8 @@ Tests that need a game's files skip when it isn't installed (`SKIP_UNLESS_GAME`,
 that register take the address and key code from the environment and skip
 without them: `LOONY_TEST_EMAIL` and `LOONY_TEST_KEY` (Loony Labyrinth), and
 `LOONY_TEST_MF_EMAIL` and `LOONY_TEST_MF_KEY` (MONSTER FAIR; the public key in
-`docs/test_key.txt` is one the game refuses in play).
+`docs/test_key.txt` is one the game would refuse in play without the workaround
+below).
 The slow tests, the three-minute regression runs (`run_three_minutes_*`) and
 MONSTER FAIR's play past its second license check, take a minute or more each,
 so they skip unless `LOONY_SLOW_TESTS=1` is set (`SKIP_UNLESS_SLOW`). Run them
@@ -268,18 +269,13 @@ a time (`-j N` to change that), each with a save folder of its own; a test's
 output prints as one block when it finishes, and the summary names the
 failures.
 
-MONSTER FAIR checks its license a second time during play, a couple of
-minutes in, and erases a license it refuses there, such as a key code posted
-publicly, even though the Register window accepted it. For testing with such
-a key, `LOONY_MF_SKIP_LICENSE_RECHECK=1` keeps the license: the check still
-runs, but the shim drops its verdict (it changes two instructions in MONSTER
-FAIR 1.2.5's code after loading, and refuses to start with any other
-version). The Register window's check is unchanged.
-
-```bash
-LOONY_MF_SKIP_LICENSE_RECHECK=1 ./build-release/loony "/Applications/MONSTER FAIR.app"
-open --env LOONY_MF_SKIP_LICENSE_RECHECK=1 build-release/LittleWing.app
-```
+Only MONSTER FAIR 1.2.5 is supported; the shim refuses to start any other
+version. MONSTER FAIR checks its license a second time during play, a couple
+of minutes in, and erases a license it refuses there, such as a key code
+posted publicly, even though the Register window accepted it. The shim works
+around that permanently: on every launch it changes two instructions in
+1.2.5's code so the check still runs but its verdict is dropped
+(`src/patch.c`). The Register window's check is unchanged.
 
 Design: `docs/superpowers/specs/2026-09-30-loony-shim-design.md`
 
