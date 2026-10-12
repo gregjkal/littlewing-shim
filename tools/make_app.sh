@@ -8,7 +8,7 @@
 # the keychain) for an app that can be notarized and given to others. Its
 # version is LOONY_VERSION (x.y.z), or 0.0.0 for a build that isn't a release,
 # and the oldest macOS it claims to run on is the newest any of its binaries
-# needs (a release builds them all for macOS 26; see tools/release.sh).
+# needs (a release builds them all for macOS 14; see tools/release.sh).
 # Resources/Licenses holds this project's license and the bundled libraries',
 # and Resources/hd-art the HD art (src/hd.h).
 #   [LOONY_SIGN_ID=<identity>] [LOONY_VERSION=<x.y.z>] tools/make_app.sh <loony binary> <output folder>
