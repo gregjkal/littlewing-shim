@@ -1,8 +1,8 @@
 #!/bin/sh
 # Releases LittleWing.app as version x.y.z: from a clean main that matches
 # GitHub, it builds Unicorn and SDL3 (tools/build_deps.sh) and a fresh Release
-# build against them in build-dist, all for macOS 26 and later, runs the
-# tests, builds the app signed with LOONY_SIGN_ID, checks it runs on macOS 26,
+# build against them in build-dist, all for macOS 14 and later, runs the
+# tests, builds the app signed with LOONY_SIGN_ID, checks it runs on macOS 14,
 # notarizes it, tags the commit vx.y.z, pushes the tag and makes a draft
 # GitHub release with the zip. Check the draft on GitHub, then publish it.
 # The profile is notarize.sh's (default loony-notary).
@@ -29,7 +29,7 @@ if git rev-parse -q --verify "refs/tags/$tag" >/dev/null || [ -n "$(git ls-remot
 fi
 
 build=build-dist
-macos=26.0  # the oldest macOS a release runs on
+macos=14.0  # the oldest macOS a release runs on
 rm -rf "$build"
 MACOSX_DEPLOYMENT_TARGET=$macos tools/build_deps.sh "$build/deps"
 PKG_CONFIG_PATH="$PWD/$build/deps/unicorn/lib/pkgconfig:$PWD/$build/deps/sdl3/lib/pkgconfig"
