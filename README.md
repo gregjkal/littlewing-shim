@@ -25,7 +25,7 @@ cmake --build build-release --target app                # build-release/LittleWi
 
 ## Play
 
-A release needs an Apple Silicon Mac with macOS 26 or later. An app you build
+A release needs an Apple Silicon Mac with macOS 14 (Sonoma) or later. An app you build
 yourself needs the macOS you built it on, or later, because Homebrew's Unicorn
 and SDL3 do. It plays the games from these places, which must hold the game's
 file:
@@ -57,7 +57,7 @@ notarized and opens without a warning. Built as above, it is signed ad hoc,
 which is enough
 on the Mac that built it. On another Mac, Gatekeeper blocks the first launch;
 open System Settings, then Privacy & Security, and click Open Anyway near the
-bottom. (Right-click and Open no longer gets past it on recent macOS.) To give
+bottom. (On macOS 15 and later, right-click and Open no longer gets past it.) To give
 the app to someone without that step, sign and notarize it (below). When the app can't
 start or the game crashes, it says so in a message box; its log is
 `~/Library/Logs/littlewing-shim/loony.log` (the run before is kept as
@@ -194,9 +194,9 @@ LOONY_SIGN_ID="Developer ID Application: Your Name (TEAMID)" tools/release.sh 0.
 ```
 
 This builds Unicorn and SDL3 from their sources (`tools/build_deps.sh`) and a
-fresh Release build against them in `build-dist`, all for macOS 26, and runs
+fresh Release build against them in `build-dist`, all for macOS 14, and runs
 the tests. It then builds the app as version 0.1.0, checks that it runs on
-macOS 26, and notarizes it. It tags the commit `v0.1.0`,
+macOS 14, and notarizes it. It tags the commit `v0.1.0`,
 pushes the tag, and makes a draft release with `LittleWing-0.1.0.zip`. Check
 the draft on GitHub, then publish it. Other builds of the app say version
 0.0.0 (set `LOONY_VERSION` to change it).
