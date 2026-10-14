@@ -44,6 +44,12 @@ int sound_volume(void);
    equally large (80 is about 6 dB down; 50 is 18 dB down). */
 float sound_gain(int percent);
 
+/* Gets everything the mixer renders, in order from sound_init, as it is
+   rendered (on the audio thread with a device), at the mixer's level like
+   LOONY_WAV. Can be set before sound_init. */
+typedef void (*sound_tap_fn)(const int16_t *samples, uint32_t frames);
+void sound_set_tap(sound_tap_fn fn);
+
 /* Renders up to now if clock-driven, then delivers the callbacks the queues
    have reached (guest_call), oldest first. The event loop calls this on every
    iteration. */

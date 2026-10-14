@@ -14,7 +14,7 @@ art below). It is an unofficial project, not made or endorsed by LittleWing.
 brew install unicorn sdl3 cmake pkg-config
 cmake -S . -B build                                     # Debug (sanitizers): for development
 cmake --build build
-./build/loony_tests          # all tests; ./build/loony_tests <substring> to filter
+./build/loony_tests          # all tests; ./build/loony_tests <substring> to filter, =<name> for one
 LOONY_SLOW_TESTS=1 ./build/loony_tests  # also the slow tests (minutes of play each)
 ./build/loony_tests -j 1     # one at a time in one process (for a debugger)
 
@@ -320,6 +320,31 @@ it) and needs the same game program; a replay made by another version of the
 shim may desync. HD mode can be on or off in either. `LOONY_SCRIPT`
 screenshots work in a replay; its keys are ignored, and its quit (like
 closing the window) stops the replay.
+
+A replay can also go straight to a short video, with its sound:
+
+```bash
+LOONY_REPLAY=game.lwreplay LOONY_CLIP=9:40-10:15 LOONY_CLIP_OUT=ramps.mp4 ./build-release/loony
+```
+
+Up to the clip's start the replay runs at full speed and draws nothing; from
+there each tick of the game's clock is a frame (60 fps), handed with the
+sound straight to AVFoundation's H.264 and AAC encoders, so no frame is
+written to disk and no ffmpeg is needed. It exits once the clip is written;
+no window opens. Times are `m:ss` or `h:mm:ss` from launch (`1:02:03.5`), or
+ticks. In HD mode the clip is the HD picture at 2x, scaled down to 1280x960;
+`LOONY_CLIP_WIDTH` sets another width (1600 for the whole 2x picture; a
+clip is never scaled up). Without HD it is 800x600. `LOONY_CLIP_OUT` is
+`clip.mp4` by default (`.mov` makes a QuickTime movie). The video's quality
+is `LOONY_CLIP_QUALITY`, above 0 and at most 1 (0.65 by default, which matched x264 at CRF
+33 on a test clip); `LOONY_CLIP_KBPS` sets an average bitrate instead. A
+30-second clip from minute 10 of a 15-minute game takes about 30 seconds and
+comes to 3.1 MB in HD, or 16 seconds and 2.1 MB at 800x600. A clip
+that runs past the end of the recording keeps what it has; one that starts
+past it writes nothing and exits with status 4. A file already at
+`LOONY_CLIP_OUT` is replaced, but the replay itself is refused, as is a
+folder that can't be written, before the seek. Recordings in the
+first format (before dates were recorded) replay too, with the host's dates.
 
 While recording, the game's clock moves in whole milliseconds, and when the
 game spins on `TickCount` waiting for the next tick, it sleeps instead. The

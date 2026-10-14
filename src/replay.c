@@ -13,7 +13,10 @@
 #include "util.h"
 
 #define MAGIC "LWREPLAY"
+/* Format 1 had no start time or time zone: its replays see the host's
+   calendar, which only the dates the game saves depend on, never its frames. */
 #define FORMAT_VERSION 2
+#define OLDEST_FORMAT 1
 #define FLAG_AUTO_ALERTS 1u
 #define FLAG_DST 2u /* daylight saving time was on when the recording started */
 
@@ -48,10 +51,12 @@ static struct {
     /* replay: the whole file, decompressed, and the next record */
     bool loaded;
     bool cut_short; /* the file ends without an end record */
+    bool desynced, reached_end;
     uint8_t *data;
     size_t len, pos;
     char game_id[64];
     uint8_t sha[CC_SHA256_DIGEST_LENGTH];
+    int version; /* the file's format */
     uint32_t flags;
     int64_t start_unix; /* the wall clock when the recording started */
     int32_t gmtoff;     /* and its time zone, in seconds east of UTC */
@@ -64,7 +69,7 @@ bool replay_recording(void) { return R.mode == RECORDING; }
 bool replay_playing(void) { return R.mode == PLAYING; }
 
 bool replay_calendar(int64_t *start_unix, int32_t *gmtoff, bool *dst) {
-    if (R.mode == OFF)
+    if (R.mode == OFF || (R.mode == PLAYING && R.version < 2))
         return false;
     *start_unix = R.start_unix;
     *gmtoff = R.gmtoff;
@@ -89,8 +94,12 @@ _Noreturn void replay_desync(const char *fmt, ...) {
     va_end(ap);
     log_msg("replay: desync at step %llu (tick %u): %s", (unsigned long long)R.step, tick(), msg);
     R.mode = OFF; /* nothing more to report at exit */
+    R.desynced = true;
     exit(REPLAY_DESYNC_STATUS);
 }
+
+bool replay_desynced(void) { return R.desynced; }
+bool replay_reached_end(void) { return R.reached_end; }
 
 /* ---- the file ---- */
 
@@ -204,11 +213,12 @@ static bool parse_header(char *err, size_t errlen) {
     }
     if (!get_varint(&version))
         goto bad;
-    if (version != FORMAT_VERSION) {
-        snprintf(err, errlen, "replay format %llu (this program reads %d)",
-                 (unsigned long long)version, FORMAT_VERSION);
+    if (version < OLDEST_FORMAT || version > FORMAT_VERSION) {
+        snprintf(err, errlen, "replay format %llu (this program reads %d to %d)",
+                 (unsigned long long)version, OLDEST_FORMAT, FORMAT_VERSION);
         return false;
     }
+    R.version = (int)version;
     if (!get_varint(&id_len) || id_len >= sizeof R.game_id || !get_bytes(&p, (size_t)id_len))
         goto bad;
     memcpy(R.game_id, p, (size_t)id_len);
@@ -216,8 +226,9 @@ static bool parse_header(char *err, size_t errlen) {
     if (!get_bytes(&p, sizeof R.sha))
         goto bad;
     memcpy(R.sha, p, sizeof R.sha);
-    uint64_t start, gmtoff;
-    if (!get_varint(&flags) || !get_varint(&start) || !get_varint(&gmtoff) ||
+    uint64_t start = 0, gmtoff = 0;
+    if (!get_varint(&flags) ||
+        (R.version >= 2 && (!get_varint(&start) || !get_varint(&gmtoff))) ||
         !get_varint(&prefs_len) || !get_bytes(&R.prefs, (size_t)prefs_len))
         goto bad;
     R.flags = (uint32_t)flags;
@@ -415,6 +426,7 @@ void replay_step(void) {
         return;
     if (R.next.kind == REPLAY_END && R.step > R.next.step) {
         R.step--; /* where the recording stopped */
+        R.reached_end = true;
         log_msg("replay: exiting where the recording stopped");
         exit(0);
     }

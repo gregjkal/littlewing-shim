@@ -1,6 +1,8 @@
 #include "test.h"
 
 #include <fcntl.h>
+#include <limits.h>
+#include <mach-o/dyld.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -131,6 +133,42 @@ int test_run_child(void (*fn)(void *), void *arg, char *out, size_t outlen) {
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
+/* Set in the forked child a test runs in (start_test). */
+static bool forked;
+
+static void exec_self(void *filter) {
+    char self[PATH_MAX];
+    uint32_t size = sizeof self;
+    if (_NSGetExecutablePath(self, &size) == 0)
+        execl(self, "loony_tests", "-j", "1", (const char *)filter, (char *)NULL);
+    _exit(127);
+}
+
+bool test_rerun_unforked(const char *name) {
+    if (!forked)
+        return false;
+    char filter[256];
+    snprintf(filter, sizeof filter, "=%s", name);
+    static char out[65536];
+    int status = test_run_child(exec_self, filter, out, sizeof out);
+    if (status == 0 && strstr(out, "\n1 passed, 0 failed"))
+        return true;
+    fputs(out, stderr);
+    if (status == 0 && strstr(out, "0 failed, 1 skipped"))
+        cur_skipped = true;
+    else
+        test_fail(__FILE__, __LINE__, "the test failed in a process of its own");
+    return true;
+}
+
+/* Whether a test is picked: a filter is a part of its name, or with a
+   leading '=', the whole name. */
+static bool selected(const char *name, const char *filter) {
+    if (!filter)
+        return true;
+    return filter[0] == '=' ? strcmp(name, filter + 1) == 0 : strstr(name, filter) != NULL;
+}
+
 /* A test's exit status when it runs in a child of its own. */
 #define CHILD_PASSED 0
 #define CHILD_FAILED 1
@@ -153,6 +191,7 @@ static pid_t start_test(int i, const char *data_dir, const char *out_path) {
     mkdir(dir, 0700);
     setenv("LOONY_DATA_DIR", dir, 1);
     cur_failed = cur_skipped = false;
+    forked = true;
     tests[i].fn();
     fflush(stdout);
     fflush(stderr);
@@ -184,7 +223,7 @@ int main(int argc, char **argv) {
             char *end;
             jobs = strtol(n, &end, 10);
             if (!*n || *end || jobs < 1) {
-                fprintf(stderr, "usage: loony_tests [-j N] [substring]\n");
+                fprintf(stderr, "usage: loony_tests [-j N] [substring | =name]\n");
                 return 2;
             }
         } else {
@@ -201,7 +240,7 @@ int main(int argc, char **argv) {
     const char *failures[MAX_TESTS];
     if (jobs == 1) {
         for (int i = 0; i < ntests; i++) {
-            if (filter && !strstr(tests[i].name, filter))
+            if (!selected(tests[i].name, filter))
                 continue;
             cur_failed = cur_skipped = false;
             fprintf(stderr, "%s\n", tests[i].name);
@@ -220,7 +259,7 @@ int main(int argc, char **argv) {
         for (;;) {
             while (running < jobs && next < ntests) {
                 int i = next++;
-                if (filter && !strstr(tests[i].name, filter))
+                if (!selected(tests[i].name, filter))
                     continue;
                 char out_path[1100];
                 snprintf(out_path, sizeof out_path, "%s/%d.out", data_dir, i);
