@@ -189,25 +189,35 @@ static bool finish(void) {
     return true;
 }
 
-/* The replay ended (or failed) before the clip did: what there is is kept. */
+/* The program exited before the clip's end: what there is is kept. The
+   status says when that is nothing (the recording ended before the clip's
+   start: CLIP_NOTHING_STATUS) or the file couldn't be finished (1), unless a
+   failure or a desync has said so already. This is the program's first
+   atexit handler (clip_open must stay before any other sets one), so it runs
+   last and _exit skips none of the program's. */
 static void finish_at_exit(void) {
     if (!C.on || C.finished)
         return;
+    bool failed = util_failed() || replay_desynced();
     char a[32], b[32];
     if (!C.mp4) {
+        C.finished = true;
+        if (failed)
+            return;
         log_msg("clip: the replay stopped before %s, where the clip starts: nothing written",
                 fmt_ticks(C.start, a, sizeof a));
-        C.finished = true;
-        if (util_failed() || replay_desynced())
-            return; /* the exit status says so already */
-        /* The program's first handler (clip_open comes before any other
-           sets one), so it runs last and _exit skips none of them. */
-        fflush(NULL);
-        _exit(CLIP_NOTHING_STATUS);
+        if (replay_reached_end()) {
+            fflush(NULL);
+            _exit(CLIP_NOTHING_STATUS);
+        }
+        return;
     }
     log_msg("clip: the replay stopped at %s, before the clip's end at %s",
             fmt_ticks(C.next, a, sizeof a), fmt_ticks(C.end, b, sizeof b));
-    finish();
+    if (!finish() && !failed) {
+        fflush(NULL);
+        _exit(1);
+    }
 }
 
 static _Noreturn void write_failed(void) {
@@ -382,10 +392,17 @@ bool clip_open(char *err, size_t errlen) {
         }
         C.width = (int)v;
     }
-    snprintf(C.out, sizeof C.out, "%s", out && *out ? out : "clip.mp4");
+    if ((size_t)snprintf(C.out, sizeof C.out, "%s", out && *out ? out : "clip.mp4") >= sizeof C.out) {
+        snprintf(err, errlen, "LOONY_CLIP_OUT is longer than %d characters", PATH_MAX - 1);
+        return false;
+    }
     struct stat so, sr;
-    if (stat(C.out, &so) == 0 && stat(replay, &sr) == 0 && so.st_dev == sr.st_dev &&
-        so.st_ino == sr.st_ino) {
+    bool exists = stat(C.out, &so) == 0;
+    if ((exists && S_ISDIR(so.st_mode)) || C.out[strlen(C.out) - 1] == '/') {
+        snprintf(err, errlen, "LOONY_CLIP_OUT=%s is a folder, not a file", C.out);
+        return false;
+    }
+    if (exists && stat(replay, &sr) == 0 && so.st_dev == sr.st_dev && so.st_ino == sr.st_ino) {
         snprintf(err, errlen, "LOONY_CLIP_OUT=%s is the replay (it would be written over)", C.out);
         return false;
     }

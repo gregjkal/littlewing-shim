@@ -110,8 +110,10 @@ void replay_frame(uint32_t hash);
 /* Replay: a desync (or a damaged file). Logs it with the step and tick, and
    exits with REPLAY_DESYNC_STATUS. */
 _Noreturn void replay_desync(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-/* True once replay_desync has run (for what runs at exit). */
+/* For what runs at exit: true once replay_desync has run, and true once the
+   replay has exited where the recording stopped. */
 bool replay_desynced(void);
+bool replay_reached_end(void);
 
 /* For tests: forget everything (no file is written). */
 void replay_reset(void);

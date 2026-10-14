@@ -174,9 +174,14 @@ static void clear_env(void) {
 static const char *quality, *width; /* LOONY_CLIP_QUALITY and _WIDTH for clip_open_with */
 
 /* clip_open, in a child: it turns the clip on for good. Its err is the
-   output. The child exits with exit, so what a clip logs at exit is there. */
+   output. The child exits with exit, so what a clip logs at exit is there.
+   It runs in the temporary folder, so a relative LOONY_CLIP_OUT is in a
+   folder that can be written. */
 static void child_clip_open(void *unused) {
     (void)unused;
+    const char *t = getenv("TMPDIR");
+    if (chdir(t && *t ? t : "/tmp") != 0)
+        _exit(127);
     char err[256];
     if (!clip_open(err, sizeof err)) {
         fprintf(stderr, "%s\n", err);
@@ -210,10 +215,9 @@ TEST(clip_open_checks_its_settings) {
     CHECK_CONTAINS(out, "isn't <start>-<end>");
     CHECK_EQ(clip_open_with("1:00-1:30", NULL, "fast", "r.lwreplay", out, sizeof out), 1);
     CHECK_CONTAINS(out, "LOONY_CLIP_KBPS=fast");
-    /* The child exits before the clip starts: nothing written, which has a
-       status of its own. */
-    CHECK_EQ(clip_open_with("1:00-1:30", "x.mp4", "800", "r.lwreplay", out, sizeof out),
-             CLIP_NOTHING_STATUS);
+    /* The child exits before the clip starts, but not at the end of a
+       recording: nothing written, and the exit keeps its status. */
+    CHECK_EQ(clip_open_with("1:00-1:30", "x.mp4", "800", "r.lwreplay", out, sizeof out), 0);
     CHECK_CONTAINS(out, "clip: replaying to 1:00, then writing 1:00-1:30 to x.mp4");
     CHECK_CONTAINS(out, "clip on: 1");
     CHECK_CONTAINS(out, "clip: the replay stopped before 1:00"); /* at exit, never started */
@@ -223,14 +227,14 @@ TEST(clip_open_checks_its_settings) {
     quality = "0.8";
     CHECK_EQ(clip_open_with("1:00-1:30", NULL, "800", "r.lwreplay", out, sizeof out), 1);
     CHECK_CONTAINS(out, "can't be used together");
-    CHECK_EQ(clip_open_with("1:00-1:30", NULL, NULL, "r.lwreplay", out, sizeof out), CLIP_NOTHING_STATUS);
+    CHECK_EQ(clip_open_with("1:00-1:30", NULL, NULL, "r.lwreplay", out, sizeof out), 0);
     CHECK_CONTAINS(out, "to clip.mp4"); /* the default name */
     quality = NULL;
     width = "1281";
     CHECK_EQ(clip_open_with("1:00-1:30", NULL, NULL, "r.lwreplay", out, sizeof out), 1);
     CHECK_CONTAINS(out, "LOONY_CLIP_WIDTH=1281 isn't an even number");
     width = "1600";
-    CHECK_EQ(clip_open_with("1:00-1:30", NULL, NULL, "r.lwreplay", out, sizeof out), CLIP_NOTHING_STATUS);
+    CHECK_EQ(clip_open_with("1:00-1:30", NULL, NULL, "r.lwreplay", out, sizeof out), 0);
     width = NULL;
 }
 
@@ -243,5 +247,9 @@ TEST(clip_open_checks_where_the_clip_goes) {
     CHECK_CONTAINS(out, "is the replay");
     CHECK_EQ(clip_open_with("1:00-1:30", "/nonexistent/folder/x.mp4", NULL, replay, out, sizeof out), 1);
     CHECK_CONTAINS(out, "LOONY_CLIP_OUT=/nonexistent/folder/x.mp4: can't write in /nonexistent/folder");
+    CHECK_EQ(clip_open_with("1:00-1:30", "/tmp", NULL, replay, out, sizeof out), 1);
+    CHECK_CONTAINS(out, "LOONY_CLIP_OUT=/tmp is a folder");
+    CHECK_EQ(clip_open_with("1:00-1:30", "/tmp/new-folder/", NULL, replay, out, sizeof out), 1);
+    CHECK_CONTAINS(out, "LOONY_CLIP_OUT=/tmp/new-folder/ is a folder");
     unlink(replay);
 }

@@ -14,7 +14,7 @@ art below). It is an unofficial project, not made or endorsed by LittleWing.
 brew install unicorn sdl3 cmake pkg-config
 cmake -S . -B build                                     # Debug (sanitizers): for development
 cmake --build build
-./build/loony_tests          # all tests; ./build/loony_tests <substring> to filter
+./build/loony_tests          # all tests; ./build/loony_tests <substring> to filter, =<name> for one
 LOONY_SLOW_TESTS=1 ./build/loony_tests  # also the slow tests (minutes of play each)
 ./build/loony_tests -j 1     # one at a time in one process (for a debugger)
 
@@ -336,7 +336,7 @@ ticks. In HD mode the clip is the HD picture at 2x, scaled down to 1280x960;
 `LOONY_CLIP_WIDTH` sets another width (1600 for the whole 2x picture; a
 clip is never scaled up). Without HD it is 800x600. `LOONY_CLIP_OUT` is
 `clip.mp4` by default (`.mov` makes a QuickTime movie). The video's quality
-is `LOONY_CLIP_QUALITY`, 0 to 1 (0.65 by default, which matched x264 at CRF
+is `LOONY_CLIP_QUALITY`, above 0 and at most 1 (0.65 by default, which matched x264 at CRF
 33 on a test clip); `LOONY_CLIP_KBPS` sets an average bitrate instead. A
 30-second clip from minute 10 of a 15-minute game takes about 30 seconds and
 comes to 3.1 MB in HD, or 16 seconds and 2.1 MB at 800x600. A clip

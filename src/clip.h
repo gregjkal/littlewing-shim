@@ -18,7 +18,7 @@
    LOONY_HD_SCALE says otherwise, scaled down to CLIP_HD_WIDTH pixels wide;
    else the 800x600 screen. LOONY_CLIP_WIDTH sets the width instead (the
    height follows), but a picture is never scaled up. The video is
-   H.264 at LOONY_CLIP_QUALITY (0 to 1, CLIP_QUALITY by default), or at
+   H.264 at LOONY_CLIP_QUALITY (above 0, at most 1; CLIP_QUALITY by default), or at
    LOONY_CLIP_KBPS kbit/s on average instead; the sound is AAC at 160 kbit/s. */
 
 #define CLIP_FPS 60
@@ -32,9 +32,8 @@
    1.2 Mbit/s there, where x264 needed 0.4. At a set bitrate it needs more
    bits for the same picture. */
 #define CLIP_QUALITY 0.65
-/* The exit status when the replay stopped before the clip's start, so
-   nothing was written (a desync keeps REPLAY_DESYNC_STATUS, and a fatal
-   error its own). */
+/* The exit status when the recording ended before the clip's start, so
+   nothing was written. */
 #define CLIP_NOTHING_STATUS 4
 
 /* Parses a span "<start>-<end>" into ticks. False unless start < end. */

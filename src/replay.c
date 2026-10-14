@@ -51,7 +51,7 @@ static struct {
     /* replay: the whole file, decompressed, and the next record */
     bool loaded;
     bool cut_short; /* the file ends without an end record */
-    bool desynced;
+    bool desynced, reached_end;
     uint8_t *data;
     size_t len, pos;
     char game_id[64];
@@ -99,6 +99,7 @@ _Noreturn void replay_desync(const char *fmt, ...) {
 }
 
 bool replay_desynced(void) { return R.desynced; }
+bool replay_reached_end(void) { return R.reached_end; }
 
 /* ---- the file ---- */
 
@@ -425,6 +426,7 @@ void replay_step(void) {
         return;
     if (R.next.kind == REPLAY_END && R.step > R.next.step) {
         R.step--; /* where the recording stopped */
+        R.reached_end = true;
         log_msg("replay: exiting where the recording stopped");
         exit(0);
     }

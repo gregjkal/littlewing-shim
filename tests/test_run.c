@@ -356,13 +356,14 @@ TEST(run_a_clip_of_a_recording_is_written) {
 /* A clip that runs past the end of the recording keeps what there is, with
    its sound (the writer can want sound from past the last frame: waiting
    for frames there once stalled), and one that starts past the end writes
-   nothing and says so in its status. */
+   nothing and says so in its status (CLIP_NOTHING_STATUS). A failure
+   before the clip's start keeps its own status. */
 TEST(run_a_clip_past_the_end_of_a_recording_keeps_what_there_is) {
     SKIP_UNLESS_GAME();
     char rec_dir[1024], play_dir[1024];
     test_tmp_dir(rec_dir, sizeof rec_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
-    char out[3][32768];
+    char out[4][32768];
     int rec_status = record_for_clips(rec_dir, out[0], sizeof out[0]);
     int past_status = clip_recording("0:03-0:20", play_dir, "past.mp4", out[1], sizeof out[1]);
     mp4_info info;
@@ -370,6 +371,10 @@ TEST(run_a_clip_past_the_end_of_a_recording_keeps_what_there_is) {
     bool read = mp4_read_info(clip_path, &info, err, sizeof err);
     int none_status = clip_recording("0:30-0:35", play_dir, "none.mp4", out[2], sizeof out[2]);
     bool none_written = access(clip_path, F_OK) != 0;
+    /* A failure before the clip's start keeps its own status. */
+    setenv("LOONY_SCRIPT", "/nonexistent/script", 1);
+    int bad_status = clip_recording("0:01-0:02", play_dir, "bad.mp4", out[3], sizeof out[3]);
+    unsetenv("LOONY_SCRIPT");
     test_remove_tree(rec_dir);
     test_remove_tree(play_dir);
     CHECK_EQ(rec_status, 0);
@@ -387,6 +392,8 @@ TEST(run_a_clip_past_the_end_of_a_recording_keeps_what_there_is) {
     CHECK_EQ(none_status, CLIP_NOTHING_STATUS);
     CHECK_CONTAINS(out[2], "where the clip starts: nothing written");
     CHECK(none_written);
+    CHECK_EQ(bad_status, 1);
+    CHECK_CONTAINS(out[3], "can't load the script");
 }
 
 static uint32_t le32_at(const uint8_t *p) {
