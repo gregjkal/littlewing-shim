@@ -1,5 +1,6 @@
 #include "test.h"
 
+#include <CommonCrypto/CommonDigest.h>
 #include <SDL3/SDL_scancode.h>
 #include <stdlib.h>
 #include <time.h>
@@ -606,7 +607,7 @@ TEST(replay_refuses_a_damaged_header) {
     CHECK_STR(err, "the replay's header is damaged");
     write_replay("LWREPLAY\x09", 9);
     CHECK(!replay_open(err, sizeof err));
-    CHECK_STR(err, "replay format 9 (this program reads 2)");
+    CHECK_STR(err, "replay format 9 (this program reads 1 to 2)");
     uint8_t h[64];
     static const char *const damaged[][2] = {
         {"\x80\x80\x80\x80\x80\x20", "\x01"}, /* a start of 2^40 s: 36812 AD */
@@ -620,6 +621,31 @@ TEST(replay_refuses_a_damaged_header) {
     }
     write_replay(h, header_with(h, "\x01", "\x90\x1C")); /* 1 s, an hour east */
     CHECK(replay_open(err, sizeof err));
+}
+
+/* Format 1, from before dates were recorded, has no start or time zone: it
+   plays, and its dates are the host's. */
+TEST(replay_plays_the_first_format_with_the_hosts_dates) {
+    BEGIN_TEST();
+    uint8_t h[128];
+    memcpy(h, "LWREPLAY\x01\x0floony-labyrinth", 25); /* format 1, the game's id */
+    CC_SHA256(exe, sizeof exe, h + 25);
+    size_t n = 25 + CC_SHA256_DIGEST_LENGTH;
+    h[n++] = 0;           /* no flags */
+    h[n++] = 0;           /* no preferences */
+    h[n++] = 5;           /* at step 5, */
+    h[n++] = REPLAY_END;  /* the end */
+    write_replay(h, n);
+    char err[256] = "";
+    bool ok = play("loony-labyrinth", exe, sizeof exe, err, sizeof err);
+    if (!ok)
+        fprintf(stderr, "%s\n", err);
+    CHECK(ok);
+    CHECK(replay_playing());
+    int64_t start;
+    int32_t gmtoff;
+    bool dst;
+    CHECK(!replay_calendar(&start, &gmtoff, &dst));
 }
 
 static int urls_opened;

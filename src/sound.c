@@ -31,6 +31,7 @@ static struct {
     wav_file wav;
     bool recording;
     int volume;
+    sound_tap_fn tap;
 } SND = {.volume = SOUND_DEFAULT_VOLUME};
 
 /* The audio thread holds the stream's lock while it renders. */
@@ -53,6 +54,8 @@ static void render(uint32_t frames) {
             SDL_PutAudioStreamData(SND.stream, buf, (int)(n * 4));
         if (SND.recording)
             wav_write(&SND.wav, buf, n);
+        if (SND.tap)
+            SND.tap(buf, n);
         frames -= n;
     }
 }
@@ -142,6 +145,8 @@ void sound_set_volume(int percent) {
 }
 
 int sound_volume(void) { return SND.volume; }
+
+void sound_set_tap(sound_tap_fn fn) { SND.tap = fn; }
 
 static int find(uint32_t chan) {
     for (int i = 0; i < MIX_CHANNELS; i++)

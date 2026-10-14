@@ -275,8 +275,9 @@ static void h_delay(void) {
 #define FIXED_CLOCK_UNIX 1041379200
 
 /* The host's wall clock (Unix seconds) and time zone. On a recording or a
-   replay: the recording's start plus the game's clock, in the time zone it
-   started in, so dates (a high score's timestamp) replay too. */
+   replay (of format 2 on): the recording's start plus the game's clock, in
+   the time zone it started in, so dates (a high score's timestamp) replay
+   too. */
 static int64_t wall_clock(int32_t *gmtoff, bool *dst) {
     int64_t start;
     if (replay_calendar(&start, gmtoff, dst))
