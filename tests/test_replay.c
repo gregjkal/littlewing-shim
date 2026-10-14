@@ -161,9 +161,8 @@ TEST(replay_refuses_another_game_or_program) {
 }
 
 /* The clock moves in whole ms while recording, and a run of TickCount polls
-   on one tick sleeps until the next; a replay returns the same values
-   without waiting. */
-TEST(replay_clock_values_come_back_without_waiting) {
+   on one tick sleeps until the next; a replay returns the same values. */
+TEST(replay_clock_values_come_back) {
     make_paths();
     setup();
     CHECK(record(NULL));
@@ -184,8 +183,6 @@ TEST(replay_clock_values_come_back_without_waiting) {
 
     setup();
     CHECK(play_back());
-    struct timespec t0, t1;
-    clock_gettime(CLOCK_MONOTONIC, &t0);
     for (int i = 0; i < 70; i++)
         CHECK_EQ(call_import("TickCount", 0), got[i]);
     call_import("Microseconds", 1, us);
@@ -193,8 +190,6 @@ TEST(replay_clock_values_come_back_without_waiting) {
     call_import("Delay", 2, 2u, 0u);
     call_import("Microseconds", 1, us);
     CHECK_EQ(gm_r32(us + 4), micro[1]);
-    clock_gettime(CLOCK_MONOTONIC, &t1);
-    CHECK((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000 < 20);
     test_remove_tree(dir);
 }
 

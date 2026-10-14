@@ -470,8 +470,8 @@ static void run_script(uint32_t now) {
 }
 
 void events_pump(void) {
-    /* The clock is read once, whatever the script and LOONY_EXIT_AFTER, so
-       a replay's steps don't depend on them. */
+    /* The clock is read at the same places whatever the script and
+       LOONY_EXIT_AFTER, so a replay's steps don't depend on them. */
     replay_step();
     uint32_t now = misc_ticks();
     if (E.poll)
@@ -485,6 +485,7 @@ void events_pump(void) {
         E.cursor(misc_cursor_visible() || E.modal);
     if (E.present)
         E.present();
+    now = misc_ticks(); /* sound callbacks and timers may have moved a fixed clock on */
     if (E.exit_after > 0 && now >= (uint32_t)E.exit_after) {
         log_msg("exiting after %ld ticks (LOONY_EXIT_AFTER)", E.exit_after);
         exit(0);
