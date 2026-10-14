@@ -296,6 +296,37 @@ around that permanently: on every launch it changes two instructions in
 
 Design: `docs/superpowers/specs/2026-09-30-loony-shim-design.md`
 
+### Replays (prototype, Loony Labyrinth)
+
+`LOONY_RECORD` saves what reached the game from outside while you play
+normally (the clock and date, keys and focus, when sound callbacks came, and
+the preferences it started from) into a small file, a few KB a minute. The
+date a replay sees is the recording's: a high score keeps its timestamp.
+`LOONY_REPLAY` plays that file back headless, frame for frame and faster
+than real time, from those preferences in a folder of its own:
+
+```bash
+LOONY_GAME=loony-labyrinth LOONY_RECORD=game.lwreplay ./build-release/loony
+LOONY_REPLAY=game.lwreplay LOONY_SCREENSHOT=last.png SDL_VIDEO_DRIVER=dummy ./build-release/loony
+```
+
+The replay logs where its saves went (set `LOONY_DATA_DIR` to choose; it
+refuses a folder that already has preferences, so it can't write over yours) and,
+at the end, whether it reached the end of the recording with every frame
+check matching. Every 30 presents the recording keeps a hash of the screen;
+at the first one that differs, the replay stops with status 3 and logs the
+step and tick (a desync). A replay plays no sound (`LOONY_WAV` still records
+it) and needs the same game program; a replay made by another version of the
+shim may desync. HD mode can be on or off in either. `LOONY_SCRIPT`
+screenshots work in a replay; its keys are ignored, and its quit (like
+closing the window) stops the replay.
+
+While recording, the game's clock moves in whole milliseconds, and when the
+game spins on `TickCount` waiting for the next tick, it sleeps instead. The
+file holds none of the game itself, but its preferences hold the
+registration (e-mail address and key code) and the high-score names, and the
+keys record anything typed: share a recording only as you would those.
+
 ## License
 
 littlewing-shim is free software: you can redistribute it and/or modify it

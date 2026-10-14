@@ -42,7 +42,8 @@ void misc_sleep_us(uint64_t us);
 /* True if the virtual clock is in use. */
 bool misc_fixed_clock(void);
 
-/* Waits: sleeps on the real clock, or advances the virtual one. */
+/* Waits: sleeps on the real clock, or advances the virtual one. Returns at
+   once on a replay. */
 void misc_wait(double seconds);
 
 /* Notes that the game polled for time or events without waiting (see
@@ -54,6 +55,10 @@ uint32_t misc_ticks(void);
 
 /* Seconds since misc_init(), with microsecond resolution. */
 double misc_seconds(void);
+
+/* The clock as the game last saw it, without reading it again: on a
+   recording or a replay (replay.h), reading the clock is a step. */
+double misc_last_seconds(void);
 
 /* False while HideCursor has hidden the cursor (until InitCursor). */
 bool misc_cursor_visible(void);

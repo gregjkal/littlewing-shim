@@ -11,6 +11,7 @@
 
 #include "cpu.h"
 #include "guest_mem.h"
+#include "replay.h"
 #include "trap.h"
 #include "util.h"
 
@@ -29,6 +30,9 @@ static struct {
     uint32_t last_idle_tick;
     bool fixed;
     uint64_t virtual_us;
+    uint64_t last_us; /* what elapsed_us last returned */
+    uint32_t spin_tick; /* the tick TickCount last returned, and how often since it moved */
+    int spins;
     int polls; /* time polls since the virtual clock last moved */
     misc_url_fn open_url;
     void (*exit_hook)(void);
@@ -72,15 +76,20 @@ static uint64_t elapsed_us(void) {
     clock_gettime(CLOCK_MONOTONIC, &now);
     int64_t us = (int64_t)(now.tv_sec - M.start.tv_sec) * 1000000 +
                  (now.tv_nsec - M.start.tv_nsec) / 1000;
-    return us < 0 ? 0 : (uint64_t)us;
+    M.last_us = us < 0 ? 0 : (uint64_t)us;
+    if (replay_recording() || replay_playing())
+        M.last_us = replay_clock(M.last_us);
+    return M.last_us;
 }
+
+double misc_last_seconds(void) { return (double)(M.fixed ? M.virtual_us : M.last_us) / 1e6; }
 
 uint32_t misc_ticks(void) { return (uint32_t)(elapsed_us() * 60 / 1000000); }
 
 double misc_seconds(void) { return (double)elapsed_us() / 1e6; }
 
 void misc_wait(double seconds) {
-    if (seconds <= 0)
+    if (seconds <= 0 || replay_playing()) /* a replay's clock comes from its file */
         return;
     if (M.fixed) {
         /* Round up: a wait that rounds to 0 us would never reach its deadline. */
@@ -175,9 +184,34 @@ static void idle_if_new_tick(uint32_t t) {
     }
 }
 
+/* Recording or replaying: a game that polls TickCount waiting for the next
+   tick (Loony Labyrinth spins on TickCount and Delay(0)) sleeps until it
+   instead, so neither has to repeat thousands of polls a tick, and a replay,
+   which skips the sleep, runs faster than real time. The polls are counted,
+   not timed, so a replay takes the same path. */
+#define SPIN_POLLS 50
+
+static uint32_t wait_out_spin(uint32_t t) {
+    if (!replay_recording() && !replay_playing())
+        return t;
+    if (t != M.spin_tick) {
+        M.spin_tick = t;
+        M.spins = 0;
+        return t;
+    }
+    if (++M.spins < SPIN_POLLS)
+        return t;
+    M.spins = 0;
+    /* The first whole ms in the next tick: a recording's clock moves in ms. */
+    uint64_t next_us = ((((uint64_t)t + 1) * 1000000 + 59) / 60 + 999) / 1000 * 1000;
+    if (next_us > M.last_us)
+        misc_wait((double)(next_us - M.last_us) / 1e6);
+    return misc_ticks();
+}
+
 static void h_tick_count(void) {
     misc_poll();
-    uint32_t t = misc_ticks();
+    uint32_t t = wait_out_spin(misc_ticks());
     idle_if_new_tick(t);
     trap_return(t + MISC_BOOT_TICKS);
 }
@@ -240,10 +274,27 @@ static void h_delay(void) {
 /* The same instant in Unix time: 2003-01-01 00:00:00 UTC. */
 #define FIXED_CLOCK_UNIX 1041379200
 
+/* The host's wall clock (Unix seconds) and time zone. On a recording or a
+   replay: the recording's start plus the game's clock, in the time zone it
+   started in, so dates (a high score's timestamp) replay too. */
+static int64_t wall_clock(int32_t *gmtoff, bool *dst) {
+    int64_t start;
+    if (replay_calendar(&start, gmtoff, dst))
+        return start + (int64_t)(elapsed_us() / 1000000);
+    time_t now = time(NULL);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    *gmtoff = (int32_t)lt.tm_gmtoff;
+    *dst = lt.tm_isdst > 0;
+    return (int64_t)now;
+}
+
 int64_t misc_unix_time(void) {
     if (M.fixed)
         return FIXED_CLOCK_UNIX + (int64_t)(M.virtual_us / 1000000);
-    return (int64_t)time(NULL);
+    int32_t gmtoff;
+    bool dst;
+    return wall_clock(&gmtoff, &dst);
 }
 
 static void h_get_date_time(void) {
@@ -251,18 +302,15 @@ static void h_get_date_time(void) {
         gm_w32(trap_arg(0), FIXED_CLOCK_EPOCH + (uint32_t)(M.virtual_us / 1000000));
         return;
     }
-    time_t now = time(NULL);
-    struct tm lt;
-    localtime_r(&now, &lt);
-    gm_w32(trap_arg(0), (uint32_t)((int64_t)now + lt.tm_gmtoff + MAC_EPOCH_OFFSET));
+    int32_t gmtoff;
+    bool dst;
+    int64_t now = wall_clock(&gmtoff, &dst);
+    gm_w32(trap_arg(0), (uint32_t)(now + gmtoff + MAC_EPOCH_OFFSET));
 }
 
 /* ReadLocation(MachineLocation *): latitude and longitude 0, then gmtDelta in
    the low 24 bits with the daylight-saving flag (0x80) in the high byte. */
 static void h_read_location(void) {
-    time_t now = time(NULL);
-    struct tm lt;
-    localtime_r(&now, &lt);
     uint32_t loc = trap_arg(0);
     gm_w32(loc, 0);
     gm_w32(loc + 4, 0);
@@ -270,8 +318,10 @@ static void h_read_location(void) {
         gm_w32(loc + 8, 0);
         return;
     }
-    uint32_t dls = lt.tm_isdst > 0 ? 0x80u : 0u;
-    gm_w32(loc + 8, (dls << 24) | ((uint32_t)lt.tm_gmtoff & 0x00FFFFFFu));
+    int32_t gmtoff;
+    bool dst;
+    wall_clock(&gmtoff, &dst);
+    gm_w32(loc + 8, ((dst ? 0x80u : 0u) << 24) | ((uint32_t)gmtoff & 0x00FFFFFFu));
 }
 
 /* ---- strings and memory ---- */
@@ -356,6 +406,11 @@ static void h_ic_launch_url(void) {
     if (strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0) {
         log_msg("ICLaunchURL: not opening \"%s\" (only http and https)", url);
         trap_return((uint32_t)-50);
+        return;
+    }
+    if (replay_playing()) { /* the person who recorded it saw the page */
+        log_msg("replay: not opening %s", url);
+        trap_return(0);
         return;
     }
     log_msg("opening %s", url);

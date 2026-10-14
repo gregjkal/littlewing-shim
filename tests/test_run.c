@@ -199,6 +199,80 @@ TEST(run_a_game_starts_from_the_menu) {
     CHECK_EQ(shots[1], 0xA162CB3Du); /* ball 1 in play, "DEMO VERSION TIME LEFT" */
 }
 
+/* A recording and its replay (replay.h): the paths each run uses. */
+static char replay_file[1024], replay_shot[1024];
+
+static void run_loony_recording(void *dir) {
+    setenv("LOONY_SCRIPT", script_path, 1);
+    setenv("LOONY_RECORD", replay_file, 1);
+    setenv("LOONY_SCREENSHOT", replay_shot, 1);
+    run_loony(dir);
+}
+
+static void run_loony_replaying(void *unused) {
+    (void)unused;
+    unsetenv("LOONY_AUTO_ALERTS"); /* the replay sets it as the recording had it */
+    setenv("LOONY_REPLAY", replay_file, 1);
+    setenv("LOONY_DATA_DIR", run_data, 1);
+    setenv("LOONY_SCREENSHOT", replay_shot, 1);
+    execl(LOONY_BIN, "loony", (char *)NULL);
+    _exit(127);
+}
+
+/* Records a game started from the menu and played a little, on the real
+   clock with sound (SDL's dummy audio device plays it in real time), then
+   replays it headless: the replay reaches the end of the recording with
+   every frame check matching, and leaves the same last frame and the same
+   preferences. */
+TEST(run_a_recorded_game_replays_exactly) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_SLOW();
+    char rec_dir[1024], play_dir[1024], prefs[2][1100], shots[2][1024];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    snprintf(replay_file, sizeof replay_file, "%s/game.lwreplay", rec_dir);
+    tmp_name(script_path, sizeof script_path, "script");
+    FILE *f = fopen(script_path, "w");
+    fputs("1720 down esc\n1724 up esc\n1800 down esc\n1804 up esc\n1900 down return\n"
+          "1906 up return\n2100 down return\n2190 up return\n2300 down z\n2310 up z\n"
+          "2400 down slash\n2410 up slash\n2600 quit\n", f);
+    fclose(f);
+    char out[2][32768];
+    for (int i = 0; i < 2; i++) {
+        tmp_name(shots[i], sizeof shots[i], "shot");
+        snprintf(replay_shot, sizeof replay_shot, "%s", shots[i]);
+        snprintf(run_data, sizeof run_data, "%s", i ? play_dir : rec_dir);
+        int status = test_run_child(i ? run_loony_replaying : run_loony_recording,
+                                    (void *)test_game_dir(), out[i], sizeof out[i]);
+        CHECK_EQ(status, 0);
+        snprintf(prefs[i], sizeof prefs[i], "%s/prefs.plist", run_data);
+    }
+    run_data[0] = '\0';
+    unlink(script_path);
+    size_t len[4];
+    uint8_t *files[4] = {read_file(shots[0], &len[0]), read_file(shots[1], &len[1]),
+                         read_file(prefs[0], &len[2]), read_file(prefs[1], &len[3])};
+    bool same_shot = files[0] && files[1] && len[0] == len[1] && memcmp(files[0], files[1], len[0]) == 0;
+    bool same_prefs = files[2] && files[3] && len[2] == len[3] && memcmp(files[2], files[3], len[2]) == 0;
+    for (int i = 0; i < 4; i++)
+        free(files[i]);
+    unlink(shots[0]);
+    unlink(shots[1]);
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_CONTAINS(out[0], "loony: replay: recording to");
+    CHECK(!strstr(out[0], "no audio output"));
+    CHECK_CONTAINS(out[1], "loony: replay: reached the end of the recording");
+    CHECK_CONTAINS(out[1], "no desync");
+    const char *end = strstr(out[1], "reached the end of the recording");
+    unsigned frames = 0;
+    CHECK(end && sscanf(end, "reached the end of the recording at step %*u (tick %*u), %u frames",
+                        &frames) == 1);
+    CHECK(frames > 0);
+    CHECK(same_shot);
+    CHECK(same_prefs);
+}
+
 static uint32_t le32_at(const uint8_t *p) {
     return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
 }
