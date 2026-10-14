@@ -95,6 +95,7 @@ and right sides):
 | / | Right flipper |
 | Space | Nudge |
 | Cmd-F | Full screen on or off |
+| Cmd-S | While recording a replay: mark the moment for a clip (see Replays) |
 | Cmd-Q or closing the window | Quit |
 
 The keys can be changed from the game's OPTIONS menu. Unregistered, games are
@@ -247,7 +248,8 @@ action per line:
 
 Scripts can also click (`20 click 460 270`, in emulated-screen pixels) and type
 into a dialog (`50 type me@example.com`, the rest of the line), take focus away
-and give it back (`60 blur`, `90 focus`), and may be any length. `tools/soak_script.py` writes one that keeps playing for an hour (game
+and give it back (`60 blur`, `90 focus`), mark a clip while recording
+(`70 mark`, as Cmd-S does), and may be any length. `tools/soak_script.py` writes one that keeps playing for an hour (game
 starts, plunger, flippers, nudges, a screenshot every 5 minutes):
 
 ```bash
@@ -345,6 +347,26 @@ past it writes nothing and exits with status 4. A file already at
 `LOONY_CLIP_OUT` is replaced, but the replay itself is refused, as is a
 folder that can't be written, before the seek. Recordings in the
 first format (before dates were recorded) replay too, with the host's dates.
+
+While recording, Cmd-S marks the moment, the way a console saves the last
+30 seconds. The window's title says "clip 1 marked" for a couple of seconds,
+and the game never sees the key. A mark is one record in the file, and a
+replay only logs it. Afterwards, `LOONY_CLIP=marks` makes a clip of every
+mark in a single pass:
+
+```bash
+LOONY_REPLAY=game.lwreplay LOONY_CLIP=marks ./build-release/loony
+```
+
+Each clip runs from 30 seconds before its mark to 3 seconds after it, since
+the key comes a moment late; `LOONY_CLIP_BEFORE` and `LOONY_CLIP_AFTER` set
+those, in seconds. The clips go next to the replay as `game-clip-1.mp4`,
+`game-clip-2.mp4` and so on (with `LOONY_CLIP_OUT=ramps.mp4`, `ramps-1.mp4`
+and so on), and the other `LOONY_CLIP_` settings apply to each. Marks whose
+clips overlap, or come within a second of each other, share one clip. A
+replay with no marks is refused. Without `LOONY_RECORD`, Cmd-S marks nothing
+and the title says so. Recordings are now in format 3 (the one with marks),
+which older builds refuse.
 
 While recording, the game's clock moves in whole milliseconds, and when the
 game spins on `TickCount` waiting for the next tick, it sleeps instead. The

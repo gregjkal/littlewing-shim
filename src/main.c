@@ -307,7 +307,8 @@ int main(int argc, char **argv) {
     events_set_screenshot(display_write_png);
     events_set_cursor(display_set_cursor);
     static const display_input input = {events_host_key, events_host_activation,
-                                        events_host_quit, events_host_mouse, events_host_text};
+                                        events_host_quit, events_host_mouse, events_host_text,
+                                        replay_mark};
     display_set_input(&input);
     display_set_vsync(!misc_fixed_clock() && !replay_playing());
     sound_start_output();

@@ -14,8 +14,9 @@
 
 #define MAGIC "LWREPLAY"
 /* Format 1 had no start time or time zone: its replays see the host's
-   calendar, which only the dates the game saves depend on, never its frames. */
-#define FORMAT_VERSION 2
+   calendar, which only the dates the game saves depend on, never its frames.
+   Format 3 added marks, which format 2's reader would take for the end. */
+#define FORMAT_VERSION 3
 #define OLDEST_FORMAT 1
 #define FLAG_AUTO_ALERTS 1u
 #define FLAG_DST 2u /* daylight saving time was on when the recording started */
@@ -24,11 +25,11 @@ enum { OFF, RECORDING, PLAYING };
 
 static const char *const kind_names[REPLAY_KINDS] = {
     "end", "clock", "key", "mouse", "text", "focus", "quit",
-    "sound callback", "sound busy", "sound queue full", "frame",
+    "sound callback", "sound busy", "sound queue full", "frame", "mark",
 };
 
 /* Values per record of each kind. */
-static const int kind_values[REPLAY_KINDS] = {0, 1, 3, 3, 0, 1, 0, 3, 0, 0, 1};
+static const int kind_values[REPLAY_KINDS] = {0, 1, 3, 3, 0, 1, 0, 3, 0, 0, 1, 0};
 
 typedef struct {
     uint64_t step;
@@ -42,6 +43,7 @@ static struct {
     uint64_t step;
     uint64_t clock_ms; /* the clock as the game last saw it */
     unsigned presents, frames_checked;
+    int marks; /* marks logged, or taken */
     bool at_exit;
     /* recording */
     gzFile out;
@@ -63,6 +65,8 @@ static struct {
     const uint8_t *prefs;
     size_t prefs_len;
     record next;
+    uint32_t *mark_ticks; /* every mark in the file */
+    size_t nmark_ticks;
 } R;
 
 bool replay_recording(void) { return R.mode == RECORDING; }
@@ -81,6 +85,7 @@ void replay_reset(void) {
     if (R.out)
         gzclose(R.out);
     free(R.data);
+    free(R.mark_ticks);
     memset(&R, 0, sizeof R);
 }
 
@@ -124,6 +129,14 @@ static void put_varint(uint64_t v) {
     put(b, (size_t)n);
 }
 
+/* What is written so far reaches the file. */
+static void flush(void) {
+    if (gzflush(R.out, Z_SYNC_FLUSH) != Z_OK && !R.write_failed) {
+        log_msg("replay: can't write the recording");
+        R.write_failed = true;
+    }
+}
+
 static bool get_varint(uint64_t *out) {
     uint64_t v = 0;
     for (int shift = 0; shift < 64; shift += 7) {
@@ -147,34 +160,62 @@ static bool get_bytes(const uint8_t **out, size_t n) {
     return true;
 }
 
-/* Reads the next record into R.next. A file that stops early (a recording
-   that crashed before writing its end) ends as if it had an end record. */
-static void read_next(void) {
-    record *r = &R.next;
+/* Reads the record at R.pos into r, which holds the one before it. False
+   where the file stops early (a recording that crashed before writing its
+   end). */
+static bool parse_record(record *r) {
     uint64_t delta, kind, v;
     const uint8_t *s;
     if (!get_varint(&delta) || !get_varint(&kind) || kind >= REPLAY_KINDS)
-        goto cut_off;
+        return false;
     r->kind = (replay_kind)kind;
     for (int i = 0; i < kind_values[kind]; i++) {
         if (!get_varint(&v))
-            goto cut_off;
+            return false;
         r->v[i] = (uint32_t)v;
     }
     r->text[0] = '\0';
     if (kind == REPLAY_TEXT) {
         if (!get_varint(&v) || v >= sizeof r->text || !get_bytes(&s, (size_t)v))
-            goto cut_off;
+            return false;
         memcpy(r->text, s, (size_t)v);
         r->text[v] = '\0';
     }
     r->step += delta;
-    return;
-cut_off:
+    return true;
+}
+
+/* Reads the next record into R.next. A file that stops early ends as if it
+   had an end record. */
+static void read_next(void) {
+    if (parse_record(&R.next))
+        return;
     log_msg("replay: the file ends without an end record (after step %llu)",
-            (unsigned long long)r->step);
-    r->kind = REPLAY_END;
+            (unsigned long long)R.next.step);
+    R.next.kind = REPLAY_END;
     R.cut_short = true;
+}
+
+/* Finds the ticks of the marks ahead of the replay, so a clip can start
+   before them: the clock records say what the clock was at each. */
+static void scan_marks(void) {
+    static record r;
+    size_t pos = R.pos, cap = 0;
+    uint64_t clock_ms = 0;
+    memset(&r, 0, sizeof r);
+    while (parse_record(&r) && r.kind != REPLAY_END) {
+        if (r.kind == REPLAY_CLOCK) {
+            clock_ms += r.v[0];
+        } else if (r.kind == REPLAY_MARK) {
+            if (R.nmark_ticks == cap) {
+                cap = cap ? cap * 2 : 16;
+                if (!(R.mark_ticks = realloc(R.mark_ticks, cap * sizeof *R.mark_ticks)))
+                    fatal("out of memory");
+            }
+            R.mark_ticks[R.nmark_ticks++] = (uint32_t)(clock_ms * 60 / 1000);
+        }
+    }
+    R.pos = pos;
 }
 
 static uint8_t *gunzip_file(const char *path, size_t *len) {
@@ -262,6 +303,7 @@ bool replay_open(char *err, size_t errlen) {
     }
     if (!parse_header(err, errlen))
         return false;
+    scan_marks();
     R.loaded = true;
     const char *game = getenv("LOONY_GAME");
     if (!game || !*game)
@@ -480,6 +522,28 @@ const char *replay_log_text(const char *utf8) {
     return utf8;
 }
 
+int replay_mark(void) {
+    if (R.mode != RECORDING)
+        return 0;
+    replay_log(REPLAY_MARK, NULL);
+    R.marks++;
+    flush(); /* kept even if the game crashes before the next frame check */
+    log_msg("replay: mark %d at tick %u", R.marks, tick());
+    return R.marks;
+}
+
+bool replay_take_mark(void) {
+    if (!replay_take(REPLAY_MARK, NULL))
+        return false;
+    log_msg("replay: mark %d at tick %u", ++R.marks, tick());
+    return true;
+}
+
+size_t replay_marks(const uint32_t **ticks) {
+    *ticks = R.mark_ticks;
+    return R.nmark_ticks;
+}
+
 bool replay_take(replay_kind kind, uint32_t *values) {
     if (R.mode != PLAYING || R.next.kind != kind || R.next.step != R.step)
         return false;
@@ -504,11 +568,7 @@ bool replay_frame_due(void) {
 void replay_frame(uint32_t hash) {
     if (R.mode == RECORDING) {
         replay_log(REPLAY_FRAME, &hash);
-        /* At each frame check, so a recording that crashes replays to here. */
-        if (gzflush(R.out, Z_SYNC_FLUSH) != Z_OK && !R.write_failed) {
-            log_msg("replay: can't write the recording");
-            R.write_failed = true;
-        }
+        flush(); /* at each frame check, so a recording that crashes replays to here */
         return;
     }
     if (R.mode != PLAYING)

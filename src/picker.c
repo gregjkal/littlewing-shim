@@ -270,7 +270,7 @@ const game_info *picker_run(const game_info *const *games, int n) {
     P.n = n;
     P.selected = picker_initial(e, n, last);
     P.dirty = true;
-    static const display_input input = {on_key, NULL, on_quit, on_mouse, NULL};
+    static const display_input input = {on_key, NULL, on_quit, on_mouse, NULL, NULL};
     display_set_input(&input);
     display_set_title("LittleWing");
     static uint8_t screen[PICKER_W * PICKER_H * 4], rgba[PICKER_W * PICKER_H * 4];

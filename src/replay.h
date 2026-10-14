@@ -21,9 +21,11 @@
    id and the SHA-256 of its program, whether LOONY_AUTO_ALERTS was on, the
    wall clock and time zone at the start, and the preferences file the run
    started from), then the records. Format 1 had no wall clock or time zone:
-   its replays see the host's dates, which no frame depends on. A replay
-   starts from those preferences in a folder of its own (LOONY_DATA_DIR, or a
-   new temporary folder), and refuses another game or another program.
+   its replays see the host's dates, which no frame depends on. Format 3
+   added marks (an older program would take one for the end of the file). A
+   replay starts from those preferences in a folder of its own
+   (LOONY_DATA_DIR, or a new temporary folder), and refuses another game or
+   another program.
 
    Every REPLAY_FRAME_EVERY presents, a hash of the screen is logged; a
    replay compares them and exits with status 3 at the first difference (a
@@ -44,6 +46,7 @@ typedef enum {
     REPLAY_SOUND_BUSY,     /* a channel's status was busy */
     REPLAY_SOUND_FULL,     /* a channel's queue was full */
     REPLAY_FRAME,          /* the screen's hash */
+    REPLAY_MARK,           /* the player marked a moment to clip (format 3) */
     REPLAY_KINDS
 } replay_kind;
 
@@ -95,6 +98,18 @@ void replay_log(replay_kind kind, const uint32_t *values);
    REPLAY_MAX_TEXT bytes. Returns the text to post (utf8, or the cut text),
    so the game gets what a replay will give it. */
 const char *replay_log_text(const char *utf8);
+
+/* Marks: while recording, Cmd-S marks the moment for a clip (clip.h). A
+   replay only logs them. Recording: logs a mark at this step and returns its
+   number, from 1; 0 when nothing is recorded (a replay too). */
+int replay_mark(void);
+
+/* Replay: takes a mark at this step and logs it. */
+bool replay_take_mark(void);
+
+/* After replay_open: the ticks of the replay's marks, in order, from a scan
+   of the whole file. */
+size_t replay_marks(const uint32_t **ticks);
 
 /* Replay: takes the next record if it is of this kind and at this step. A
    record left behind at an earlier step is a desync. */

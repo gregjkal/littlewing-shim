@@ -8,6 +8,7 @@
 #include <zlib.h>
 
 #include "asm.h"
+#include "clip.h"
 #include "events.h"
 #include "harness.h"
 #include "memmgr.h"
@@ -180,6 +181,82 @@ TEST(replay_file_round_trips_every_kind_and_the_starting_state) {
     CHECK(replay_take(REPLAY_FOCUS, v));
     CHECK_EQ(v[0], 0);
     CHECK(replay_take(REPLAY_QUIT, NULL));
+}
+
+/* Marks (Cmd-S while recording) are found before the replay reaches them,
+   at the ticks they were made, and a replay takes each where it was made. A
+   replay marks nothing itself. */
+TEST(replay_marks_are_found_before_they_are_played) {
+    BEGIN_TEST();
+    CHECK_EQ(replay_mark(), 0); /* nothing recorded */
+    CHECK(record(NULL));
+    replay_clock(1000000); /* 1 s: tick 60 */
+    CHECK_EQ(replay_mark(), 1);
+    replay_clock(2500000); /* tick 150 */
+    replay_step();
+    CHECK_EQ(replay_mark(), 2);
+    replay_step();
+    replay_finish();
+
+    CHECK(play_back());
+    const uint32_t *ticks;
+    CHECK_EQ(replay_marks(&ticks), 2);
+    CHECK_EQ(ticks[0], 60);
+    CHECK_EQ(ticks[1], 150);
+    CHECK_EQ(replay_mark(), 0);
+    CHECK(!replay_take_mark());
+    CHECK_EQ(replay_clock(0), 1000000);
+    CHECK(replay_take_mark());
+    CHECK(!replay_take_mark());
+    CHECK_EQ(replay_clock(0), 2500000);
+    replay_step();
+    CHECK(replay_take_mark());
+}
+
+/* LOONY_CLIP=marks, in a child (clip_open turns clips on for good): the
+   clips of the replay's marks, and their files. */
+static void child_clip_marks(void *unused) {
+    (void)unused;
+    char err[256], play_data[1300];
+    snprintf(play_data, sizeof play_data, "%s/play", dir);
+    replay_reset();
+    unsetenv("LOONY_RECORD");
+    setenv("LOONY_REPLAY", file, 1);
+    setenv("LOONY_DATA_DIR", play_data, 1);
+    setenv("LOONY_CLIP", "marks", 1);
+    setenv("LOONY_CLIP_BEFORE", "1", 1);
+    setenv("LOONY_CLIP_AFTER", "0.5", 1);
+    if (!replay_open(err, sizeof err) || !clip_open(err, sizeof err)) {
+        fprintf(stderr, "%s\n", err);
+        _exit(1);
+    }
+    _exit(0);
+}
+
+TEST(replay_marks_become_clips_named_after_the_replay) {
+    BEGIN_TEST();
+    CHECK(record(NULL));
+    replay_clock(1000000); /* tick 60 */
+    replay_mark();
+    replay_clock(2500000); /* tick 150: its clip meets the first's */
+    replay_mark();
+    replay_clock(6666667); /* tick 399 */
+    replay_mark();
+    replay_finish();
+    char out[8192], want[2048];
+    CHECK_EQ(test_run_child(child_clip_marks, NULL, out, sizeof out), 0);
+    CHECK_CONTAINS(out, "clip: mark 1 at tick 60 (0:01)");
+    CHECK_CONTAINS(out, "clip: mark 2 at tick 150 (0:02.50)");
+    CHECK_CONTAINS(out, "clip: mark 3 at tick 399 (0:06.65)");
+    snprintf(want, sizeof want, "clip: 0:00-0:03 (marks 1 to 2) to %s/run-clip-1.mp4", dir);
+    CHECK_CONTAINS(out, want);
+    snprintf(want, sizeof want, "clip: 0:05.65-0:07.15 (mark 3) to %s/run-clip-2.mp4", dir);
+    CHECK_CONTAINS(out, want);
+
+    CHECK(record(NULL)); /* none */
+    replay_finish();
+    CHECK_EQ(test_run_child(child_clip_marks, NULL, out, sizeof out), 1);
+    CHECK_CONTAINS(out, "has no marks (Cmd-S marks one while recording)");
 }
 
 TEST(replay_refuses_another_game_or_program) {
@@ -607,7 +684,7 @@ TEST(replay_refuses_a_damaged_header) {
     CHECK_STR(err, "the replay's header is damaged");
     write_replay("LWREPLAY\x09", 9);
     CHECK(!replay_open(err, sizeof err));
-    CHECK_STR(err, "replay format 9 (this program reads 1 to 2)");
+    CHECK_STR(err, "replay format 9 (this program reads 1 to 3)");
     uint8_t h[64];
     static const char *const damaged[][2] = {
         {"\x80\x80\x80\x80\x80\x20", "\x01"}, /* a start of 2^40 s: 36812 AD */

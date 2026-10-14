@@ -1,6 +1,7 @@
 #include "display.h"
 
 #include <SDL3/SDL.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -23,6 +24,8 @@ static struct {
     bool no_vsync;
     bool cursor_hidden;
     const char *title;
+    char flash[256];      /* a message in the title, in place of the title */
+    uint64_t flash_until; /* SDL_GetTicks when it goes, or 0 */
     /* What presenting costs, logged at exit: presents that reached the
        window, bytes uploaded, and nanoseconds in the upload alone and in the
        upload plus drawing and presenting (which waits for vsync when on). */
@@ -41,8 +44,15 @@ static struct {
 
 void display_set_title(const char *title) {
     D.title = title;
-    if (D.window)
+    if (D.window && !D.flash_until)
         SDL_SetWindowTitle(D.window, title);
+}
+
+/* Shows msg after the title for DISPLAY_FLASH_MS. */
+static void flash_title(const char *msg) {
+    snprintf(D.flash, sizeof D.flash, "%s: %s", D.title ? D.title : "LittleWing", msg);
+    SDL_SetWindowTitle(D.window, D.flash);
+    D.flash_until = SDL_GetTicks() + DISPLAY_FLASH_MS;
 }
 
 /* The frame to show, w x h: the screen's pixels, or their HD copy in HD mode.
@@ -263,6 +273,10 @@ void display_set_cursor(bool visible) {
 void display_poll(void) {
     if (!D.sdl_ok)
         return;
+    if (D.flash_until && SDL_GetTicks() >= D.flash_until) {
+        D.flash_until = 0;
+        SDL_SetWindowTitle(D.window, D.title ? D.title : "LittleWing");
+    }
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         switch (e.type) {
@@ -290,6 +304,18 @@ void display_poll(void) {
                     if (text && *text)
                         D.input.paste(text);
                     SDL_free(text);
+                }
+                break;
+            }
+            if ((e.key.mod & SDL_KMOD_GUI) && e.key.scancode == SDL_SCANCODE_S) {
+                if (down && !e.key.repeat && D.input.mark) {
+                    char msg[64];
+                    int n = D.input.mark();
+                    if (n)
+                        snprintf(msg, sizeof msg, "clip %d marked", n);
+                    else
+                        snprintf(msg, sizeof msg, "not recording, nothing marked");
+                    flash_title(msg);
                 }
                 break;
             }
