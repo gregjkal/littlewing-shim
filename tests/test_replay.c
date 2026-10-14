@@ -3,6 +3,8 @@
 #include <SDL3/SDL_scancode.h>
 #include <stdlib.h>
 #include <time.h>
+#include <unistd.h>
+#include <zlib.h>
 
 #include "asm.h"
 #include "events.h"
@@ -15,7 +17,7 @@
 
 static const char *const names[] = {
     "TickCount", "Microseconds", "Delay", "GetDateTime", "NewSndCallBackUPP", "SndNewChannel",
-    "SndDoCommand", "SndChannelStatus",
+    "SndDoCommand", "SndChannelStatus", "ICLaunchURL",
 };
 
 static const uint8_t exe[] = "a game's program";
@@ -25,7 +27,8 @@ static char dir[1024], file[1200], data[1200];
 #define TV_CB (GUEST_IMAGE_BASE + 0x8100)
 #define GOT   (GUEST_IMAGE_BASE + 0x8200)
 
-/* A fresh machine; a sound callback that stores cmd->param2 at GOT. */
+/* A fresh machine; a sound callback that stores cmd->param2 at GOT and
+   counts its calls at GOT + 4. */
 static void setup(void) {
     harness_init(names, sizeof names / sizeof names[0]);
     mm_init();
@@ -35,20 +38,55 @@ static void setup(void) {
     sound_register();
     events_init();
     uint32_t code[] = {
-        ppc_lwz(5, 4, 4), ppc_lis(6, GOT >> 16), ppc_ori(6, 6, GOT & 0xFFFF), ppc_stw(5, 0, 6),
-        PPC_BLR,
+        ppc_lwz(5, 4, 4),  ppc_lis(6, GOT >> 16), ppc_ori(6, 6, GOT & 0xFFFF), ppc_stw(5, 0, 6),
+        ppc_lwz(7, 4, 6),  ppc_addi(7, 7, 1),     ppc_stw(7, 4, 6),            PPC_BLR,
     };
-    put_words(CB, code, 5);
+    put_words(CB, code, 8);
     gm_w32(TV_CB, CB);
     gm_w32(TV_CB + 4, 0);
     gm_w32(GOT, 0);
+    gm_w32(GOT + 4, 0);
 }
 
-static void make_paths(void) {
+/* The variables a recording or a replay sets or clears, as they were before
+   the test. */
+static const char *const env_names[] = {
+    "LOONY_RECORD", "LOONY_REPLAY", "LOONY_GAME", "LOONY_DATA_DIR", "LOONY_AUTO_ALERTS",
+    "LOONY_FIXED_CLOCK",
+};
+static char *env_saved[sizeof env_names / sizeof env_names[0]];
+
+static int begin_test(void) {
+    for (size_t i = 0; i < sizeof env_names / sizeof env_names[0]; i++) {
+        const char *v = getenv(env_names[i]);
+        env_saved[i] = v ? strdup(v) : NULL;
+    }
     test_tmp_dir(dir, sizeof dir);
     snprintf(file, sizeof file, "%s/run.lwreplay", dir);
     snprintf(data, sizeof data, "%s/data", dir);
+    return 0;
 }
+
+static void end_test(int *unused) {
+    (void)unused;
+    replay_reset();
+    events_set_poll(NULL);
+    events_set_modal(NULL);
+    for (size_t i = 0; i < sizeof env_names / sizeof env_names[0]; i++) {
+        if (env_saved[i])
+            setenv(env_names[i], env_saved[i], 1);
+        else
+            unsetenv(env_names[i]);
+        free(env_saved[i]);
+        env_saved[i] = NULL;
+    }
+    test_remove_tree(dir);
+}
+
+/* First in every test: however the test ends, the recorder is reset, the
+   environment put back and the folder removed, for the tests that run after
+   it in the same process (-j 1). */
+#define BEGIN_TEST() __attribute__((cleanup(end_test))) int test_guard_ = begin_test()
 
 static bool record(const char *data_dir) {
     char err[256];
@@ -82,7 +120,7 @@ static void sleep_s(double s) {
 }
 
 TEST(replay_file_round_trips_every_kind_and_the_starting_state) {
-    make_paths();
+    BEGIN_TEST();
     CHECK(make_dirs(data));
     char prefs[1300];
     snprintf(prefs, sizeof prefs, "%s/prefs.plist", data);
@@ -141,11 +179,10 @@ TEST(replay_file_round_trips_every_kind_and_the_starting_state) {
     CHECK(replay_take(REPLAY_FOCUS, v));
     CHECK_EQ(v[0], 0);
     CHECK(replay_take(REPLAY_QUIT, NULL));
-    test_remove_tree(dir);
 }
 
 TEST(replay_refuses_another_game_or_program) {
-    make_paths();
+    BEGIN_TEST();
     CHECK(record(NULL));
     replay_finish();
     char err[256];
@@ -157,13 +194,12 @@ TEST(replay_refuses_another_game_or_program) {
     setenv("LOONY_REPLAY", "/nonexistent/run.lwreplay", 1);
     CHECK(!replay_open(err, sizeof err));
     CHECK_CONTAINS(err, "can't read the replay /nonexistent/run.lwreplay");
-    test_remove_tree(dir);
 }
 
 /* The clock moves in whole ms while recording, and a run of TickCount polls
    on one tick sleeps until the next; a replay returns the same values. */
 TEST(replay_clock_values_come_back) {
-    make_paths();
+    BEGIN_TEST();
     setup();
     CHECK(record(NULL));
     uint32_t got[80], micro[2];
@@ -190,13 +226,12 @@ TEST(replay_clock_values_come_back) {
     call_import("Delay", 2, 2u, 0u);
     call_import("Microseconds", 1, us);
     CHECK_EQ(gm_r32(us + 4), micro[1]);
-    test_remove_tree(dir);
 }
 
 /* The date is the recording's start plus the game's clock (Loony Labyrinth
    stamps a high score with it), so a replay a second later sees the same. */
 TEST(replay_dates_come_back) {
-    make_paths();
+    BEGIN_TEST();
     setup();
     CHECK(record(NULL));
     uint32_t at = scratch(4);
@@ -215,7 +250,6 @@ TEST(replay_dates_come_back) {
     CHECK(play_back());
     call_import("GetDateTime", 1, at);
     CHECK_EQ(gm_r32(at), recorded);
-    test_remove_tree(dir);
 }
 
 /* The window: Z and a focus loss at the second poll, Z up at the third. */
@@ -234,7 +268,7 @@ static void host_poll(void) {
 /* Host input is logged where the pump polled for it and posted there again;
    on a replay the host's own input is dropped. */
 TEST(replay_input_is_posted_where_it_was_polled) {
-    make_paths();
+    BEGIN_TEST();
     setup();
     events_set_poll(host_poll);
     CHECK(record(NULL));
@@ -256,7 +290,6 @@ TEST(replay_input_is_posted_where_it_was_polled) {
         events_pump(); /* the window's input is dropped; the file's is posted */
         CHECK_EQ(events_queued(), queued[i]);
     }
-    test_remove_tree(dir);
 }
 
 static uint32_t cmd(uint16_t c, uint16_t p1, uint32_t p2) {
@@ -294,7 +327,7 @@ static void queue_sound(uint32_t chan) {
 /* A replay delivers sound callbacks, and answers SndChannelStatus, as the
    recording did, whatever its own mixer says. */
 TEST(replay_sound_callbacks_and_status_come_from_the_file) {
-    make_paths();
+    BEGIN_TEST();
     setup();
     CHECK(record(NULL));
     uint32_t chan = new_channel();
@@ -304,24 +337,33 @@ TEST(replay_sound_callbacks_and_status_come_from_the_file) {
     sleep_s(0.08);
     misc_seconds(); /* the mixer renders up to the clock the game last read */
     sound_pump();
-    uint32_t got = gm_r32(GOT);
+    uint32_t got = gm_r32(GOT), calls = gm_r32(GOT + 4);
     bool busy_after = busy(chan);
     replay_finish();
     CHECK(busy_before);
     CHECK_EQ(got, 0xCAFE);
+    CHECK_EQ(calls, 1);
     CHECK(!busy_after);
 
+    /* The replay's mixer gets a callback (0xBEEF), due at once, then 3 s of
+       sound, so it stays busy. Only the file's answers count. */
     setup();
     CHECK(play_back());
     chan = new_channel();
-    queue_sound(chan);
+    uint32_t h = scratch(22 + 30);
+    gm_w32(h + 4, 30);
+    gm_w32(h + 8, 10u << 16); /* 30 samples at 10 Hz */
+    memset(gm_ptr(h + 22, 30), 0x80, 30);
+    call_import("SndDoCommand", 3, chan, cmd(SND_CALLBACK_CMD, 0, 0xBEEFu), 0u);
+    call_import("SndDoCommand", 3, chan, cmd(SND_BUFFER_CMD, 0, h), 0u);
     sound_pump();
+    CHECK_EQ(gm_r32(GOT), 0);
     CHECK(busy(chan));
     misc_seconds();
     sound_pump();
     CHECK_EQ(gm_r32(GOT), 0xCAFE);
+    CHECK_EQ(gm_r32(GOT + 4), 1); /* the mixer's own callback never came */
     CHECK(!busy(chan));
-    test_remove_tree(dir);
 }
 
 static void child_desync(void *unused) {
@@ -329,21 +371,22 @@ static void child_desync(void *unused) {
     CHECK(record(NULL));
     for (int i = 0; i < REPLAY_FRAME_EVERY; i++) {
         replay_step();
-        replay_frame(0x1234);
+        if (replay_frame_due())
+            replay_frame(0x1234);
     }
     replay_finish();
     CHECK(play_back());
     for (int i = 0; i < REPLAY_FRAME_EVERY; i++) {
         replay_step();
-        replay_frame(0x1235);
+        if (replay_frame_due())
+            replay_frame(0x1235);
     }
 }
 
 TEST(replay_reports_a_desync_at_the_first_frame_that_differs) {
-    make_paths();
+    BEGIN_TEST();
     char out[4096];
     int status = test_run_child(child_desync, NULL, out, sizeof out);
-    test_remove_tree(dir);
     CHECK_EQ(status, REPLAY_DESYNC_STATUS);
     CHECK_CONTAINS(out, "replay: desync at step 30 (tick 0): present 30: the screen's hash is "
                         "00001235, not 00001234 as recorded");
@@ -362,10 +405,9 @@ static void child_input_not_used(void *unused) {
 }
 
 TEST(replay_reports_a_record_left_unused) {
-    make_paths();
+    BEGIN_TEST();
     char out[4096];
     int status = test_run_child(child_input_not_used, NULL, out, sizeof out);
-    test_remove_tree(dir);
     CHECK_EQ(status, REPLAY_DESYNC_STATUS);
     CHECK_CONTAINS(out, "replay: desync at step 2 (tick 0): the key record of step 1 wasn't used");
 }
@@ -383,12 +425,204 @@ static void child_past_the_end(void *unused) {
 }
 
 TEST(replay_exits_where_the_recording_stopped) {
-    make_paths();
+    BEGIN_TEST();
     char out[4096];
     int status = test_run_child(child_past_the_end, NULL, out, sizeof out);
-    test_remove_tree(dir);
     CHECK_EQ(status, 0);
     CHECK_CONTAINS(out, "replay: exiting where the recording stopped");
     CHECK_CONTAINS(out, "replay: reached the end of the recording at step 3");
     CHECK(!strstr(out, "still running"));
+}
+
+/* A replay never writes over preferences already in its save folder: they
+   could be the player's own, with their license and high scores. */
+TEST(replay_refuses_a_folder_with_preferences) {
+    BEGIN_TEST();
+    CHECK(record(NULL));
+    replay_finish();
+    char play_dir[1300], prefs[1400], err[256];
+    snprintf(play_dir, sizeof play_dir, "%s/play", dir);
+    snprintf(prefs, sizeof prefs, "%s/prefs.plist", play_dir);
+    CHECK(make_dirs(play_dir));
+    FILE *f = fopen(prefs, "w");
+    fputs("mine", f);
+    fclose(f);
+    CHECK(!play("loony-labyrinth", exe, sizeof exe, err, sizeof err));
+    CHECK_CONTAINS(err, "already has preferences: replay into a new folder");
+    size_t len = 0;
+    char *text = (char *)read_file(prefs, &len);
+    bool kept = text && len == 4 && memcmp(text, "mine", 4) == 0;
+    free(text);
+    CHECK(kept);
+    CHECK(!replay_playing());
+}
+
+static void child_bad_channel(void *unused) {
+    (void)unused;
+    setup();
+    CHECK(record(NULL));
+    replay_step();
+    replay_log(REPLAY_SOUND_CALLBACK, (uint32_t[3]){100000000u, 0, 0});
+    replay_finish();
+    setup();
+    CHECK(play_back());
+    replay_step();
+    sound_pump();
+    fprintf(stderr, "still running\n");
+}
+
+/* A damaged or crafted file can't make a callback on a channel that isn't. */
+TEST(replay_a_sound_callback_on_no_channel_is_a_desync) {
+    BEGIN_TEST();
+    char out[4096];
+    int status = test_run_child(child_bad_channel, NULL, out, sizeof out);
+    CHECK_EQ(status, REPLAY_DESYNC_STATUS);
+    CHECK_CONTAINS(out, "replay: desync at step 1 (tick 0): a sound callback for channel "
+                        "100000000, of 16");
+    CHECK(!strstr(out, "still running"));
+}
+
+/* A recording that stops without finishing (a crash): 30 presents, so one
+   frame check and a flush, then 5 steps never flushed. */
+static void child_crashing_recording(void *unused) {
+    (void)unused;
+    CHECK(record(NULL));
+    for (int i = 0; i < REPLAY_FRAME_EVERY; i++) {
+        replay_step();
+        replay_log(REPLAY_KEY, (uint32_t[3]){SDL_SCANCODE_Z, 1, 0});
+        if (replay_frame_due())
+            replay_frame(0x1234);
+    }
+    for (int i = 0; i < 5; i++)
+        replay_step();
+    _exit(0);
+}
+
+static void child_replay_crashed(void *unused) {
+    (void)unused;
+    CHECK(play_back());
+    uint32_t v[3];
+    for (int i = 0; i < REPLAY_FRAME_EVERY; i++) {
+        replay_step();
+        CHECK(replay_take(REPLAY_KEY, v));
+        if (replay_frame_due())
+            replay_frame(0x1234);
+    }
+    fprintf(stderr, "checked to the flush\n");
+    for (int i = 0; i < 5; i++)
+        replay_step();
+    fprintf(stderr, "still running\n");
+}
+
+/* The recording reaches the file at every frame check, so a recording that
+   crashed replays up to its last one. */
+TEST(replay_a_recording_that_crashed_plays_to_its_last_frame_check) {
+    BEGIN_TEST();
+    char out[4096];
+    CHECK_EQ(test_run_child(child_crashing_recording, NULL, out, sizeof out), 0);
+    int status = test_run_child(child_replay_crashed, NULL, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "replay: the file ends without an end record (after step 30)");
+    CHECK_CONTAINS(out, "checked to the flush");
+    CHECK_CONTAINS(out, "replay: exiting where the recording stopped");
+    CHECK(!strstr(out, "still running"));
+}
+
+static char posted[REPLAY_MAX_TEXT + 200];
+static void sink_key(uint32_t vkey, uint8_t chr, uint32_t modifiers) {
+    (void)vkey, (void)chr, (void)modifiers;
+}
+static void sink_mouse(int x, int y, bool down) { (void)x, (void)y, (void)down; }
+static void sink_text(const char *utf8) { snprintf(posted, sizeof posted, "%s", utf8); }
+
+/* Text too long for a record is cut before a character, and the game gets
+   the cut text while recording too, as it will on the replay. */
+TEST(replay_long_text_is_cut_the_same_both_ways) {
+    BEGIN_TEST();
+    setup();
+    static const ev_modal_sink sink = {sink_key, sink_mouse, sink_text};
+    events_set_modal(&sink);
+    char text[REPLAY_MAX_TEXT + 100];
+    memset(text, 'a', REPLAY_MAX_TEXT - 2);
+    strcpy(text + REPLAY_MAX_TEXT - 2, "\xC3\xA9 and more"); /* an e-acute across the cut */
+    CHECK(record(NULL));
+    replay_step();
+    events_host_text(text);
+    replay_finish();
+    CHECK_EQ(strlen(posted), REPLAY_MAX_TEXT - 2);
+    CHECK(memcmp(posted, text, REPLAY_MAX_TEXT - 2) == 0);
+
+    CHECK(play_back());
+    replay_step();
+    char got[REPLAY_MAX_TEXT];
+    CHECK(replay_take_text(got, sizeof got));
+    CHECK_STR(got, posted);
+}
+
+/* A replay file of these bytes, compressed. */
+static void write_replay(const void *bytes, size_t len) {
+    gzFile f = gzopen(file, "wb");
+    gzwrite(f, bytes, (unsigned)len);
+    gzclose(f);
+}
+
+/* A format 2 header for "x", up to and including the start (a varint). */
+static size_t header_with_start(uint8_t *h, const uint8_t *start, size_t start_len) {
+    memcpy(h, "LWREPLAY\x02\x01x", 11);
+    memset(h + 11, 0, 32); /* the SHA-256 */
+    size_t n = 43;
+    h[n++] = 0; /* no flags */
+    memcpy(h + n, start, start_len);
+    n += start_len;
+    h[n++] = 0; /* UTC */
+    h[n++] = 0; /* no preferences */
+    return n;
+}
+
+TEST(replay_refuses_a_damaged_header) {
+    BEGIN_TEST();
+    char err[256];
+    unsetenv("LOONY_RECORD");
+    setenv("LOONY_REPLAY", file, 1);
+    write_replay("LWREPLAY", 8); /* no version */
+    CHECK(!replay_open(err, sizeof err));
+    CHECK_STR(err, "the replay's header is damaged");
+    write_replay("LWREPLAY\x09", 9);
+    CHECK(!replay_open(err, sizeof err));
+    CHECK_STR(err, "replay format 9 (this program reads 2)");
+    uint8_t h[64];
+    static const uint8_t far[] = {0x80, 0x80, 0x80, 0x80, 0x80, 0x20}; /* 2^40 s: 36812 AD */
+    write_replay(h, header_with_start(h, far, sizeof far));
+    CHECK(!replay_open(err, sizeof err));
+    CHECK_STR(err, "the replay's header is damaged");
+    static const uint8_t soon[] = {0x01};
+    write_replay(h, header_with_start(h, soon, sizeof soon));
+    CHECK(replay_open(err, sizeof err));
+}
+
+static int urls_opened;
+static bool count_open(const char *url) {
+    (void)url;
+    urls_opened++;
+    return true;
+}
+
+/* A replay of someone clicking a link (Alert 901's Buy Now) opens nothing. */
+TEST(replay_opens_no_web_pages) {
+    BEGIN_TEST();
+    misc_set_url_opener(count_open);
+    setup();
+    CHECK(record(NULL));
+    replay_finish();
+    CHECK(play_back());
+    const char *u = "http://www.LittleWingPinball.com/";
+    uint32_t d = scratch(64), sp = scratch(4), ep = scratch(4);
+    memcpy(gm_ptr(d, 64), u, strlen(u));
+    gm_w32(sp, 0);
+    gm_w32(ep, (uint32_t)strlen(u));
+    urls_opened = 0;
+    uint32_t r = call_import("ICLaunchURL", 6, MISC_IC_INSTANCE, scratch(2), d,
+                             (uint32_t)strlen(u), sp, ep);
+    CHECK_EQ(r, 0);
+    CHECK_EQ(urls_opened, 0);
 }

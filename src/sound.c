@@ -254,8 +254,11 @@ void sound_pump(void) {
         while (mix_take_callback(&cb))
             ;
         uint32_t v[3];
-        while (replay_take(REPLAY_SOUND_CALLBACK, v))
+        while (replay_take(REPLAY_SOUND_CALLBACK, v)) {
+            if (v[0] >= MIX_CHANNELS)
+                replay_desync("a sound callback for channel %u, of %d", v[0], MIX_CHANNELS);
             deliver_callback((int)v[0], (uint16_t)v[1], v[2]);
+        }
         return;
     }
     for (;;) {

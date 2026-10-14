@@ -31,7 +31,7 @@ static struct {
     bool fixed;
     uint64_t virtual_us;
     uint64_t last_us; /* what elapsed_us last returned */
-    uint32_t spin_tick; /* the tick TickCount last returned, and how often in a row */
+    uint32_t spin_tick; /* the tick TickCount last returned, and how often since it moved */
     int spins;
     int polls; /* time polls since the virtual clock last moved */
     misc_url_fn open_url;
@@ -406,6 +406,11 @@ static void h_ic_launch_url(void) {
     if (strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0) {
         log_msg("ICLaunchURL: not opening \"%s\" (only http and https)", url);
         trap_return((uint32_t)-50);
+        return;
+    }
+    if (replay_playing()) { /* the person who recorded it saw the page */
+        log_msg("replay: not opening %s", url);
+        trap_return(0);
         return;
     }
     log_msg("opening %s", url);

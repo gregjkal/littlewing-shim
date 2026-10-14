@@ -88,16 +88,25 @@ uint64_t replay_clock(uint64_t host_us);
 
 /* Recording: logs a record at this step. */
 void replay_log(replay_kind kind, const uint32_t *values);
-void replay_log_text(const char *utf8);
+
+/* Recording: logs text at this step, cut at a character to under
+   REPLAY_MAX_TEXT bytes. Returns the text to post (utf8, or the cut text),
+   so the game gets what a replay will give it. */
+const char *replay_log_text(const char *utf8);
 
 /* Replay: takes the next record if it is of this kind and at this step. A
    record left behind at an earlier step is a desync. */
 bool replay_take(replay_kind kind, uint32_t *values);
 bool replay_take_text(char *out, size_t cap);
 
-/* At every present: logs, or checks, the screen's hash every
-   REPLAY_FRAME_EVERY presents. */
+/* At every present: true every REPLAY_FRAME_EVERY presents on a recording
+   or a replay, when replay_frame should log, or check, the screen's hash. */
+bool replay_frame_due(void);
 void replay_frame(uint32_t hash);
+
+/* Replay: a desync (or a damaged file). Logs it with the step and tick, and
+   exits with REPLAY_DESYNC_STATUS. */
+_Noreturn void replay_desync(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 /* For tests: forget everything (no file is written). */
 void replay_reset(void);

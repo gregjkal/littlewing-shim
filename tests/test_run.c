@@ -264,6 +264,11 @@ TEST(run_a_recorded_game_replays_exactly) {
     CHECK(!strstr(out[0], "no audio output"));
     CHECK_CONTAINS(out[1], "loony: replay: reached the end of the recording");
     CHECK_CONTAINS(out[1], "no desync");
+    const char *end = strstr(out[1], "reached the end of the recording");
+    unsigned frames = 0;
+    CHECK(end && sscanf(end, "reached the end of the recording at step %*u (tick %*u), %u frames",
+                        &frames) == 1);
+    CHECK(frames > 0);
     CHECK(same_shot);
     CHECK(same_prefs);
 }

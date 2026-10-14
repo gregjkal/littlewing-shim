@@ -253,8 +253,7 @@ void events_host_mouse(int x, int y, bool down) {
 void events_host_text(const char *utf8) {
     if (replay_playing())
         return;
-    replay_log_text(utf8);
-    events_post_text(utf8);
+    events_post_text(replay_log_text(utf8));
 }
 
 void events_host_activation(bool active) {

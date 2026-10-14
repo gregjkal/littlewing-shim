@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 #include <zlib.h>
 
 #include "util.h"
@@ -43,6 +44,8 @@ static struct {
     /* recording */
     gzFile out;
     uint64_t last_step;
+    bool write_failed;
+    char cut_text[REPLAY_MAX_TEXT];
     /* replay: the whole file, decompressed, and the next record */
     bool loaded;
     uint8_t *data;
@@ -78,8 +81,7 @@ void replay_reset(void) {
 
 static uint32_t tick(void) { return (uint32_t)(R.clock_ms * 60 / 1000); }
 
-static _Noreturn void desync(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static _Noreturn void desync(const char *fmt, ...) {
+_Noreturn void replay_desync(const char *fmt, ...) {
     char msg[512];
     va_list ap;
     va_start(ap, fmt);
@@ -92,7 +94,15 @@ static _Noreturn void desync(const char *fmt, ...) {
 
 /* ---- the file ---- */
 
-static void put_varint(gzFile f, uint64_t v) {
+static void put(const void *p, size_t n) {
+    if (n && gzwrite(R.out, p, (unsigned)n) != (int)n && !R.write_failed) {
+        int code;
+        log_msg("replay: can't write the recording (%s)", gzerror(R.out, &code));
+        R.write_failed = true;
+    }
+}
+
+static void put_varint(uint64_t v) {
     uint8_t b[10];
     int n = 0;
     do {
@@ -102,7 +112,7 @@ static void put_varint(gzFile f, uint64_t v) {
             b[n] |= 0x80;
         n++;
     } while (v);
-    gzwrite(f, b, (unsigned)n);
+    put(b, (size_t)n);
 }
 
 static bool get_varint(uint64_t *out) {
@@ -133,33 +143,29 @@ static bool get_bytes(const uint8_t **out, size_t n) {
 static void read_next(void) {
     record *r = &R.next;
     uint64_t delta, kind, v;
-    if (!get_varint(&delta) || !get_varint(&kind) || kind >= REPLAY_KINDS) {
-        log_msg("replay: the file ends without an end record (after step %llu)",
-                (unsigned long long)r->step);
-        r->valid = true;
-        r->kind = REPLAY_END;
-        return;
-    }
+    const uint8_t *s;
     r->valid = true;
-    r->step += delta;
+    if (!get_varint(&delta) || !get_varint(&kind) || kind >= REPLAY_KINDS)
+        goto cut_off;
     r->kind = (replay_kind)kind;
     for (int i = 0; i < kind_values[kind]; i++) {
-        if (!get_varint(&v)) {
-            r->kind = REPLAY_END;
-            return;
-        }
+        if (!get_varint(&v))
+            goto cut_off;
         r->v[i] = (uint32_t)v;
     }
     r->text[0] = '\0';
     if (kind == REPLAY_TEXT) {
-        const uint8_t *s;
-        if (!get_varint(&v) || v >= sizeof r->text || !get_bytes(&s, (size_t)v)) {
-            r->kind = REPLAY_END;
-            return;
-        }
+        if (!get_varint(&v) || v >= sizeof r->text || !get_bytes(&s, (size_t)v))
+            goto cut_off;
         memcpy(r->text, s, (size_t)v);
         r->text[v] = '\0';
     }
+    r->step += delta;
+    return;
+cut_off:
+    log_msg("replay: the file ends without an end record (after step %llu)",
+            (unsigned long long)r->step);
+    r->kind = REPLAY_END;
 }
 
 static uint8_t *gunzip_file(const char *path, size_t *len) {
@@ -172,12 +178,15 @@ static uint8_t *gunzip_file(const char *path, size_t *len) {
         if (!buf)
             fatal("out of memory");
         int got = gzread(f, buf + n, (unsigned)(cap - n));
-        if (got < 0) {
+        int code = Z_OK;
+        if (got < 0)
+            gzerror(f, &code);
+        if (got < 0 && code != Z_BUF_ERROR) {
             free(buf);
             gzclose(f);
             return NULL;
         }
-        if (got == 0)
+        if (got <= 0) /* the end, or a stream cut short: a recording that crashed */
             break;
         n += (size_t)got;
         if (n == cap)
@@ -195,7 +204,9 @@ static bool parse_header(char *err, size_t errlen) {
         snprintf(err, errlen, "not a replay file");
         return false;
     }
-    if (!get_varint(&version) || version != FORMAT_VERSION) {
+    if (!get_varint(&version))
+        goto bad;
+    if (version != FORMAT_VERSION) {
         snprintf(err, errlen, "replay format %llu (this program reads %d)",
                  (unsigned long long)version, FORMAT_VERSION);
         return false;
@@ -214,6 +225,10 @@ static bool parse_header(char *err, size_t errlen) {
     R.flags = (uint32_t)flags;
     R.start_unix = (int64_t)start;
     R.gmtoff = (int32_t)(uint32_t)gmtoff;
+    /* A start before 2038 and a time zone within a day of UTC, so the dates
+       the game sees can't overflow. */
+    if (start >= 0x80000000u || R.gmtoff < -86400 || R.gmtoff > 86400)
+        goto bad;
     R.prefs_len = (size_t)prefs_len;
     return true;
 bad:
@@ -286,8 +301,12 @@ static bool start_playing(const char *game_id, const uint8_t *sha, const char *d
         snprintf(err, errlen, "can't create %s", data_dir);
         return false;
     }
+    if (access(path, F_OK) == 0) { /* someone's own preferences: their license and scores */
+        snprintf(err, errlen, "%s already has preferences: replay into a new folder", data_dir);
+        return false;
+    }
     if (R.prefs_len) {
-        FILE *f = fopen(path, "wb");
+        FILE *f = fopen(path, "wbx");
         if (!f || fwrite(R.prefs, 1, R.prefs_len, f) != R.prefs_len) {
             if (f)
                 fclose(f);
@@ -295,8 +314,6 @@ static bool start_playing(const char *game_id, const uint8_t *sha, const char *d
             return false;
         }
         fclose(f);
-    } else {
-        remove(path);
     }
     read_next();
     R.mode = PLAYING;
@@ -324,11 +341,11 @@ static bool start_recording(const char *path, const char *game_id, const uint8_t
         snprintf(err, errlen, "can't create the replay %s", path);
         return false;
     }
-    gzwrite(R.out, MAGIC, 8);
-    put_varint(R.out, FORMAT_VERSION);
-    put_varint(R.out, strlen(game_id));
-    gzwrite(R.out, game_id, (unsigned)strlen(game_id));
-    gzwrite(R.out, sha, CC_SHA256_DIGEST_LENGTH);
+    put(MAGIC, 8);
+    put_varint(FORMAT_VERSION);
+    put_varint(strlen(game_id));
+    put(game_id, strlen(game_id));
+    put(sha, CC_SHA256_DIGEST_LENGTH);
     const char *alerts = getenv("LOONY_AUTO_ALERTS");
     time_t now = time(NULL);
     struct tm lt;
@@ -336,12 +353,12 @@ static bool start_recording(const char *path, const char *game_id, const uint8_t
     R.start_unix = (int64_t)now;
     R.gmtoff = (int32_t)lt.tm_gmtoff;
     R.flags = (alerts && strcmp(alerts, "1") == 0 ? FLAG_AUTO_ALERTS : 0) | (lt.tm_isdst > 0 ? FLAG_DST : 0);
-    put_varint(R.out, R.flags);
-    put_varint(R.out, (uint64_t)R.start_unix);
-    put_varint(R.out, (uint32_t)R.gmtoff);
-    put_varint(R.out, prefs ? prefs_len : 0);
+    put_varint(R.flags);
+    put_varint((uint64_t)R.start_unix);
+    put_varint((uint32_t)R.gmtoff);
+    put_varint(prefs ? prefs_len : 0);
     if (prefs && prefs_len)
-        gzwrite(R.out, prefs, (unsigned)prefs_len);
+        put(prefs, prefs_len);
     free(prefs);
     R.mode = RECORDING;
     log_msg("replay: recording to %s", path);
@@ -352,13 +369,15 @@ static void finish_at_exit(void) { replay_finish(); }
 
 bool replay_start(const char *game_id, const uint8_t *exe, size_t exe_len, const char *data_dir,
                   char *err, size_t errlen) {
+    const char *rec = getenv("LOONY_RECORD");
+    if (!R.loaded && !(rec && *rec))
+        return true;
     uint8_t sha[CC_SHA256_DIGEST_LENGTH];
     CC_SHA256(exe, (CC_LONG)exe_len, sha);
-    const char *rec = getenv("LOONY_RECORD");
-    bool ok = true;
+    bool ok;
     if (R.loaded)
         ok = start_playing(game_id, sha, data_dir, err, errlen);
-    else if (rec && *rec)
+    else
         ok = start_recording(rec, game_id, sha, data_dir, err, errlen);
     if (ok && R.mode != OFF && !R.at_exit) {
         R.at_exit = true;
@@ -400,8 +419,8 @@ void replay_step(void) {
         exit(0);
     }
     if (R.next.step < R.step)
-        desync("the %s record of step %llu wasn't used", kind_names[R.next.kind],
-               (unsigned long long)R.next.step);
+        replay_desync("the %s record of step %llu wasn't used", kind_names[R.next.kind],
+                      (unsigned long long)R.next.step);
 }
 
 uint64_t replay_clock(uint64_t host_us) {
@@ -424,22 +443,29 @@ uint64_t replay_clock(uint64_t host_us) {
 void replay_log(replay_kind kind, const uint32_t *values) {
     if (R.mode != RECORDING)
         return;
-    put_varint(R.out, R.step - R.last_step);
-    put_varint(R.out, (uint64_t)kind);
+    put_varint(R.step - R.last_step);
+    put_varint((uint64_t)kind);
     for (int i = 0; i < kind_values[kind]; i++)
-        put_varint(R.out, values[i]);
+        put_varint(values[i]);
     R.last_step = R.step;
 }
 
-void replay_log_text(const char *utf8) {
+const char *replay_log_text(const char *utf8) {
     if (R.mode != RECORDING)
-        return;
+        return utf8;
     size_t n = strlen(utf8);
-    if (n >= REPLAY_MAX_TEXT)
+    if (n >= REPLAY_MAX_TEXT) {
         n = REPLAY_MAX_TEXT - 1;
+        while (n > 0 && ((uint8_t)utf8[n] & 0xC0) == 0x80) /* not inside a character */
+            n--;
+        memcpy(R.cut_text, utf8, n);
+        R.cut_text[n] = '\0';
+        utf8 = R.cut_text;
+    }
     replay_log(REPLAY_TEXT, NULL);
-    put_varint(R.out, n);
-    gzwrite(R.out, utf8, (unsigned)n);
+    put_varint(n);
+    put(utf8, n);
+    return utf8;
 }
 
 bool replay_take(replay_kind kind, uint32_t *values) {
@@ -459,18 +485,28 @@ bool replay_take_text(char *out, size_t cap) {
     return true;
 }
 
+bool replay_frame_due(void) {
+    return R.mode != OFF && ++R.presents % REPLAY_FRAME_EVERY == 0;
+}
+
 void replay_frame(uint32_t hash) {
-    if (R.mode == OFF || ++R.presents % REPLAY_FRAME_EVERY != 0)
-        return;
     if (R.mode == RECORDING) {
         replay_log(REPLAY_FRAME, &hash);
+        /* At each frame check, so a recording that crashes replays to here. */
+        if (gzflush(R.out, Z_SYNC_FLUSH) != Z_OK && !R.write_failed) {
+            log_msg("replay: can't write the recording");
+            R.write_failed = true;
+        }
         return;
     }
+    if (R.mode != PLAYING)
+        return;
     uint32_t want;
     if (!replay_take(REPLAY_FRAME, &want))
-        desync("present %u has no frame check in the recording (next: %s at step %llu)", R.presents,
-               kind_names[R.next.kind], (unsigned long long)R.next.step);
+        replay_desync("present %u has no frame check in the recording (next: %s at step %llu)",
+                      R.presents, kind_names[R.next.kind], (unsigned long long)R.next.step);
     if (want != hash)
-        desync("present %u: the screen's hash is %08x, not %08x as recorded", R.presents, hash, want);
+        replay_desync("present %u: the screen's hash is %08x, not %08x as recorded", R.presents,
+                      hash, want);
     R.frames_checked++;
 }

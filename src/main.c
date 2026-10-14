@@ -85,12 +85,12 @@ static void save_prefs_at_exit(void) {
         cf_save_prefs();
 }
 
-/* The event pump's present: on a recording or a replay, the screen's hash
-   goes to replay_frame first. */
+/* The event pump's present: when a frame check is due (a recording or a
+   replay), the screen's hash goes to replay_frame first. */
 static void present_frame(void) {
     if (!qd_take_dirty())
         return;
-    if (replay_recording() || replay_playing()) {
+    if (replay_frame_due()) {
         qd_pixels px;
         qd_palette pal;
         qd_screen(&px, &pal);
