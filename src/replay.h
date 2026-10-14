@@ -20,7 +20,8 @@
    The file is gzip-compressed: a header (magic, format version, the game's
    id and the SHA-256 of its program, whether LOONY_AUTO_ALERTS was on, the
    wall clock and time zone at the start, and the preferences file the run
-   started from), then the records. A replay
+   started from), then the records. Format 1 had no wall clock or time zone:
+   its replays see the host's dates, which no frame depends on. A replay
    starts from those preferences in a folder of its own (LOONY_DATA_DIR, or a
    new temporary folder), and refuses another game or another program.
 

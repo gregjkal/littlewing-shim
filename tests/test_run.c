@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include "cgimage.h"
+#include "mp4.h"
 #include "plist.h"
 #include "util.h"
 
@@ -271,6 +272,65 @@ TEST(run_a_recorded_game_replays_exactly) {
     CHECK(frames > 0);
     CHECK(same_shot);
     CHECK(same_prefs);
+}
+
+static char clip_path[1100];
+
+static void run_loony_clipping(void *unused) {
+    (void)unused;
+    unsetenv("LOONY_AUTO_ALERTS");
+    setenv("LOONY_REPLAY", replay_file, 1);
+    setenv("LOONY_DATA_DIR", run_data, 1);
+    setenv("LOONY_CLIP", "0:01-0:04", 1);
+    setenv("LOONY_CLIP_OUT", clip_path, 1);
+    setenv("LOONY_HD", LOONY_SRC_DIR "/hd-art/loony-labyrinth", 1);
+    execl(LOONY_BIN, "loony", (char *)NULL);
+    _exit(127);
+}
+
+/* A clip of a few seconds of a recording (clip.h): one frame a tick for
+   exactly the span, in HD at 2x, with the opening's music. */
+TEST(run_a_clip_of_a_recording_is_written) {
+    SKIP_UNLESS_GAME();
+    char rec_dir[1024], play_dir[1024];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    snprintf(replay_file, sizeof replay_file, "%s/game.lwreplay", rec_dir);
+    snprintf(clip_path, sizeof clip_path, "%s/clip.mp4", play_dir);
+    tmp_name(script_path, sizeof script_path, "script");
+    tmp_name(replay_shot, sizeof replay_shot, "shot");
+    FILE *f = fopen(script_path, "w");
+    fputs("330 quit\n", f);
+    fclose(f);
+    char out[2][32768];
+    snprintf(run_data, sizeof run_data, "%s", rec_dir);
+    int rec_status = test_run_child(run_loony_recording, (void *)test_game_dir(), out[0], sizeof out[0]);
+    snprintf(run_data, sizeof run_data, "%s/data", play_dir);
+    int clip_status = test_run_child(run_loony_clipping, NULL, out[1], sizeof out[1]);
+    run_data[0] = '\0';
+    unlink(script_path);
+    unlink(replay_shot);
+    mp4_info info;
+    char err[256] = "";
+    bool read = mp4_read_info(clip_path, &info, err, sizeof err);
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(clip_status, 0);
+    CHECK_CONTAINS(out[1], "loony: clip: reached 0:01");
+    CHECK_CONTAINS(out[1], "1600x1200 at 60 fps");
+    CHECK_CONTAINS(out[1], "loony: clip: wrote 0:01-0:04 to");
+    CHECK_CONTAINS(out[1], "180 frames");
+    CHECK(!strstr(out[1], "desync"));
+    if (!read)
+        fprintf(stderr, "%s\n", err);
+    CHECK(read);
+    CHECK_EQ(info.width, 1600);
+    CHECK_EQ(info.height, 1200);
+    CHECK_EQ(info.video_frames, 180);
+    CHECK(info.video_seconds > 2.999 && info.video_seconds < 3.001);
+    CHECK(info.audio_seconds > 2.97 && info.audio_seconds < 3.03);
+    CHECK(info.peak > 0.1); /* the music */
 }
 
 static uint32_t le32_at(const uint8_t *p) {

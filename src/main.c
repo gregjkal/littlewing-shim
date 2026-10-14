@@ -11,6 +11,7 @@
 #include "cf.h"
 #include "cgdisplay.h"
 #include "cgimage.h"
+#include "clip.h"
 #include "cpu.h"
 #include "cxxrt.h"
 #include "dialogs.h"
@@ -86,11 +87,11 @@ static void save_prefs_at_exit(void) {
 }
 
 /* The event pump's present: when a frame check is due (a recording or a
-   replay), the screen's hash goes to replay_frame first. */
+   replay), the screen's hash goes to replay_frame first. A clip takes the
+   frame in place of the window. */
 static void present_frame(void) {
-    if (!qd_take_dirty())
-        return;
-    if (replay_frame_due()) {
+    bool dirty = qd_take_dirty();
+    if (dirty && replay_frame_due()) {
         qd_pixels px;
         qd_palette pal;
         qd_screen(&px, &pal);
@@ -99,7 +100,10 @@ static void present_frame(void) {
             h ^= fnv1a32(pal.c, sizeof pal.c[0] * (size_t)pal.n);
         replay_frame(h);
     }
-    display_present();
+    if (clip_on())
+        clip_present(dirty);
+    else if (dirty)
+        display_present();
 }
 
 /* An error before the game starts: printed, and shown when running as the app. */
@@ -171,6 +175,8 @@ int main(int argc, char **argv) {
     log_to_file_if_app(argv[0]);
     char err[256];
     if (!replay_open(err, sizeof err)) /* sets the game, save folder and alerts it needs */
+        return startup_error("%s", err);
+    if (!clip_open(err, sizeof err))
         return startup_error("%s", err);
     files_move_old_data_root(); /* before the picker reads its file there */
     int64_t volume;
@@ -282,7 +288,8 @@ int main(int argc, char **argv) {
         char prefs[PATH_MAX + 16];
         snprintf(prefs, sizeof prefs, "%s/prefs.plist", data_dir);
         cf_load_prefs(prefs);
-        atexit(save_prefs_at_exit);
+        if (!clip_on()) /* a clip's replay saves into a folder nobody reads */
+            atexit(save_prefs_at_exit);
     }
     qd_init(800, 600, macho ? 32 : 8);
     dialogs_init();
