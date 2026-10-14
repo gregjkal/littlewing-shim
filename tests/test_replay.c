@@ -14,8 +14,8 @@
 #include "util.h"
 
 static const char *const names[] = {
-    "TickCount", "Microseconds", "Delay", "NewSndCallBackUPP", "SndNewChannel", "SndDoCommand",
-    "SndChannelStatus",
+    "TickCount", "Microseconds", "Delay", "GetDateTime", "NewSndCallBackUPP", "SndNewChannel",
+    "SndDoCommand", "SndChannelStatus",
 };
 
 static const uint8_t exe[] = "a game's program";
@@ -190,6 +190,31 @@ TEST(replay_clock_values_come_back) {
     call_import("Delay", 2, 2u, 0u);
     call_import("Microseconds", 1, us);
     CHECK_EQ(gm_r32(us + 4), micro[1]);
+    test_remove_tree(dir);
+}
+
+/* The date is the recording's start plus the game's clock (Loony Labyrinth
+   stamps a high score with it), so a replay a second later sees the same. */
+TEST(replay_dates_come_back) {
+    make_paths();
+    setup();
+    CHECK(record(NULL));
+    uint32_t at = scratch(4);
+    sleep_s(0.3);
+    call_import("GetDateTime", 1, at);
+    uint32_t recorded = gm_r32(at);
+    replay_finish();
+    time_t now = time(NULL);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    int64_t host = (int64_t)now + lt.tm_gmtoff + 2082844800; /* Mac epoch */
+    CHECK(recorded >= host - 2 && recorded <= host);
+
+    sleep_s(1.2);
+    setup();
+    CHECK(play_back());
+    call_import("GetDateTime", 1, at);
+    CHECK_EQ(gm_r32(at), recorded);
     test_remove_tree(dir);
 }
 

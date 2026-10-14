@@ -6,13 +6,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <zlib.h>
 
 #include "util.h"
 
 #define MAGIC "LWREPLAY"
-#define FORMAT_VERSION 1
+#define FORMAT_VERSION 2
 #define FLAG_AUTO_ALERTS 1u
+#define FLAG_DST 2u /* daylight saving time was on when the recording started */
 
 enum { OFF, RECORDING, PLAYING };
 
@@ -48,6 +50,8 @@ static struct {
     char game_id[64];
     uint8_t sha[CC_SHA256_DIGEST_LENGTH];
     uint32_t flags;
+    int64_t start_unix; /* the wall clock when the recording started */
+    int32_t gmtoff;     /* and its time zone, in seconds east of UTC */
     const uint8_t *prefs;
     size_t prefs_len;
     record next;
@@ -55,6 +59,15 @@ static struct {
 
 bool replay_recording(void) { return R.mode == RECORDING; }
 bool replay_playing(void) { return R.mode == PLAYING; }
+
+bool replay_calendar(int64_t *start_unix, int32_t *gmtoff, bool *dst) {
+    if (R.mode == OFF)
+        return false;
+    *start_unix = R.start_unix;
+    *gmtoff = R.gmtoff;
+    *dst = (R.flags & FLAG_DST) != 0;
+    return true;
+}
 
 void replay_reset(void) {
     if (R.out)
@@ -194,9 +207,13 @@ static bool parse_header(char *err, size_t errlen) {
     if (!get_bytes(&p, sizeof R.sha))
         goto bad;
     memcpy(R.sha, p, sizeof R.sha);
-    if (!get_varint(&flags) || !get_varint(&prefs_len) || !get_bytes(&R.prefs, (size_t)prefs_len))
+    uint64_t start, gmtoff;
+    if (!get_varint(&flags) || !get_varint(&start) || !get_varint(&gmtoff) ||
+        !get_varint(&prefs_len) || !get_bytes(&R.prefs, (size_t)prefs_len))
         goto bad;
     R.flags = (uint32_t)flags;
+    R.start_unix = (int64_t)start;
+    R.gmtoff = (int32_t)(uint32_t)gmtoff;
     R.prefs_len = (size_t)prefs_len;
     return true;
 bad:
@@ -313,7 +330,15 @@ static bool start_recording(const char *path, const char *game_id, const uint8_t
     gzwrite(R.out, game_id, (unsigned)strlen(game_id));
     gzwrite(R.out, sha, CC_SHA256_DIGEST_LENGTH);
     const char *alerts = getenv("LOONY_AUTO_ALERTS");
-    put_varint(R.out, alerts && strcmp(alerts, "1") == 0 ? FLAG_AUTO_ALERTS : 0);
+    time_t now = time(NULL);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    R.start_unix = (int64_t)now;
+    R.gmtoff = (int32_t)lt.tm_gmtoff;
+    R.flags = (alerts && strcmp(alerts, "1") == 0 ? FLAG_AUTO_ALERTS : 0) | (lt.tm_isdst > 0 ? FLAG_DST : 0);
+    put_varint(R.out, R.flags);
+    put_varint(R.out, (uint64_t)R.start_unix);
+    put_varint(R.out, (uint32_t)R.gmtoff);
     put_varint(R.out, prefs ? prefs_len : 0);
     if (prefs && prefs_len)
         gzwrite(R.out, prefs, (unsigned)prefs_len);

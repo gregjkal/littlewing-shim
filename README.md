@@ -299,8 +299,9 @@ Design: `docs/superpowers/specs/2026-09-30-loony-shim-design.md`
 ### Replays (prototype, Loony Labyrinth)
 
 `LOONY_RECORD` saves what reached the game from outside while you play
-normally (the clock, keys and focus, when sound callbacks came, and the
-preferences it started from) into a small file, a few KB a minute.
+normally (the clock and date, keys and focus, when sound callbacks came, and
+the preferences it started from) into a small file, a few KB a minute. The
+date a replay sees is the recording's: a high score keeps its timestamp.
 `LOONY_REPLAY` plays that file back headless, frame for frame and faster
 than real time, from those preferences in a folder of its own:
 

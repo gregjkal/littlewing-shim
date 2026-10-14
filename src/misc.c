@@ -274,10 +274,27 @@ static void h_delay(void) {
 /* The same instant in Unix time: 2003-01-01 00:00:00 UTC. */
 #define FIXED_CLOCK_UNIX 1041379200
 
+/* The host's wall clock (Unix seconds) and time zone. On a recording or a
+   replay: the recording's start plus the game's clock, in the time zone it
+   started in, so dates (a high score's timestamp) replay too. */
+static int64_t wall_clock(int32_t *gmtoff, bool *dst) {
+    int64_t start;
+    if (replay_calendar(&start, gmtoff, dst))
+        return start + (int64_t)(elapsed_us() / 1000000);
+    time_t now = time(NULL);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    *gmtoff = (int32_t)lt.tm_gmtoff;
+    *dst = lt.tm_isdst > 0;
+    return (int64_t)now;
+}
+
 int64_t misc_unix_time(void) {
     if (M.fixed)
         return FIXED_CLOCK_UNIX + (int64_t)(M.virtual_us / 1000000);
-    return (int64_t)time(NULL);
+    int32_t gmtoff;
+    bool dst;
+    return wall_clock(&gmtoff, &dst);
 }
 
 static void h_get_date_time(void) {
@@ -285,18 +302,15 @@ static void h_get_date_time(void) {
         gm_w32(trap_arg(0), FIXED_CLOCK_EPOCH + (uint32_t)(M.virtual_us / 1000000));
         return;
     }
-    time_t now = time(NULL);
-    struct tm lt;
-    localtime_r(&now, &lt);
-    gm_w32(trap_arg(0), (uint32_t)((int64_t)now + lt.tm_gmtoff + MAC_EPOCH_OFFSET));
+    int32_t gmtoff;
+    bool dst;
+    int64_t now = wall_clock(&gmtoff, &dst);
+    gm_w32(trap_arg(0), (uint32_t)(now + gmtoff + MAC_EPOCH_OFFSET));
 }
 
 /* ReadLocation(MachineLocation *): latitude and longitude 0, then gmtDelta in
    the low 24 bits with the daylight-saving flag (0x80) in the high byte. */
 static void h_read_location(void) {
-    time_t now = time(NULL);
-    struct tm lt;
-    localtime_r(&now, &lt);
     uint32_t loc = trap_arg(0);
     gm_w32(loc, 0);
     gm_w32(loc + 4, 0);
@@ -304,8 +318,10 @@ static void h_read_location(void) {
         gm_w32(loc + 8, 0);
         return;
     }
-    uint32_t dls = lt.tm_isdst > 0 ? 0x80u : 0u;
-    gm_w32(loc + 8, (dls << 24) | ((uint32_t)lt.tm_gmtoff & 0x00FFFFFFu));
+    int32_t gmtoff;
+    bool dst;
+    wall_clock(&gmtoff, &dst);
+    gm_w32(loc + 8, ((dst ? 0x80u : 0u) << 24) | ((uint32_t)gmtoff & 0x00FFFFFFu));
 }
 
 /* ---- strings and memory ---- */
