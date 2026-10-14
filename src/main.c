@@ -27,6 +27,7 @@
 #include "patch.h"
 #include "picker.h"
 #include "qd.h"
+#include "replay.h"
 #include "rsrc.h"
 #include "script.h"
 #include "settings.h"
@@ -82,6 +83,23 @@ static void log_to_file_if_app(const char *argv0) {
 static void save_prefs_at_exit(void) {
     if (!util_failed())
         cf_save_prefs();
+}
+
+/* The event pump's present: when a frame check is due (a recording or a
+   replay), the screen's hash goes to replay_frame first. */
+static void present_frame(void) {
+    if (!qd_take_dirty())
+        return;
+    if (replay_frame_due()) {
+        qd_pixels px;
+        qd_palette pal;
+        qd_screen(&px, &pal);
+        uint32_t h = fnv1a32(px.base, (size_t)px.row_bytes * (size_t)rect_h(px.bounds));
+        if (px.depth <= 8)
+            h ^= fnv1a32(pal.c, sizeof pal.c[0] * (size_t)pal.n);
+        replay_frame(h);
+    }
+    display_present();
 }
 
 /* An error before the game starts: printed, and shown when running as the app. */
@@ -140,6 +158,9 @@ static void back_to_picker(void) {
     if (log_path[0])
         setenv("LOONY_LOG_INHERITED", "1", 1);
     display_log_stats(); /* exec skips the atexit handlers */
+    replay_finish();
+    unsetenv("LOONY_RECORD"); /* the next game doesn't record over this one */
+    unsetenv("LOONY_REPLAY");
     log_msg("back to the picker");
     fflush(stderr);
     execv(self, (char *const[]){self, NULL});
@@ -148,6 +169,9 @@ static void back_to_picker(void) {
 
 int main(int argc, char **argv) {
     log_to_file_if_app(argv[0]);
+    char err[256];
+    if (!replay_open(err, sizeof err)) /* sets the game, save folder and alerts it needs */
+        return startup_error("%s", err);
     files_move_old_data_root(); /* before the picker reads its file there */
     int64_t volume;
     if (settings_get_int(SETTINGS_VOLUME, &volume)) /* before the Sound menu shows it */
@@ -203,7 +227,6 @@ int main(int argc, char **argv) {
     const bool macho = game->kind == GAME_MACHO_BUNDLE;
 
     loaded_image img;
-    char err[256];
     if (macho) {
         /* The loader asks for the data objects the program imports, so the
            heap and the libraries that own them come first. */
@@ -253,6 +276,8 @@ int main(int argc, char **argv) {
     bool have_data = files_data_dir(game->id, data_dir, sizeof data_dir);
     if (!have_data)
         log_msg("neither LOONY_DATA_DIR nor HOME is set: nothing will be saved");
+    if (!replay_start(game->id, buf, len, have_data ? data_dir : NULL, err, sizeof err))
+        return startup_error("%s", err);
     if (files_init(dir, have_data ? data_dir : NULL)) {
         char prefs[PATH_MAX + 16];
         snprintf(prefs, sizeof prefs, "%s/prefs.plist", data_dir);
@@ -270,14 +295,14 @@ int main(int argc, char **argv) {
     uint32_t self_size = sizeof self;
     hd_init(game->id, _NSGetExecutablePath(self, &self_size) == 0 ? self : argv[0]);
     display_set_title(game->title);
-    events_set_present(display_present_if_dirty);
+    events_set_present(present_frame);
     events_set_poll(display_poll);
     events_set_screenshot(display_write_png);
     events_set_cursor(display_set_cursor);
-    static const display_input input = {events_post_key, events_post_activation,
-                                        events_request_quit, events_post_mouse, events_post_text};
+    static const display_input input = {events_host_key, events_host_activation,
+                                        events_host_quit, events_host_mouse, events_host_text};
     display_set_input(&input);
-    display_set_vsync(!misc_fixed_clock());
+    display_set_vsync(!misc_fixed_clock() && !replay_playing());
     sound_start_output();
     const char *script = getenv("LOONY_SCRIPT");
     if (script && *script && !script_load(script, err, sizeof err)) {

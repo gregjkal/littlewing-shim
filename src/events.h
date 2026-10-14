@@ -122,6 +122,15 @@ void events_request_quit(void);
    script's quit): the quit Apple Event has been sent. */
 bool events_quit_requested(void);
 
+/* Input from the host (the window, a script): logged on a recording,
+   dropped on a replay, whose input comes from its file (a quit stops the
+   replay), then passed to events_post_key and the others. */
+void events_host_key(int scancode, bool down, bool repeat);
+void events_host_mouse(int x, int y, bool down);
+void events_host_text(const char *utf8);
+void events_host_activation(bool active);
+void events_host_quit(void);
+
 /* Events waiting in the queue. */
 int events_queued(void);
 

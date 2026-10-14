@@ -9,6 +9,7 @@
 #include "keymap.h"
 #include "memmgr.h"
 #include "misc.h"
+#include "replay.h"
 #include "script.h"
 #include "sound.h"
 #include "trap.h"
@@ -233,6 +234,64 @@ void events_request_quit(void) {
 
 bool events_quit_requested(void) { return E.quit_deadline > 0; }
 
+/* ---- host input, recorded and replayed ---- */
+
+void events_host_key(int scancode, bool down, bool repeat) {
+    if (replay_playing())
+        return;
+    replay_log(REPLAY_KEY, (uint32_t[3]){(uint32_t)scancode, down, repeat});
+    events_post_key(scancode, down, repeat);
+}
+
+void events_host_mouse(int x, int y, bool down) {
+    if (replay_playing())
+        return;
+    replay_log(REPLAY_MOUSE, (uint32_t[3]){(uint32_t)x, (uint32_t)y, down});
+    events_post_mouse(x, y, down);
+}
+
+void events_host_text(const char *utf8) {
+    if (replay_playing())
+        return;
+    events_post_text(replay_log_text(utf8));
+}
+
+void events_host_activation(bool active) {
+    if (replay_playing())
+        return;
+    replay_log(REPLAY_FOCUS, (uint32_t[1]){active});
+    events_post_activation(active);
+}
+
+void events_host_quit(void) {
+    if (replay_playing()) {
+        log_msg("replay: stopped by the host");
+        exit(0);
+    }
+    replay_log(REPLAY_QUIT, NULL);
+    events_request_quit();
+}
+
+/* A replay's input, where the recording polled the host for it. */
+static void replay_input(void) {
+    uint32_t v[3];
+    char text[REPLAY_MAX_TEXT];
+    for (;;) {
+        if (replay_take(REPLAY_KEY, v))
+            events_post_key((int)v[0], v[1], v[2]);
+        else if (replay_take(REPLAY_MOUSE, v))
+            events_post_mouse((int)v[0], (int)v[1], v[2]);
+        else if (replay_take_text(text, sizeof text))
+            events_post_text(text);
+        else if (replay_take(REPLAY_FOCUS, v))
+            events_post_activation(v[0]);
+        else if (replay_take(REPLAY_QUIT, v))
+            events_request_quit();
+        else
+            return;
+    }
+}
+
 /* ---- setup ---- */
 
 void events_init(void) {
@@ -387,32 +446,37 @@ static void wait_until_next_timer(void) {
 
 /* ---- the pump ---- */
 
-static void run_script(void) {
+static void run_script(uint32_t now) {
     script_action a;
-    while (script_next(misc_ticks(), &a)) {
+    while (script_next(now, &a)) {
         switch (a.kind) {
-        case SCRIPT_KEY_DOWN: events_post_key(a.scancode, true, false); break;
-        case SCRIPT_KEY_UP: events_post_key(a.scancode, false, false); break;
+        case SCRIPT_KEY_DOWN: events_host_key(a.scancode, true, false); break;
+        case SCRIPT_KEY_UP: events_host_key(a.scancode, false, false); break;
         case SCRIPT_SCREENSHOT:
             if (!E.screenshot || !E.screenshot(a.path))
                 log_msg("script: can't write the screenshot %s", a.path);
             break;
-        case SCRIPT_QUIT: events_request_quit(); break;
+        case SCRIPT_QUIT: events_host_quit(); break;
         case SCRIPT_CLICK:
-            events_post_mouse(a.x, a.y, true);
-            events_post_mouse(a.x, a.y, false);
+            events_host_mouse(a.x, a.y, true);
+            events_host_mouse(a.x, a.y, false);
             break;
-        case SCRIPT_TYPE: events_post_text(a.path); break;
-        case SCRIPT_BLUR: events_post_activation(false); break;
-        case SCRIPT_FOCUS: events_post_activation(true); break;
+        case SCRIPT_TYPE: events_host_text(a.path); break;
+        case SCRIPT_BLUR: events_host_activation(false); break;
+        case SCRIPT_FOCUS: events_host_activation(true); break;
         }
     }
 }
 
 void events_pump(void) {
+    /* The clock is read at the same places whatever the script and
+       LOONY_EXIT_AFTER, so a replay's steps don't depend on them. */
+    replay_step();
+    uint32_t now = misc_ticks();
     if (E.poll)
         E.poll();
-    run_script();
+    replay_input();
+    run_script(now);
     sound_pump();
     if (E.loop_depth > 0)
         fire_due_timers();
@@ -420,11 +484,12 @@ void events_pump(void) {
         E.cursor(misc_cursor_visible() || E.modal);
     if (E.present)
         E.present();
-    if (E.exit_after > 0 && misc_ticks() >= (uint32_t)E.exit_after) {
+    now = misc_ticks(); /* sound callbacks and timers may have moved a fixed clock on */
+    if (E.exit_after > 0 && now >= (uint32_t)E.exit_after) {
         log_msg("exiting after %ld ticks (LOONY_EXIT_AFTER)", E.exit_after);
         exit(0);
     }
-    if (E.quit_deadline > 0 && wall_seconds() >= E.quit_deadline) {
+    if (E.quit_deadline > 0 && !replay_playing() && wall_seconds() >= E.quit_deadline) {
         log_msg("the game didn't quit within %.0f seconds; exiting", QUIT_GRACE_SECONDS);
         exit(0);
     }
