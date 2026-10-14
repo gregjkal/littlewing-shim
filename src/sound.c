@@ -8,6 +8,7 @@
 #include "memmgr.h"
 #include "misc.h"
 #include "mixer.h"
+#include "replay.h"
 #include "trap.h"
 #include "util.h"
 #include "wav.h"
@@ -63,11 +64,15 @@ static void SDLCALL feed(void *unused, SDL_AudioStream *stream, int additional, 
         render((uint32_t)additional / 4);
 }
 
-/* Clock-driven: renders the frames between the last call and now. */
+/* Clock-driven: renders the frames between the last call and now. On a
+   recording or a replay, now is when the game last read the clock: reading
+   it here would be a step, which a recording with an audio device doesn't
+   take. */
 static void catch_up(void) {
     if (SND.stream)
         return;
-    uint64_t target = (uint64_t)(misc_seconds() * MIX_RATE);
+    double now = replay_recording() || replay_playing() ? misc_last_seconds() : misc_seconds();
+    uint64_t target = (uint64_t)(now * MIX_RATE);
     if (target > SND.rendered) {
         render((uint32_t)(target - SND.rendered));
         SND.rendered = target;
@@ -105,7 +110,7 @@ void sound_start_output(void) {
             log_msg("sound: can't create the recording %s", wav);
     }
     atexit(shutdown_output);
-    if (misc_fixed_clock())
+    if (misc_fixed_clock() || replay_playing())
         return;
     SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
@@ -240,15 +245,26 @@ static void deliver_callback(int i, uint16_t param1, uint32_t param2) {
     guest_call(proc, 2, args);
 }
 
+/* On a replay the callbacks come from its file, when the recording
+   delivered them; the mixer's own are dropped. */
 void sound_pump(void) {
     catch_up();
+    mix_callback cb;
+    if (replay_playing()) {
+        while (mix_take_callback(&cb))
+            ;
+        uint32_t v[3];
+        while (replay_take(REPLAY_SOUND_CALLBACK, v))
+            deliver_callback((int)v[0], (uint16_t)v[1], v[2]);
+        return;
+    }
     for (;;) {
-        mix_callback cb;
         lock();
         bool got = mix_take_callback(&cb);
         unlock();
         if (!got)
             return;
+        replay_log(REPLAY_SOUND_CALLBACK, (uint32_t[3]){(uint32_t)cb.channel, cb.param1, cb.param2});
         deliver_callback(cb.channel, cb.param1, cb.param2);
     }
 }
@@ -310,11 +326,17 @@ static void h_snd_do_command(void) {
         return;
     }
     catch_up();
+    replay_step();
+    bool full = replay_playing() && replay_take(REPLAY_SOUND_FULL, NULL);
     lock();
-    bool ok = mix_queue(i, m);
+    bool ok = !full && mix_queue(i, m);
     unlock();
     if (!ok)
         mix_sound_free(m.sound);
+    if (replay_playing()) /* the replay's mixer may differ: the recording's answer counts */
+        ok = !full;
+    else if (!ok)
+        replay_log(REPLAY_SOUND_FULL, NULL);
     trap_return(ok ? 0 : (uint32_t)SND_QUEUE_FULL_ERR);
 }
 
@@ -351,9 +373,14 @@ static void h_snd_channel_status(void) {
     if (len < 24)
         trap_crash("SndChannelStatus: status length %d is too small", len);
     catch_up();
+    replay_step();
     lock();
     bool busy = mix_busy(i);
     unlock();
+    if (replay_playing())
+        busy = replay_take(REPLAY_SOUND_BUSY, NULL);
+    else if (busy)
+        replay_log(REPLAY_SOUND_BUSY, NULL);
     memset(gm_ptr(st, 24), 0, 24);
     gm_w8(st + 12, busy);
     trap_return(0);

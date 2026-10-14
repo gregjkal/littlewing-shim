@@ -11,6 +11,7 @@
 
 #include "cpu.h"
 #include "guest_mem.h"
+#include "replay.h"
 #include "trap.h"
 #include "util.h"
 
@@ -29,6 +30,9 @@ static struct {
     uint32_t last_idle_tick;
     bool fixed;
     uint64_t virtual_us;
+    uint64_t last_us; /* what elapsed_us last returned */
+    uint32_t spin_tick; /* the tick TickCount last returned, and how often in a row */
+    int spins;
     int polls; /* time polls since the virtual clock last moved */
     misc_url_fn open_url;
     void (*exit_hook)(void);
@@ -72,15 +76,20 @@ static uint64_t elapsed_us(void) {
     clock_gettime(CLOCK_MONOTONIC, &now);
     int64_t us = (int64_t)(now.tv_sec - M.start.tv_sec) * 1000000 +
                  (now.tv_nsec - M.start.tv_nsec) / 1000;
-    return us < 0 ? 0 : (uint64_t)us;
+    M.last_us = us < 0 ? 0 : (uint64_t)us;
+    if (replay_recording() || replay_playing())
+        M.last_us = replay_clock(M.last_us);
+    return M.last_us;
 }
+
+double misc_last_seconds(void) { return (double)(M.fixed ? M.virtual_us : M.last_us) / 1e6; }
 
 uint32_t misc_ticks(void) { return (uint32_t)(elapsed_us() * 60 / 1000000); }
 
 double misc_seconds(void) { return (double)elapsed_us() / 1e6; }
 
 void misc_wait(double seconds) {
-    if (seconds <= 0)
+    if (seconds <= 0 || replay_playing()) /* a replay's clock comes from its file */
         return;
     if (M.fixed) {
         /* Round up: a wait that rounds to 0 us would never reach its deadline. */
@@ -175,9 +184,34 @@ static void idle_if_new_tick(uint32_t t) {
     }
 }
 
+/* Recording or replaying: a game that polls TickCount waiting for the next
+   tick (Loony Labyrinth spins on TickCount and Delay(0)) sleeps until it
+   instead, so neither has to repeat thousands of polls a tick, and a replay,
+   which skips the sleep, runs faster than real time. The polls are counted,
+   not timed, so a replay takes the same path. */
+#define SPIN_POLLS 50
+
+static uint32_t wait_out_spin(uint32_t t) {
+    if (!replay_recording() && !replay_playing())
+        return t;
+    if (t != M.spin_tick) {
+        M.spin_tick = t;
+        M.spins = 0;
+        return t;
+    }
+    if (++M.spins < SPIN_POLLS)
+        return t;
+    M.spins = 0;
+    /* The first whole ms in the next tick: a recording's clock moves in ms. */
+    uint64_t next_us = ((((uint64_t)t + 1) * 1000000 + 59) / 60 + 999) / 1000 * 1000;
+    if (next_us > M.last_us)
+        misc_wait((double)(next_us - M.last_us) / 1e6);
+    return misc_ticks();
+}
+
 static void h_tick_count(void) {
     misc_poll();
-    uint32_t t = misc_ticks();
+    uint32_t t = wait_out_spin(misc_ticks());
     idle_if_new_tick(t);
     trap_return(t + MISC_BOOT_TICKS);
 }
