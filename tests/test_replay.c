@@ -525,7 +525,23 @@ TEST(replay_a_recording_that_crashed_plays_to_its_last_frame_check) {
     CHECK_CONTAINS(out, "replay: the file ends without an end record (after step 30)");
     CHECK_CONTAINS(out, "checked to the flush");
     CHECK_CONTAINS(out, "replay: exiting where the recording stopped");
+    CHECK_CONTAINS(out, "replay: reached where the recording was cut short at step 30");
     CHECK(!strstr(out, "still running"));
+}
+
+static void child_record_then_crash(void *unused) {
+    (void)unused;
+    CHECK(record(NULL));
+    _exit(0);
+}
+
+/* The header reaches the file at once: a recording that crashes before its
+   first frame check still replays (to nothing). */
+TEST(replay_a_recording_that_crashed_at_once_has_its_header) {
+    BEGIN_TEST();
+    char out[4096];
+    CHECK_EQ(test_run_child(child_record_then_crash, NULL, out, sizeof out), 0);
+    CHECK(play_back());
 }
 
 static char posted[REPLAY_MAX_TEXT + 200];
@@ -566,15 +582,16 @@ static void write_replay(const void *bytes, size_t len) {
     gzclose(f);
 }
 
-/* A format 2 header for "x", up to and including the start (a varint). */
-static size_t header_with_start(uint8_t *h, const uint8_t *start, size_t start_len) {
+/* A format 2 header for "x" with this start and time zone (varints). */
+static size_t header_with(uint8_t *h, const char *start, const char *gmtoff) {
     memcpy(h, "LWREPLAY\x02\x01x", 11);
     memset(h + 11, 0, 32); /* the SHA-256 */
     size_t n = 43;
     h[n++] = 0; /* no flags */
-    memcpy(h + n, start, start_len);
-    n += start_len;
-    h[n++] = 0; /* UTC */
+    memcpy(h + n, start, strlen(start));
+    n += strlen(start);
+    memcpy(h + n, gmtoff, strlen(gmtoff));
+    n += strlen(gmtoff);
     h[n++] = 0; /* no preferences */
     return n;
 }
@@ -591,12 +608,17 @@ TEST(replay_refuses_a_damaged_header) {
     CHECK(!replay_open(err, sizeof err));
     CHECK_STR(err, "replay format 9 (this program reads 2)");
     uint8_t h[64];
-    static const uint8_t far[] = {0x80, 0x80, 0x80, 0x80, 0x80, 0x20}; /* 2^40 s: 36812 AD */
-    write_replay(h, header_with_start(h, far, sizeof far));
-    CHECK(!replay_open(err, sizeof err));
-    CHECK_STR(err, "the replay's header is damaged");
-    static const uint8_t soon[] = {0x01};
-    write_replay(h, header_with_start(h, soon, sizeof soon));
+    static const char *const damaged[][2] = {
+        {"\x80\x80\x80\x80\x80\x20", "\x01"}, /* a start of 2^40 s: 36812 AD */
+        {"\x01", "\x90\xBF\x05"},             /* 90000 s east of UTC */
+        {"\x01", "\x90\x9C\x80\x80\x10"},     /* 2^32 + 3600 */
+    };
+    for (size_t i = 0; i < sizeof damaged / sizeof damaged[0]; i++) {
+        write_replay(h, header_with(h, damaged[i][0], damaged[i][1]));
+        CHECK(!replay_open(err, sizeof err));
+        CHECK_STR(err, "the replay's header is damaged");
+    }
+    write_replay(h, header_with(h, "\x01", "\x90\x1C")); /* 1 s, an hour east */
     CHECK(replay_open(err, sizeof err));
 }
 

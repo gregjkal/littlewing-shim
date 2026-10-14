@@ -28,7 +28,6 @@ static const char *const kind_names[REPLAY_KINDS] = {
 static const int kind_values[REPLAY_KINDS] = {0, 1, 3, 3, 0, 1, 0, 3, 0, 0, 1};
 
 typedef struct {
-    bool valid;
     uint64_t step;
     replay_kind kind;
     uint32_t v[REPLAY_MAX_VALUES];
@@ -48,6 +47,7 @@ static struct {
     char cut_text[REPLAY_MAX_TEXT];
     /* replay: the whole file, decompressed, and the next record */
     bool loaded;
+    bool cut_short; /* the file ends without an end record */
     uint8_t *data;
     size_t len, pos;
     char game_id[64];
@@ -144,7 +144,6 @@ static void read_next(void) {
     record *r = &R.next;
     uint64_t delta, kind, v;
     const uint8_t *s;
-    r->valid = true;
     if (!get_varint(&delta) || !get_varint(&kind) || kind >= REPLAY_KINDS)
         goto cut_off;
     r->kind = (replay_kind)kind;
@@ -166,6 +165,7 @@ cut_off:
     log_msg("replay: the file ends without an end record (after step %llu)",
             (unsigned long long)r->step);
     r->kind = REPLAY_END;
+    R.cut_short = true;
 }
 
 static uint8_t *gunzip_file(const char *path, size_t *len) {
@@ -177,16 +177,14 @@ static uint8_t *gunzip_file(const char *path, size_t *len) {
     for (;;) {
         if (!buf)
             fatal("out of memory");
+        /* A stream cut short (a recording that crashed) reads to where it stops. */
         int got = gzread(f, buf + n, (unsigned)(cap - n));
-        int code = Z_OK;
-        if (got < 0)
-            gzerror(f, &code);
-        if (got < 0 && code != Z_BUF_ERROR) {
+        if (got < 0) {
             free(buf);
             gzclose(f);
             return NULL;
         }
-        if (got <= 0) /* the end, or a stream cut short: a recording that crashed */
+        if (got == 0)
             break;
         n += (size_t)got;
         if (n == cap)
@@ -227,7 +225,7 @@ static bool parse_header(char *err, size_t errlen) {
     R.gmtoff = (int32_t)(uint32_t)gmtoff;
     /* A start before 2038 and a time zone within a day of UTC, so the dates
        the game sees can't overflow. */
-    if (start >= 0x80000000u || R.gmtoff < -86400 || R.gmtoff > 86400)
+    if (start >= 0x80000000u || gmtoff > UINT32_MAX || R.gmtoff < -86400 || R.gmtoff > 86400)
         goto bad;
     R.prefs_len = (size_t)prefs_len;
     return true;
@@ -360,6 +358,8 @@ static bool start_recording(const char *path, const char *game_id, const uint8_t
     if (prefs && prefs_len)
         put(prefs, prefs_len);
     free(prefs);
+    if (gzflush(R.out, Z_SYNC_FLUSH) != Z_OK) /* the header, so even a crash at once replays */
+        log_msg("replay: can't write the recording");
     R.mode = RECORDING;
     log_msg("replay: recording to %s", path);
     return true;
@@ -395,8 +395,8 @@ void replay_finish(void) {
         log_msg("replay: recorded %llu steps", (unsigned long long)R.step);
     } else if (R.mode == PLAYING) {
         if (R.next.kind == REPLAY_END && R.next.step == R.step)
-            log_msg("replay: reached the end of the recording at step %llu (tick %u), %u frames "
-                    "checked, no desync",
+            log_msg("replay: reached %s at step %llu (tick %u), %u frames checked, no desync",
+                    R.cut_short ? "where the recording was cut short" : "the end of the recording",
                     (unsigned long long)R.step, tick(), R.frames_checked);
         else
             log_msg("replay: stopped at step %llu (tick %u), before the end of the recording",

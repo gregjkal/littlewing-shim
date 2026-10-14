@@ -99,8 +99,9 @@ const char *replay_log_text(const char *utf8);
 bool replay_take(replay_kind kind, uint32_t *values);
 bool replay_take_text(char *out, size_t cap);
 
-/* At every present: true every REPLAY_FRAME_EVERY presents on a recording
-   or a replay, when replay_frame should log, or check, the screen's hash. */
+/* Call exactly once per present: it counts them. True every
+   REPLAY_FRAME_EVERY presents on a recording or a replay, when replay_frame
+   should log, or check, the screen's hash. */
 bool replay_frame_due(void);
 void replay_frame(uint32_t hash);
 
