@@ -332,13 +332,14 @@ there each tick of the game's clock is a frame (60 fps), handed with the
 sound straight to AVFoundation's H.264 and AAC encoders, so no frame is
 written to disk and no ffmpeg is needed. It exits once the clip is written;
 no window opens. Times are `m:ss` or `h:mm:ss` from launch (`1:02:03.5`), or
-ticks. In HD mode the clip is the HD picture at 2x (1600x1200) unless
-`LOONY_HD_SCALE` says otherwise; else it is 800x600. `LOONY_CLIP_OUT` is
+ticks. In HD mode the clip is the HD picture at 2x, scaled down to 1280x960;
+`LOONY_CLIP_WIDTH` sets another width (1600 for the whole 2x picture; a
+clip is never scaled up). Without HD it is 800x600. `LOONY_CLIP_OUT` is
 `clip.mp4` by default (`.mov` makes a QuickTime movie). The video's quality
 is `LOONY_CLIP_QUALITY`, 0 to 1 (0.65 by default, which matched x264 at CRF
 33 on a test clip); `LOONY_CLIP_KBPS` sets an average bitrate instead. A
 30-second clip from minute 10 of a 15-minute game takes about 30 seconds and
-comes to 4.4 MB in HD at 2x, or 16 seconds and 2.1 MB at 800x600. A clip
+comes to 3.1 MB in HD, or 16 seconds and 2.1 MB at 800x600. A clip
 that runs past the end of the recording keeps what it has. Recordings in the
 first format (before dates were recorded) replay too, with the host's dates.
 

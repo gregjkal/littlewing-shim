@@ -57,15 +57,24 @@ static void tmp_mp4(char *path, size_t cap) {
 enum { W = 320, H = 240, FRAMES = 120, RATE = 44100 };
 
 /* A small video at quality, or at 300 kbit/s with quality 0. */
-static mp4_settings small(double quality) { return (mp4_settings){W, H, 60, quality, 300, RATE, 128}; }
+static mp4_settings small(double quality) {
+    return (mp4_settings){.w = W, .h = H, .fps = 60, .quality = quality, .video_kbps = 300,
+                          .rate = RATE, .audio_kbps = 128};
+}
 
 /* Two seconds at 60 fps, every other frame a repeat, and a 440 Hz tone at
-   half scale: all of it comes back. */
-static void write_and_read(double quality) {
+   half scale: all of it comes back, out_w x out_h (0: W x H). */
+static void write_and_read(double quality, int out_w, int out_h) {
     char path[1024];
     tmp_mp4(path, sizeof path); /* there already: mp4_open replaces it */
     char err[256] = "";
     mp4_settings s = small(quality);
+    if (out_w) {
+        s.in_w = W;
+        s.in_h = H;
+        s.w = out_w;
+        s.h = out_h;
+    }
     mp4_file *f = mp4_open(path, &s, err, sizeof err);
     if (!f)
         fprintf(stderr, "%s\n", err);
@@ -104,8 +113,8 @@ static void write_and_read(double quality) {
     if (!read)
         fprintf(stderr, "%s\n", err);
     CHECK(read);
-    CHECK_EQ(info.width, W);
-    CHECK_EQ(info.height, H);
+    CHECK_EQ(info.width, s.w);
+    CHECK_EQ(info.height, s.h);
     CHECK_EQ(info.video_frames, FRAMES);
     CHECK(fabs(info.video_seconds - 2.0) < 0.001);
     CHECK(fabs(info.audio_seconds - 2.0) < 0.03);
@@ -114,12 +123,17 @@ static void write_and_read(double quality) {
 
 TEST(mp4_writes_frames_and_sound_at_a_quality) {
     RUN_UNFORKED();
-    write_and_read(CLIP_QUALITY);
+    write_and_read(CLIP_QUALITY, 0, 0);
 }
 
 TEST(mp4_writes_frames_and_sound_at_a_bitrate) {
     RUN_UNFORKED();
-    write_and_read(0);
+    write_and_read(0, 0, 0);
+}
+
+TEST(mp4_scales_the_frames_it_gets) {
+    RUN_UNFORKED();
+    write_and_read(CLIP_QUALITY, 256, 192);
 }
 
 /* The writer may refuse at once or only when it writes: either way, it says so. */
@@ -150,14 +164,14 @@ TEST(mp4_needs_a_first_frame_to_repeat) {
 }
 
 static const char *const env_names[] = {"LOONY_CLIP", "LOONY_CLIP_OUT", "LOONY_CLIP_KBPS",
-                                        "LOONY_REPLAY", "LOONY_CLIP_QUALITY"};
+                                        "LOONY_REPLAY", "LOONY_CLIP_QUALITY", "LOONY_CLIP_WIDTH"};
 
 static void clear_env(void) {
     for (size_t i = 0; i < sizeof env_names / sizeof env_names[0]; i++)
         unsetenv(env_names[i]);
 }
 
-static const char *quality; /* LOONY_CLIP_QUALITY for clip_open_with */
+static const char *quality, *width; /* LOONY_CLIP_QUALITY and _WIDTH for clip_open_with */
 
 /* clip_open, in a child: it turns the clip on for good. Its err is the
    output. The child exits with exit, so what a clip logs at exit is there. */
@@ -175,8 +189,8 @@ static void child_clip_open(void *unused) {
 static int clip_open_with(const char *clip, const char *out, const char *kbps, const char *replay,
                           char *log, size_t cap) {
     clear_env();
-    const char *v[] = {clip, out, kbps, replay, quality};
-    for (int i = 0; i < 5; i++)
+    const char *v[] = {clip, out, kbps, replay, quality, width};
+    for (int i = 0; i < 6; i++)
         if (v[i])
             setenv(env_names[i], v[i], 1);
     int status = test_run_child(child_clip_open, NULL, log, cap);
@@ -209,4 +223,10 @@ TEST(clip_open_checks_its_settings) {
     CHECK_EQ(clip_open_with("1:00-1:30", NULL, NULL, "r.lwreplay", out, sizeof out), 0);
     CHECK_CONTAINS(out, "to clip.mp4"); /* the default name */
     quality = NULL;
+    width = "1281";
+    CHECK_EQ(clip_open_with("1:00-1:30", NULL, NULL, "r.lwreplay", out, sizeof out), 1);
+    CHECK_CONTAINS(out, "LOONY_CLIP_WIDTH=1281 isn't an even number");
+    width = "1600";
+    CHECK_EQ(clip_open_with("1:00-1:30", NULL, NULL, "r.lwreplay", out, sizeof out), 0);
+    width = NULL;
 }

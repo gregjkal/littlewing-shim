@@ -289,7 +289,8 @@ static void run_loony_clipping(void *unused) {
 }
 
 /* A clip of a few seconds of a recording (clip.h): one frame a tick for
-   exactly the span, in HD at 2x, with the opening's music. */
+   exactly the span, in HD at 2x scaled to 1280x960, with the opening's
+   music. */
 TEST(run_a_clip_of_a_recording_is_written) {
     SKIP_UNLESS_GAME();
     char rec_dir[1024], play_dir[1024];
@@ -318,15 +319,15 @@ TEST(run_a_clip_of_a_recording_is_written) {
     CHECK_EQ(rec_status, 0);
     CHECK_EQ(clip_status, 0);
     CHECK_CONTAINS(out[1], "loony: clip: reached 0:01");
-    CHECK_CONTAINS(out[1], "1600x1200 at 60 fps");
+    CHECK_CONTAINS(out[1], "1280x960 (scaled from 1600x1200) at 60 fps");
     CHECK_CONTAINS(out[1], "loony: clip: wrote 0:01-0:04 to");
     CHECK_CONTAINS(out[1], "180 frames");
     CHECK(!strstr(out[1], "desync"));
     if (!read)
         fprintf(stderr, "%s\n", err);
     CHECK(read);
-    CHECK_EQ(info.width, 1600);
-    CHECK_EQ(info.height, 1200);
+    CHECK_EQ(info.width, 1280);
+    CHECK_EQ(info.height, 960);
     CHECK_EQ(info.video_frames, 180);
     CHECK(info.video_seconds > 2.999 && info.video_seconds < 3.001);
     CHECK(info.audio_seconds > 2.97 && info.audio_seconds < 3.03);

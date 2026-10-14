@@ -22,8 +22,9 @@ static struct {
     char out[PATH_MAX];
     double quality; /* or 0 for kbps */
     int kbps;       /* 0: clip_default_kbps */
+    int width; /* LOONY_CLIP_WIDTH, or 0 */
     mp4_file *mp4;
-    int w, h;
+    int w, h;          /* the picture */
     uint8_t *rgba;     /* the screen as RGBA, when not in HD */
     uint32_t next;     /* the next tick to add a frame for */
     bool changed;      /* the screen changed since the last frame */
@@ -131,9 +132,20 @@ static void open_file(void) {
     int n = hd_scale() ? hd_scale() : 1;
     C.w = rect_w(px.bounds) * n;
     C.h = rect_h(px.bounds) * n;
-    mp4_settings s = {C.w, C.h, CLIP_FPS, C.quality, C.kbps ? C.kbps : clip_default_kbps(C.w, C.h),
-                      MIX_RATE, CLIP_AUDIO_KBPS};
-    char err[256], a[32], how[96];
+    int vw = C.width ? C.width : hd_scale() ? CLIP_HD_WIDTH : C.w;
+    if (vw > C.w)
+        vw = C.w; /* never scaled up */
+    int vh = (int)lround((double)vw * C.h / C.w / 2) * 2;
+    mp4_settings s = {.w = vw,
+                      .h = vh,
+                      .fps = CLIP_FPS,
+                      .in_w = C.w,
+                      .in_h = C.h,
+                      .quality = C.quality,
+                      .video_kbps = C.kbps ? C.kbps : clip_default_kbps(vw, vh),
+                      .rate = MIX_RATE,
+                      .audio_kbps = CLIP_AUDIO_KBPS};
+    char err[256], a[32], how[96], size[64];
     C.mp4 = mp4_open(C.out, &s, err, sizeof err);
     if (!C.mp4)
         fatal("clip: can't write %s: %s", C.out, err);
@@ -142,8 +154,12 @@ static void open_file(void) {
     else
         snprintf(how, sizeof how, "%d kbit/s%s", s.video_kbps,
                  s.quality ? " (this Mac's encoder has no quality setting)" : "");
-    log_msg("clip: reached %s after %.1f s; writing to %s, %dx%d at %d fps, %s",
-            fmt_ticks(C.start, a, sizeof a), since_launch(), C.out, C.w, C.h, CLIP_FPS, how);
+    if (vw == C.w && vh == C.h)
+        snprintf(size, sizeof size, "%dx%d", vw, vh);
+    else
+        snprintf(size, sizeof size, "%dx%d (scaled from %dx%d)", vw, vh, C.w, C.h);
+    log_msg("clip: reached %s after %.1f s; writing to %s, %s at %d fps, %s",
+            fmt_ticks(C.start, a, sizeof a), since_launch(), C.out, size, CLIP_FPS, how);
     if (C.early_frames && !mp4_audio(C.mp4, C.early, (uint32_t)C.early_frames, (int64_t)C.early_at))
         C.early_frames = 0; /* the failure shows at the next frame */
     free(C.early);
@@ -306,10 +322,11 @@ bool clip_on(void) { return C.on; }
 bool clip_open(char *err, size_t errlen) {
     const char *span = getenv("LOONY_CLIP"), *out = getenv("LOONY_CLIP_OUT");
     const char *kbps = getenv("LOONY_CLIP_KBPS"), *quality = getenv("LOONY_CLIP_QUALITY");
-    const char *replay = getenv("LOONY_REPLAY");
+    const char *width = getenv("LOONY_CLIP_WIDTH"), *replay = getenv("LOONY_REPLAY");
     if (!span || !*span) {
-        if ((out && *out) || (kbps && *kbps) || (quality && *quality)) {
-            snprintf(err, errlen, "LOONY_CLIP_OUT, LOONY_CLIP_QUALITY and LOONY_CLIP_KBPS need LOONY_CLIP");
+        if ((out && *out) || (kbps && *kbps) || (quality && *quality) || (width && *width)) {
+            snprintf(err, errlen,
+                     "LOONY_CLIP_OUT, LOONY_CLIP_QUALITY, LOONY_CLIP_KBPS and LOONY_CLIP_WIDTH need LOONY_CLIP");
             return false;
         }
         return true;
@@ -346,6 +363,16 @@ bool clip_open(char *err, size_t errlen) {
             return false;
         }
         C.quality = v;
+    }
+    if (width && *width) {
+        char *e;
+        long v = strtol(width, &e, 10);
+        if (*e || v < 160 || v > 8192 || v % 2) {
+            snprintf(err, errlen, "LOONY_CLIP_WIDTH=%s isn't an even number of pixels, 160 to 8192",
+                     width);
+            return false;
+        }
+        C.width = (int)v;
     }
     snprintf(C.out, sizeof C.out, "%s", out && *out ? out : "clip.mp4");
     const char *scale = getenv("LOONY_HD_SCALE");

@@ -29,6 +29,8 @@
     AVAssetWriterInputPixelBufferAdaptor *adaptor;
     CMAudioFormatDescriptionRef audio_format;
     int w, h, fps, rate;
+    int in_w, in_h;  /* the frames given */
+    uint8_t *scaled; /* a frame scaled to w x h, when in_w x in_h isn't */
     CVPixelBufferRef last; /* the frame shown last */
     NSMutableArray *frames; /* CVPixelBuffers waiting, at the times in frame_times */
     NSMutableArray<NSValue *> *frame_times;
@@ -43,6 +45,7 @@
         CVPixelBufferRelease(last);
     if (audio_format)
         CFRelease(audio_format);
+    free(scaled);
 }
 @end
 
@@ -158,6 +161,12 @@ mp4_file *mp4_open(const char *path, const mp4_settings *s, char *err, size_t er
         m->h = h;
         m->fps = s->fps;
         m->rate = rate;
+        m->in_w = s->in_w ? s->in_w : w;
+        m->in_h = s->in_h ? s->in_h : h;
+        if ((m->in_w != w || m->in_h != h) && !(m->scaled = malloc((size_t)w * (size_t)h * 4))) {
+            snprintf(err, errlen, "out of memory");
+            return NULL;
+        }
         m->frames = [NSMutableArray array];
         m->frame_times = [NSMutableArray array];
         m->sound = [NSMutableArray array];
@@ -244,7 +253,7 @@ mp4_file *mp4_open(const char *path, const mp4_settings *s, char *err, size_t er
 
 bool mp4_at_quality(const mp4_file *f) { return ((__bridge LoonyMP4 *)f)->at_quality; }
 
-/* A new pixel buffer holding rgba, as BGRA. */
+/* A new pixel buffer holding rgba (in_w x in_h), as BGRA, scaled to w x h. */
 static CVPixelBufferRef make_frame(LoonyMP4 *m, const uint8_t *rgba) {
     CVPixelBufferRef pb = NULL;
     CVPixelBufferPoolRef pool = m->adaptor.pixelBufferPool;
@@ -253,11 +262,19 @@ static CVPixelBufferRef make_frame(LoonyMP4 *m, const uint8_t *rgba) {
                                    kCVPixelFormatType_32BGRA, NULL, &pb) != kCVReturnSuccess)
         return NULL;
     CVPixelBufferLockBaseAddress(pb, 0);
-    vImage_Buffer src = {(void *)rgba, (vImagePixelCount)m->h, (vImagePixelCount)m->w, (size_t)m->w * 4};
+    vImage_Buffer src = {(void *)rgba, (vImagePixelCount)m->in_h, (vImagePixelCount)m->in_w,
+                         (size_t)m->in_w * 4};
     vImage_Buffer dst = {CVPixelBufferGetBaseAddress(pb), (vImagePixelCount)m->h,
                          (vImagePixelCount)m->w, CVPixelBufferGetBytesPerRow(pb)};
     const uint8_t to_bgra[4] = {2, 1, 0, 3};
-    vImage_Error e = vImagePermuteChannels_ARGB8888(&src, &dst, to_bgra, kvImageNoFlags);
+    vImage_Error e = kvImageNoError;
+    if (m->scaled) { /* the channels' order doesn't matter to the scaling */
+        vImage_Buffer mid = {m->scaled, (vImagePixelCount)m->h, (vImagePixelCount)m->w, (size_t)m->w * 4};
+        e = vImageScale_ARGB8888(&src, &mid, NULL, kvImageHighQualityResampling);
+        src = mid;
+    }
+    if (e == kvImageNoError)
+        e = vImagePermuteChannels_ARGB8888(&src, &dst, to_bgra, kvImageNoFlags);
     CVPixelBufferUnlockBaseAddress(pb, 0);
     if (e != kvImageNoError) {
         CVPixelBufferRelease(pb);

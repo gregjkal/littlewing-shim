@@ -15,11 +15,17 @@
    second (9:40, 1:02:03.5), or a whole number of ticks (34800).
 
    The picture is the window's: in HD mode (hd.h) the HD frame, at 2x unless
-   LOONY_HD_SCALE says otherwise, else the 800x600 screen. The video is
+   LOONY_HD_SCALE says otherwise, scaled down to CLIP_HD_WIDTH pixels wide;
+   else the 800x600 screen. LOONY_CLIP_WIDTH sets the width instead (the
+   height follows), but a picture is never scaled up. The video is
    H.264 at LOONY_CLIP_QUALITY (0 to 1, CLIP_QUALITY by default), or at
    LOONY_CLIP_KBPS kbit/s on average instead; the sound is AAC at 160 kbit/s. */
 
 #define CLIP_FPS 60
+/* 4/5 of HD at 2x (1280x960): the 1600x1200 picture was more than a phone
+   or a chat window shows. Scaling down from 2x keeps it sharper than
+   drawing it smaller would. */
+#define CLIP_HD_WIDTH 1280
 #define CLIP_AUDIO_KBPS 160
 /* Apple's H.264 encoder at this quality matched x264 at CRF 33 on a ramp run
    in HD at 2x (PSNR 31.2 dB against 31.0, from a CRF 18 render): about
@@ -35,7 +41,7 @@ bool clip_parse_span(const char *s, uint32_t *start, uint32_t *end);
 int clip_default_kbps(int w, int h);
 
 /* After replay_open, before hd_init: reads LOONY_CLIP, LOONY_CLIP_OUT,
-   LOONY_CLIP_QUALITY and LOONY_CLIP_KBPS (and sets LOONY_HD_SCALE to 2
+   LOONY_CLIP_QUALITY, LOONY_CLIP_KBPS and LOONY_CLIP_WIDTH (and sets LOONY_HD_SCALE to 2
    unless it is set). False, with err, if they're wrong, or set without a
    replay. */
 bool clip_open(char *err, size_t errlen);
