@@ -1,5 +1,6 @@
 #include "clip.h"
 
+#include <errno.h>
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -7,12 +8,14 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "hd.h"
 #include "misc.h"
 #include "mixer.h"
 #include "mp4.h"
 #include "qd.h"
+#include "replay.h"
 #include "sound.h"
 #include "util.h"
 
@@ -195,7 +198,12 @@ static void finish_at_exit(void) {
         log_msg("clip: the replay stopped before %s, where the clip starts: nothing written",
                 fmt_ticks(C.start, a, sizeof a));
         C.finished = true;
-        return;
+        if (util_failed() || replay_desynced())
+            return; /* the exit status says so already */
+        /* The program's first handler (clip_open comes before any other
+           sets one), so it runs last and _exit skips none of them. */
+        fflush(NULL);
+        _exit(CLIP_NOTHING_STATUS);
     }
     log_msg("clip: the replay stopped at %s, before the clip's end at %s",
             fmt_ticks(C.next, a, sizeof a), fmt_ticks(C.end, b, sizeof b));
@@ -375,6 +383,23 @@ bool clip_open(char *err, size_t errlen) {
         C.width = (int)v;
     }
     snprintf(C.out, sizeof C.out, "%s", out && *out ? out : "clip.mp4");
+    struct stat so, sr;
+    if (stat(C.out, &so) == 0 && stat(replay, &sr) == 0 && so.st_dev == sr.st_dev &&
+        so.st_ino == sr.st_ino) {
+        snprintf(err, errlen, "LOONY_CLIP_OUT=%s is the replay (it would be written over)", C.out);
+        return false;
+    }
+    char dir[PATH_MAX];
+    snprintf(dir, sizeof dir, "%s", C.out);
+    char *slash = strrchr(dir, '/');
+    if (!slash)
+        snprintf(dir, sizeof dir, ".");
+    else
+        slash[slash == dir] = '\0'; /* "/x.mp4" is in "/" */
+    if (access(dir, W_OK) != 0) {
+        snprintf(err, errlen, "LOONY_CLIP_OUT=%s: can't write in %s (%s)", C.out, dir, strerror(errno));
+        return false;
+    }
     const char *scale = getenv("LOONY_HD_SCALE");
     if (!scale || !*scale)
         setenv("LOONY_HD_SCALE", "2", 1);

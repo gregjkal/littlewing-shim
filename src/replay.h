@@ -56,7 +56,8 @@ bool replay_playing(void);
 /* On a recording or a replay: the wall clock (Unix seconds) and the time
    zone (seconds east of UTC, daylight saving on or off) when the recording
    started. The calendar the game sees is that plus its own clock, so dates
-   replay too. False otherwise. */
+   replay too. False otherwise, and on a replay of format 1, which has no
+   wall clock (it sees the host's). */
 bool replay_calendar(int64_t *start_unix, int32_t *gmtoff, bool *dst);
 
 /* Before anything reads the environment: with LOONY_REPLAY set, loads the
@@ -109,6 +110,8 @@ void replay_frame(uint32_t hash);
 /* Replay: a desync (or a damaged file). Logs it with the step and tick, and
    exits with REPLAY_DESYNC_STATUS. */
 _Noreturn void replay_desync(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+/* True once replay_desync has run (for what runs at exit). */
+bool replay_desynced(void);
 
 /* For tests: forget everything (no file is written). */
 void replay_reset(void);

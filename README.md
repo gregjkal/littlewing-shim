@@ -340,7 +340,10 @@ is `LOONY_CLIP_QUALITY`, 0 to 1 (0.65 by default, which matched x264 at CRF
 33 on a test clip); `LOONY_CLIP_KBPS` sets an average bitrate instead. A
 30-second clip from minute 10 of a 15-minute game takes about 30 seconds and
 comes to 3.1 MB in HD, or 16 seconds and 2.1 MB at 800x600. A clip
-that runs past the end of the recording keeps what it has. Recordings in the
+that runs past the end of the recording keeps what it has; one that starts
+past it writes nothing and exits with status 4. A file already at
+`LOONY_CLIP_OUT` is replaced, but the replay itself is refused, as is a
+folder that can't be written, before the seek. Recordings in the
 first format (before dates were recorded) replay too, with the host's dates.
 
 While recording, the game's clock moves in whole milliseconds, and when the

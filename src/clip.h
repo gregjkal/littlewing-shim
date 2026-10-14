@@ -32,6 +32,10 @@
    1.2 Mbit/s there, where x264 needed 0.4. At a set bitrate it needs more
    bits for the same picture. */
 #define CLIP_QUALITY 0.65
+/* The exit status when the replay stopped before the clip's start, so
+   nothing was written (a desync keeps REPLAY_DESYNC_STATUS, and a fatal
+   error its own). */
+#define CLIP_NOTHING_STATUS 4
 
 /* Parses a span "<start>-<end>" into ticks. False unless start < end. */
 bool clip_parse_span(const char *s, uint32_t *start, uint32_t *end);
@@ -43,7 +47,8 @@ int clip_default_kbps(int w, int h);
 /* After replay_open, before hd_init: reads LOONY_CLIP, LOONY_CLIP_OUT,
    LOONY_CLIP_QUALITY, LOONY_CLIP_KBPS and LOONY_CLIP_WIDTH (and sets LOONY_HD_SCALE to 2
    unless it is set). False, with err, if they're wrong, or set without a
-   replay. */
+   replay, or if LOONY_CLIP_OUT is the replay itself or in a folder that
+   can't be written (found now rather than after the seek). */
 bool clip_open(char *err, size_t errlen);
 
 /* True when a clip is being made: the window shows nothing. */

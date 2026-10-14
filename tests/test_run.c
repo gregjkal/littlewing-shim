@@ -1,9 +1,11 @@
 #include "test.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <unistd.h>
 
 #include "cgimage.h"
+#include "clip.h"
 #include "mp4.h"
 #include "plist.h"
 #include "util.h"
@@ -275,17 +277,46 @@ TEST(run_a_recorded_game_replays_exactly) {
 }
 
 static char clip_path[1100];
+static const char *clip_span;
 
 static void run_loony_clipping(void *unused) {
     (void)unused;
     unsetenv("LOONY_AUTO_ALERTS");
     setenv("LOONY_REPLAY", replay_file, 1);
     setenv("LOONY_DATA_DIR", run_data, 1);
-    setenv("LOONY_CLIP", "0:01-0:04", 1);
+    setenv("LOONY_CLIP", clip_span, 1);
     setenv("LOONY_CLIP_OUT", clip_path, 1);
     setenv("LOONY_HD", LOONY_SRC_DIR "/hd-art/loony-labyrinth", 1);
     execl(LOONY_BIN, "loony", (char *)NULL);
     _exit(127);
+}
+
+/* Records the opening, quitting at tick 330 (5.5 s), into rec_dir: the
+   recording's status. */
+static int record_for_clips(const char *rec_dir, char *out, size_t cap) {
+    snprintf(replay_file, sizeof replay_file, "%s/game.lwreplay", rec_dir);
+    tmp_name(script_path, sizeof script_path, "script");
+    tmp_name(replay_shot, sizeof replay_shot, "shot");
+    FILE *f = fopen(script_path, "w");
+    fputs("330 quit\n", f);
+    fclose(f);
+    snprintf(run_data, sizeof run_data, "%s", rec_dir);
+    int status = test_run_child(run_loony_recording, (void *)test_game_dir(), out, cap);
+    run_data[0] = '\0';
+    unlink(script_path);
+    unlink(replay_shot);
+    return status;
+}
+
+/* Clips span of that recording to <play_dir>/<name>, replaying in a data
+   folder there of its own: the clip's status. */
+static int clip_recording(const char *span, const char *play_dir, const char *name, char *out, size_t cap) {
+    clip_span = span;
+    snprintf(clip_path, sizeof clip_path, "%s/%s", play_dir, name);
+    snprintf(run_data, sizeof run_data, "%s/data-%s", play_dir, name);
+    int status = test_run_child(run_loony_clipping, NULL, out, cap);
+    run_data[0] = '\0';
+    return status;
 }
 
 /* A clip of a few seconds of a recording (clip.h): one frame a tick for
@@ -296,21 +327,9 @@ TEST(run_a_clip_of_a_recording_is_written) {
     char rec_dir[1024], play_dir[1024];
     test_tmp_dir(rec_dir, sizeof rec_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
-    snprintf(replay_file, sizeof replay_file, "%s/game.lwreplay", rec_dir);
-    snprintf(clip_path, sizeof clip_path, "%s/clip.mp4", play_dir);
-    tmp_name(script_path, sizeof script_path, "script");
-    tmp_name(replay_shot, sizeof replay_shot, "shot");
-    FILE *f = fopen(script_path, "w");
-    fputs("330 quit\n", f);
-    fclose(f);
     char out[2][32768];
-    snprintf(run_data, sizeof run_data, "%s", rec_dir);
-    int rec_status = test_run_child(run_loony_recording, (void *)test_game_dir(), out[0], sizeof out[0]);
-    snprintf(run_data, sizeof run_data, "%s/data", play_dir);
-    int clip_status = test_run_child(run_loony_clipping, NULL, out[1], sizeof out[1]);
-    run_data[0] = '\0';
-    unlink(script_path);
-    unlink(replay_shot);
+    int rec_status = record_for_clips(rec_dir, out[0], sizeof out[0]);
+    int clip_status = clip_recording("0:01-0:04", play_dir, "clip.mp4", out[1], sizeof out[1]);
     mp4_info info;
     char err[256] = "";
     bool read = mp4_read_info(clip_path, &info, err, sizeof err);
@@ -332,6 +351,42 @@ TEST(run_a_clip_of_a_recording_is_written) {
     CHECK(info.video_seconds > 2.999 && info.video_seconds < 3.001);
     CHECK(info.audio_seconds > 2.97 && info.audio_seconds < 3.03);
     CHECK(info.peak > 0.1); /* the music */
+}
+
+/* A clip that runs past the end of the recording keeps what there is, with
+   its sound (the writer can want sound from past the last frame: waiting
+   for frames there once stalled), and one that starts past the end writes
+   nothing and says so in its status. */
+TEST(run_a_clip_past_the_end_of_a_recording_keeps_what_there_is) {
+    SKIP_UNLESS_GAME();
+    char rec_dir[1024], play_dir[1024];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    char out[3][32768];
+    int rec_status = record_for_clips(rec_dir, out[0], sizeof out[0]);
+    int past_status = clip_recording("0:03-0:20", play_dir, "past.mp4", out[1], sizeof out[1]);
+    mp4_info info;
+    char err[256] = "";
+    bool read = mp4_read_info(clip_path, &info, err, sizeof err);
+    int none_status = clip_recording("0:30-0:35", play_dir, "none.mp4", out[2], sizeof out[2]);
+    bool none_written = access(clip_path, F_OK) != 0;
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(past_status, 0);
+    CHECK_CONTAINS(out[1], "loony: clip: the replay stopped at 0:");
+    CHECK_CONTAINS(out[1], "before the clip's end at 0:20");
+    CHECK_CONTAINS(out[1], "loony: clip: wrote 0:03-0:");
+    if (!read)
+        fprintf(stderr, "%s\n", err);
+    CHECK(read);
+    CHECK(info.video_frames > 100 && info.video_frames < 600); /* from 0:03 to the end, 5.5 s or so */
+    CHECK(fabs(info.video_seconds - info.video_frames / 60.0) < 0.001);
+    CHECK(fabs(info.audio_seconds - info.video_seconds) < 0.05);
+    CHECK(info.peak > 0.1);
+    CHECK_EQ(none_status, CLIP_NOTHING_STATUS);
+    CHECK_CONTAINS(out[2], "where the clip starts: nothing written");
+    CHECK(none_written);
 }
 
 static uint32_t le32_at(const uint8_t *p) {

@@ -210,7 +210,10 @@ TEST(clip_open_checks_its_settings) {
     CHECK_CONTAINS(out, "isn't <start>-<end>");
     CHECK_EQ(clip_open_with("1:00-1:30", NULL, "fast", "r.lwreplay", out, sizeof out), 1);
     CHECK_CONTAINS(out, "LOONY_CLIP_KBPS=fast");
-    CHECK_EQ(clip_open_with("1:00-1:30", "x.mp4", "800", "r.lwreplay", out, sizeof out), 0);
+    /* The child exits before the clip starts: nothing written, which has a
+       status of its own. */
+    CHECK_EQ(clip_open_with("1:00-1:30", "x.mp4", "800", "r.lwreplay", out, sizeof out),
+             CLIP_NOTHING_STATUS);
     CHECK_CONTAINS(out, "clip: replaying to 1:00, then writing 1:00-1:30 to x.mp4");
     CHECK_CONTAINS(out, "clip on: 1");
     CHECK_CONTAINS(out, "clip: the replay stopped before 1:00"); /* at exit, never started */
@@ -220,13 +223,25 @@ TEST(clip_open_checks_its_settings) {
     quality = "0.8";
     CHECK_EQ(clip_open_with("1:00-1:30", NULL, "800", "r.lwreplay", out, sizeof out), 1);
     CHECK_CONTAINS(out, "can't be used together");
-    CHECK_EQ(clip_open_with("1:00-1:30", NULL, NULL, "r.lwreplay", out, sizeof out), 0);
+    CHECK_EQ(clip_open_with("1:00-1:30", NULL, NULL, "r.lwreplay", out, sizeof out), CLIP_NOTHING_STATUS);
     CHECK_CONTAINS(out, "to clip.mp4"); /* the default name */
     quality = NULL;
     width = "1281";
     CHECK_EQ(clip_open_with("1:00-1:30", NULL, NULL, "r.lwreplay", out, sizeof out), 1);
     CHECK_CONTAINS(out, "LOONY_CLIP_WIDTH=1281 isn't an even number");
     width = "1600";
-    CHECK_EQ(clip_open_with("1:00-1:30", NULL, NULL, "r.lwreplay", out, sizeof out), 0);
+    CHECK_EQ(clip_open_with("1:00-1:30", NULL, NULL, "r.lwreplay", out, sizeof out), CLIP_NOTHING_STATUS);
     width = NULL;
+}
+
+/* An output the clip couldn't write is refused before the seek, and so is
+   one that would write over the replay. */
+TEST(clip_open_checks_where_the_clip_goes) {
+    char out[4096], replay[1024];
+    tmp_mp4(replay, sizeof replay); /* a file there, standing in for the replay */
+    CHECK_EQ(clip_open_with("1:00-1:30", replay, NULL, replay, out, sizeof out), 1);
+    CHECK_CONTAINS(out, "is the replay");
+    CHECK_EQ(clip_open_with("1:00-1:30", "/nonexistent/folder/x.mp4", NULL, replay, out, sizeof out), 1);
+    CHECK_CONTAINS(out, "LOONY_CLIP_OUT=/nonexistent/folder/x.mp4: can't write in /nonexistent/folder");
+    unlink(replay);
 }

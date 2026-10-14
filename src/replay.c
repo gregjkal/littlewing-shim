@@ -51,6 +51,7 @@ static struct {
     /* replay: the whole file, decompressed, and the next record */
     bool loaded;
     bool cut_short; /* the file ends without an end record */
+    bool desynced;
     uint8_t *data;
     size_t len, pos;
     char game_id[64];
@@ -93,8 +94,11 @@ _Noreturn void replay_desync(const char *fmt, ...) {
     va_end(ap);
     log_msg("replay: desync at step %llu (tick %u): %s", (unsigned long long)R.step, tick(), msg);
     R.mode = OFF; /* nothing more to report at exit */
+    R.desynced = true;
     exit(REPLAY_DESYNC_STATUS);
 }
+
+bool replay_desynced(void) { return R.desynced; }
 
 /* ---- the file ---- */
 
