@@ -54,6 +54,25 @@ cat > "$app/Contents/Info.plist" <<PLIST
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
 	<key>LSApplicationCategoryType</key><string>public.app-category.arcade-games</string>
 	<key>NSHighResolutionCapable</key><true/>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key><string>LittleWing Replay</string>
+			<key>CFBundleTypeRole</key><string>Viewer</string>
+			<key>LSHandlerRank</key><string>Owner</string>
+			<key>LSItemContentTypes</key><array><string>com.gregkaleka.littlewing-shim.replay</string></array>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key><string>com.gregkaleka.littlewing-shim.replay</string>
+			<key>UTTypeDescription</key><string>LittleWing Replay</string>
+			<key>UTTypeConformsTo</key><array><string>public.data</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict><key>public.filename-extension</key><array><string>lwreplay</string></array></dict>
+		</dict>
+	</array>
 </dict>
 </plist>
 PLIST

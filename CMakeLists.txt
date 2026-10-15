@@ -21,8 +21,8 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(UNICORN REQUIRED IMPORTED_TARGET unicorn)
 pkg_check_modules(SDL3 REQUIRED IMPORTED_TARGET sdl3)
 
-# Objective-C only where Apple's frameworks need it (menu.m: the Sound menu;
-# mp4.m: clips, written with AVFoundation).
+# Objective-C only where Apple's frameworks need it (menu.m: the Sound and
+# High Scores menus; mp4.m: clips, written with AVFoundation).
 file(GLOB CORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.c ${CMAKE_SOURCE_DIR}/src/*.m)
 list(REMOVE_ITEM CORE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.c)
 
@@ -31,7 +31,7 @@ target_include_directories(loony_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(loony_core PUBLIC PkgConfig::UNICORN PkgConfig::SDL3 "-framework CoreFoundation"
                       "-framework CoreGraphics" "-framework ImageIO" "-framework AppKit"
                       "-framework AVFoundation" "-framework CoreMedia" "-framework CoreVideo"
-                      "-framework Accelerate" z)
+                      "-framework Accelerate" "-framework UniformTypeIdentifiers" z)
 
 add_executable(loony src/main.c)
 target_link_libraries(loony PRIVATE loony_core)
