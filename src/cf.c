@@ -385,6 +385,21 @@ static pref *find_pref(const char *key) {
     return NULL;
 }
 
+const char *cf_pref_string(const char *key) {
+    pref *p = find_pref(key);
+    cf_obj *o = p ? lookup(p->value) : NULL;
+    return o && o->type_id == CF_STRING_TYPE_ID ? o->str : NULL;
+}
+
+bool cf_pref_int(const char *key, int64_t *out) {
+    pref *p = find_pref(key);
+    cf_obj *o = p ? lookup(p->value) : NULL;
+    if (!o || o->type_id != CF_NUMBER_TYPE_ID)
+        return false;
+    *out = o->num;
+    return true;
+}
+
 /* Sets key to value, which the preferences now hold a reference to (the
    caller's reference is unchanged). A value of 0 removes the key. */
 static void set_pref(const char *key, uint32_t value) {

@@ -1,5 +1,7 @@
 #pragma once
+#include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <time.h>
 
 /* The LittleWing games the shim can play. The two classic games share one
@@ -46,6 +48,26 @@ int game_installed(const game_info **out, int cap);
    Scores without one (those the game starts with) are left out. 0 when the
    file is missing or unreadable. */
 size_t game_high_score_times(const char *prefs, time_t *out, size_t cap);
+
+/* "2026-10-14 15:20:00", local time, the way the game stamps a high
+   score. False for anything else, such as the empty stamp of a score the
+   game starts with, or NULL. */
+bool game_parse_score_time(const char *s, time_t *out);
+
+/* Loony Labyrinth's high-score table, best first, as get_str and get_int
+   read it from the preferences ("highscore <n>", "highscore name <n>" and
+   "highscore timestamp <n>", n from 1; cf_pref_string and cf_pref_int for
+   the table the game holds now). Writes the entries that have a score to
+   out and returns how many. */
+#define GAME_HIGH_SCORES 4
+typedef struct {
+    int64_t score;
+    char name[32]; /* Mac Roman */
+    time_t when;   /* 0 when the score has no stamp (one the game starts with) */
+} game_high_score;
+int game_high_scores(const char *(*get_str)(const char *key),
+                     bool (*get_int)(const char *key, int64_t *out),
+                     game_high_score out[GAME_HIGH_SCORES]);
 
 /* The app's own file in the save root (files_data_root): settings.c's, the
    last game picked and the volume. Named for the picker, which came first. */

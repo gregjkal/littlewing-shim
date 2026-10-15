@@ -12,16 +12,32 @@
 #include <unistd.h>
 #include <zlib.h>
 
+#include "files.h"
+#include "game.h"
+#include "plist.h"
 #include "util.h"
 
 #define MAGIC "LWREPLAY"
 /* Format 1 had no start time or time zone: its replays see the host's
    calendar, which only the dates the game saves depend on, never its frames.
-   Format 3 added marks, which format 2's reader would take for the end. */
-#define FORMAT_VERSION 3
+   Format 3 added marks, which format 2's reader would take for the end.
+   Format 4 is format 3 with FLAG_SHARED, a copy made to share
+   (replay_share). Only those are written in it: a recording still opens in
+   a build that reads format 3, and such a build refuses a shared copy,
+   which it would play without a license. */
+#define FORMAT_VERSION 4
+#define RECORD_FORMAT 3
+#define SHARED_FORMAT 4
 #define OLDEST_FORMAT 1
 #define FLAG_AUTO_ALERTS 1u
-#define FLAG_DST 2u /* daylight saving time was on when the recording started */
+#define FLAG_DST 2u    /* daylight saving time was on when the recording started */
+#define FLAG_SHARED 4u /* the license is out of the preferences */
+
+/* The preferences that hold the license (the classic games' names). A
+   shared copy has them empty, and a replay of it fills them in from
+   LOONY_REPLAY_LICENSE's. */
+static const char *const license_keys[] = {"user email", "user id"};
+#define NLICENSE_KEYS (sizeof license_keys / sizeof license_keys[0])
 
 enum { OFF, RECORDING, PLAYING };
 
@@ -40,6 +56,23 @@ typedef struct {
     char text[REPLAY_MAX_TEXT];
 } record;
 
+/* A place in a decompressed file. */
+typedef struct {
+    const uint8_t *data;
+    size_t len, pos;
+} cursor;
+
+typedef struct {
+    int version; /* the file's format */
+    char game_id[64];
+    uint8_t sha[CC_SHA256_DIGEST_LENGTH];
+    uint32_t flags;
+    int64_t start_unix; /* the wall clock when the recording started */
+    int32_t gmtoff;     /* and its time zone, in seconds east of UTC */
+    const uint8_t *prefs;
+    size_t prefs_len;
+} header;
+
 static struct {
     int mode;
     uint64_t step;
@@ -54,20 +87,13 @@ static struct {
     uint64_t last_step;
     bool write_failed;
     char cut_text[REPLAY_MAX_TEXT];
-    /* replay: the whole file, decompressed, and the next record */
+    /* replay: the whole file, decompressed, its header and the next record */
     bool loaded;
     bool cut_short; /* the file ends without an end record */
     bool desynced, reached_end;
     uint8_t *data;
-    size_t len, pos;
-    char game_id[64];
-    uint8_t sha[CC_SHA256_DIGEST_LENGTH];
-    int version; /* the file's format */
-    uint32_t flags;
-    int64_t start_unix; /* the wall clock when the recording started */
-    int32_t gmtoff;     /* and its time zone, in seconds east of UTC */
-    const uint8_t *prefs;
-    size_t prefs_len;
+    cursor in;
+    header h; /* recording: what replay_calendar needs */
     record next;
     uint32_t *mark_ticks; /* every mark in the file */
     size_t nmark_ticks;
@@ -79,11 +105,11 @@ bool replay_recording(void) { return R.mode == RECORDING; }
 bool replay_playing(void) { return R.mode == PLAYING; }
 
 bool replay_calendar(int64_t *start_unix, int32_t *gmtoff, bool *dst) {
-    if (R.mode == OFF || (R.mode == PLAYING && R.version < 2))
+    if (R.mode == OFF || (R.mode == PLAYING && R.h.version < 2))
         return false;
-    *start_unix = R.start_unix;
-    *gmtoff = R.gmtoff;
-    *dst = (R.flags & FLAG_DST) != 0;
+    *start_unix = R.h.start_unix;
+    *gmtoff = R.h.gmtoff;
+    *dst = (R.h.flags & FLAG_DST) != 0;
     return true;
 }
 
@@ -125,9 +151,9 @@ static void put(const void *p, size_t n) {
     }
 }
 
-static void put_varint(uint64_t v) {
-    uint8_t b[10];
-    int n = 0;
+/* v as a varint in b; returns its length. */
+static size_t varint(uint8_t b[10], uint64_t v) {
+    size_t n = 0;
     do {
         b[n] = (uint8_t)(v & 0x7F);
         v >>= 7;
@@ -135,7 +161,12 @@ static void put_varint(uint64_t v) {
             b[n] |= 0x80;
         n++;
     } while (v);
-    put(b, (size_t)n);
+    return n;
+}
+
+static void put_varint(uint64_t v) {
+    uint8_t b[10];
+    put(b, varint(b, v));
 }
 
 /* What is written so far reaches the file. */
@@ -146,12 +177,12 @@ static void flush(void) {
     }
 }
 
-static bool get_varint(uint64_t *out) {
+static bool get_varint(cursor *c, uint64_t *out) {
     uint64_t v = 0;
     for (int shift = 0; shift < 64; shift += 7) {
-        if (R.pos >= R.len)
+        if (c->pos >= c->len)
             return false;
-        uint8_t b = R.data[R.pos++];
+        uint8_t b = c->data[c->pos++];
         v |= (uint64_t)(b & 0x7F) << shift;
         if (!(b & 0x80)) {
             *out = v;
@@ -161,31 +192,31 @@ static bool get_varint(uint64_t *out) {
     return false;
 }
 
-static bool get_bytes(const uint8_t **out, size_t n) {
-    if (n > R.len - R.pos)
+static bool get_bytes(cursor *c, const uint8_t **out, size_t n) {
+    if (n > c->len - c->pos)
         return false;
-    *out = R.data + R.pos;
-    R.pos += n;
+    *out = c->data + c->pos;
+    c->pos += n;
     return true;
 }
 
-/* Reads the record at R.pos into r, which holds the one before it. False
+/* Reads the record at c into r, which holds the one before it. False
    where the file stops early (a recording that crashed before writing its
    end). */
-static bool parse_record(record *r) {
+static bool parse_record(cursor *c, record *r) {
     uint64_t delta, kind, v;
     const uint8_t *s;
-    if (!get_varint(&delta) || !get_varint(&kind) || kind >= REPLAY_KINDS)
+    if (!get_varint(c, &delta) || !get_varint(c, &kind) || kind >= REPLAY_KINDS)
         return false;
     r->kind = (replay_kind)kind;
     for (int i = 0; i < kind_values[kind]; i++) {
-        if (!get_varint(&v))
+        if (!get_varint(c, &v))
             return false;
         r->v[i] = (uint32_t)v;
     }
     r->text[0] = '\0';
     if (kind == REPLAY_TEXT) {
-        if (!get_varint(&v) || v >= sizeof r->text || !get_bytes(&s, (size_t)v))
+        if (!get_varint(c, &v) || v >= sizeof r->text || !get_bytes(c, &s, (size_t)v))
             return false;
         memcpy(r->text, s, (size_t)v);
         r->text[v] = '\0';
@@ -197,7 +228,7 @@ static bool parse_record(record *r) {
 /* Reads the next record into R.next. A file that stops early ends as if it
    had an end record. */
 static void read_next(void) {
-    if (parse_record(&R.next))
+    if (parse_record(&R.in, &R.next))
         return;
     log_msg("replay: the file ends without an end record (after step %llu)",
             (unsigned long long)R.next.step);
@@ -209,10 +240,11 @@ static void read_next(void) {
    before them: the clock records say what the clock was at each. */
 static void scan_marks(void) {
     static record r;
-    size_t pos = R.pos, cap = 0;
+    cursor c = R.in;
+    size_t cap = 0;
     uint64_t clock_ms = 0;
     memset(&r, 0, sizeof r);
-    while (parse_record(&r) && r.kind != REPLAY_END) {
+    while (parse_record(&c, &r) && r.kind != REPLAY_END) {
         if (r.kind == REPLAY_CLOCK) {
             clock_ms += r.v[0];
         } else if (r.kind == REPLAY_MARK) {
@@ -224,8 +256,10 @@ static void scan_marks(void) {
             R.mark_ticks[R.nmark_ticks++] = (uint32_t)(clock_ms * 60 / 1000);
         }
     }
-    R.pos = pos;
 }
+
+/* The most a replay decompresses to: shared files come from other people. */
+#define MAX_FILE ((size_t)256 << 20)
 
 static uint8_t *gunzip_file(const char *path, size_t *len) {
     gzFile f = gzopen(path, "rb");
@@ -246,6 +280,11 @@ static uint8_t *gunzip_file(const char *path, size_t *len) {
         if (got == 0)
             break;
         n += (size_t)got;
+        if (n == cap && cap >= MAX_FILE) { /* an hour is about 2 MB; this is a damaged or hostile file */
+            free(buf);
+            gzclose(f);
+            return NULL;
+        }
         if (n == cap)
             buf = realloc(buf, cap *= 2);
     }
@@ -254,41 +293,43 @@ static uint8_t *gunzip_file(const char *path, size_t *len) {
     return buf;
 }
 
-static bool parse_header(char *err, size_t errlen) {
+/* Reads the header at c into h, whose prefs point into c's data. */
+static bool parse_header(cursor *c, header *h, char *err, size_t errlen) {
     const uint8_t *p;
     uint64_t version, id_len, flags, prefs_len;
-    if (!get_bytes(&p, 8) || memcmp(p, MAGIC, 8) != 0) {
+    memset(h, 0, sizeof *h);
+    if (!get_bytes(c, &p, 8) || memcmp(p, MAGIC, 8) != 0) {
         snprintf(err, errlen, "not a replay file");
         return false;
     }
-    if (!get_varint(&version))
+    if (!get_varint(c, &version))
         goto bad;
     if (version < OLDEST_FORMAT || version > FORMAT_VERSION) {
         snprintf(err, errlen, "replay format %llu (this program reads %d to %d)",
                  (unsigned long long)version, OLDEST_FORMAT, FORMAT_VERSION);
         return false;
     }
-    R.version = (int)version;
-    if (!get_varint(&id_len) || id_len >= sizeof R.game_id || !get_bytes(&p, (size_t)id_len))
+    h->version = (int)version;
+    if (!get_varint(c, &id_len) || id_len >= sizeof h->game_id || !get_bytes(c, &p, (size_t)id_len))
         goto bad;
-    memcpy(R.game_id, p, (size_t)id_len);
-    R.game_id[id_len] = '\0';
-    if (!get_bytes(&p, sizeof R.sha))
+    memcpy(h->game_id, p, (size_t)id_len);
+    h->game_id[id_len] = '\0';
+    if (!get_bytes(c, &p, sizeof h->sha))
         goto bad;
-    memcpy(R.sha, p, sizeof R.sha);
+    memcpy(h->sha, p, sizeof h->sha);
     uint64_t start = 0, gmtoff = 0;
-    if (!get_varint(&flags) ||
-        (R.version >= 2 && (!get_varint(&start) || !get_varint(&gmtoff))) ||
-        !get_varint(&prefs_len) || !get_bytes(&R.prefs, (size_t)prefs_len))
+    if (!get_varint(c, &flags) ||
+        (h->version >= 2 && (!get_varint(c, &start) || !get_varint(c, &gmtoff))) ||
+        !get_varint(c, &prefs_len) || !get_bytes(c, &h->prefs, (size_t)prefs_len))
         goto bad;
-    R.flags = (uint32_t)flags;
-    R.start_unix = (int64_t)start;
-    R.gmtoff = (int32_t)(uint32_t)gmtoff;
+    h->flags = (uint32_t)flags;
+    h->start_unix = (int64_t)start;
+    h->gmtoff = (int32_t)(uint32_t)gmtoff;
     /* A start before 2038 and a time zone within a day of UTC, so the dates
        the game sees can't overflow. */
-    if (start >= 0x80000000u || gmtoff > UINT32_MAX || R.gmtoff < -86400 || R.gmtoff > 86400)
+    if (start >= 0x80000000u || gmtoff > UINT32_MAX || h->gmtoff < -86400 || h->gmtoff > 86400)
         goto bad;
-    R.prefs_len = (size_t)prefs_len;
+    h->prefs_len = (size_t)prefs_len;
     return true;
 bad:
     snprintf(err, errlen, "the replay's header is damaged");
@@ -310,18 +351,29 @@ bool replay_open(char *err, size_t errlen) {
         return false;
     }
     replay_reset();
-    R.data = gunzip_file(path, &R.len);
+    R.data = gunzip_file(path, &R.in.len);
     if (!R.data) {
         snprintf(err, errlen, "can't read the replay %s", path);
         return false;
     }
-    if (!parse_header(err, errlen))
+    R.in.data = R.data;
+    if (!parse_header(&R.in, &R.h, err, errlen))
         return false;
     scan_marks();
     R.loaded = true;
     const char *game = getenv("LOONY_GAME");
     if (!game || !*game)
-        setenv("LOONY_GAME", R.game_id, 1);
+        setenv("LOONY_GAME", R.h.game_id, 1);
+    const char *license = getenv("LOONY_REPLAY_LICENSE");
+    char root[PATH_MAX];
+    if ((R.h.flags & FLAG_SHARED) && (!license || !*license) && game_by_id(R.h.game_id) &&
+        files_data_root(root, sizeof root)) {
+        /* The viewer's own preferences, found before LOONY_DATA_DIR names
+           the replay's folder, and kept for a restart (watch.h). */
+        char path[PATH_MAX + 96];
+        snprintf(path, sizeof path, "%s/%s/prefs.plist", root, R.h.game_id);
+        setenv("LOONY_REPLAY_LICENSE", path, 1);
+    }
     const char *data = getenv("LOONY_DATA_DIR");
     if (!data || !*data) {
         const char *t = getenv("TMPDIR");
@@ -333,7 +385,7 @@ bool replay_open(char *err, size_t errlen) {
         }
         setenv("LOONY_DATA_DIR", dir, 1);
     }
-    if (R.flags & FLAG_AUTO_ALERTS)
+    if (R.h.flags & FLAG_AUTO_ALERTS)
         setenv("LOONY_AUTO_ALERTS", "1", 1);
     else
         unsetenv("LOONY_AUTO_ALERTS");
@@ -345,15 +397,96 @@ static void prefs_path(char *out, size_t cap, const char *data_dir) {
     snprintf(out, cap, "%s/prefs.plist", data_dir);
 }
 
+static plist_entry *find_entry(plist_entry *e, uint32_t n, const char *key) {
+    for (uint32_t i = 0; i < n; i++)
+        if (strcmp(e[i].key, key) == 0)
+            return &e[i];
+    return NULL;
+}
+
+/* Whether the preferences hold a license: a string in each license key. */
+static bool has_license(plist_entry *e, uint32_t n) {
+    for (size_t i = 0; i < NLICENSE_KEYS; i++) {
+        plist_entry *k = find_entry(e, n, license_keys[i]);
+        if (!k || k->is_number || !k->str[0])
+            return false;
+    }
+    return true;
+}
+
+/* The preferences in prefs (len bytes) with the license from `from`'s, or
+   empty when from is NULL, as a malloc'd property list (*out_len bytes).
+   NULL, with err, if they can't be read or written. */
+static uint8_t *with_license(const uint8_t *prefs, size_t len, plist_entry *from, uint32_t nfrom,
+                             size_t *out_len, char *err, size_t errlen) {
+    plist_entry *e;
+    uint32_t n;
+    char perr[256];
+    if (plist_parse(prefs, len, &e, &n, perr, sizeof perr) != PLIST_OK) {
+        snprintf(err, errlen, "the replay's preferences are damaged");
+        return NULL;
+    }
+    if (!(e = realloc(e, (n + NLICENSE_KEYS) * sizeof *e)))
+        fatal("out of memory");
+    for (size_t i = 0; i < NLICENSE_KEYS; i++) {
+        plist_entry *src = from ? find_entry(from, nfrom, license_keys[i]) : NULL;
+        plist_entry *dst = find_entry(e, n, license_keys[i]);
+        if (!dst) {
+            dst = &e[n++];
+            memset(dst, 0, sizeof *dst);
+            if (!(dst->key = strdup(license_keys[i])))
+                fatal("out of memory");
+        }
+        free(dst->str);
+        dst->is_number = false;
+        if (!(dst->str = strdup(src && !src->is_number ? src->str : "")))
+            fatal("out of memory");
+    }
+    uint8_t *out = plist_encode(e, n, out_len);
+    plist_free(e, n);
+    if (!out)
+        snprintf(err, errlen, "can't write the replay's preferences");
+    return out;
+}
+
+/* A shared replay's preferences with the viewer's license in them (from
+   LOONY_REPLAY_LICENSE), malloc'd; NULL, with err, without one. */
+static uint8_t *licensed_prefs(size_t *len, char *err, size_t errlen) {
+    const char *from = getenv("LOONY_REPLAY_LICENSE");
+    const game_info *g = game_by_id(R.h.game_id);
+    const char *title = g ? g->title : R.h.game_id;
+    if (!from || !*from) {
+        snprintf(err, errlen,
+                 "this replay was shared without a license: set LOONY_REPLAY_LICENSE to the "
+                 "preferences of a registered %s",
+                 title);
+        return NULL;
+    }
+    plist_entry *e;
+    uint32_t n;
+    char perr[256];
+    plist_status st = plist_read(from, &e, &n, perr, sizeof perr);
+    bool licensed = st == PLIST_OK && has_license(e, n);
+    uint8_t *out = licensed ? with_license(R.h.prefs, R.h.prefs_len, e, n, len, err, errlen) : NULL;
+    if (st == PLIST_OK)
+        plist_free(e, n);
+    if (!licensed)
+        snprintf(err, errlen,
+                 "this replay was shared without a license: register %s in LittleWing to watch "
+                 "it (%s has none)",
+                 title, from);
+    return out;
+}
+
 static bool start_playing(const char *game_id, const uint8_t *sha, const char *data_dir, char *err,
                           size_t errlen) {
-    if (strcmp(game_id, R.game_id) != 0) {
-        snprintf(err, errlen, "the replay is of %s, not %s", R.game_id, game_id);
+    if (strcmp(game_id, R.h.game_id) != 0) {
+        snprintf(err, errlen, "the replay is of %s, not %s", R.h.game_id, game_id);
         return false;
     }
-    if (memcmp(sha, R.sha, sizeof R.sha) != 0) {
+    if (memcmp(sha, R.h.sha, sizeof R.h.sha) != 0) {
         snprintf(err, errlen, "the replay was recorded with another version of %s's program",
-                 R.game_id);
+                 R.h.game_id);
         return false;
     }
     if (!data_dir) {
@@ -370,16 +503,26 @@ static bool start_playing(const char *game_id, const uint8_t *sha, const char *d
         snprintf(err, errlen, "%s already has preferences: replay into a new folder", data_dir);
         return false;
     }
-    if (R.prefs_len) {
+    const uint8_t *prefs = R.h.prefs;
+    size_t prefs_len = R.h.prefs_len;
+    uint8_t *licensed = NULL;
+    if (R.h.flags & FLAG_SHARED) {
+        if (!(licensed = licensed_prefs(&prefs_len, err, errlen)))
+            return false;
+        prefs = licensed;
+    }
+    if (prefs_len) {
         FILE *f = fopen(path, "wbx");
-        if (!f || fwrite(R.prefs, 1, R.prefs_len, f) != R.prefs_len) {
-            if (f)
-                fclose(f);
+        bool ok = f && fwrite(prefs, 1, prefs_len, f) == prefs_len;
+        if (f && fclose(f) != 0)
+            ok = false;
+        if (!ok) {
+            free(licensed);
             snprintf(err, errlen, "can't write %s", path);
             return false;
         }
-        fclose(f);
     }
+    free(licensed);
     read_next();
     R.mode = PLAYING;
     log_msg("replay: playing %s, saving in %s", getenv("LOONY_REPLAY"), data_dir);
@@ -408,7 +551,7 @@ static bool start_recording(const char *path, const char *game_id, const uint8_t
         return false;
     }
     put(MAGIC, 8);
-    put_varint(FORMAT_VERSION);
+    put_varint(RECORD_FORMAT);
     put_varint(strlen(game_id));
     put(game_id, strlen(game_id));
     put(sha, CC_SHA256_DIGEST_LENGTH);
@@ -416,12 +559,12 @@ static bool start_recording(const char *path, const char *game_id, const uint8_t
     time_t now = time(NULL);
     struct tm lt;
     localtime_r(&now, &lt);
-    R.start_unix = (int64_t)now;
-    R.gmtoff = (int32_t)lt.tm_gmtoff;
-    R.flags = (alerts && strcmp(alerts, "1") == 0 ? FLAG_AUTO_ALERTS : 0) | (lt.tm_isdst > 0 ? FLAG_DST : 0);
-    put_varint(R.flags);
-    put_varint((uint64_t)R.start_unix);
-    put_varint((uint32_t)R.gmtoff);
+    R.h.start_unix = (int64_t)now;
+    R.h.gmtoff = (int32_t)lt.tm_gmtoff;
+    R.h.flags = (alerts && strcmp(alerts, "1") == 0 ? FLAG_AUTO_ALERTS : 0) | (lt.tm_isdst > 0 ? FLAG_DST : 0);
+    put_varint(R.h.flags);
+    put_varint((uint64_t)R.h.start_unix);
+    put_varint((uint32_t)R.h.gmtoff);
     put_varint(prefs ? prefs_len : 0);
     if (prefs && prefs_len)
         put(prefs, prefs_len);
@@ -444,18 +587,28 @@ static bool ends_with(const char *s, const char *end) {
     return n >= m && strcmp(s + n - m, end) == 0;
 }
 
-/* Whether the recording name in dir was running when one of the
-   high_scores was set: from the time in its name (after "<game_id>-") to its
-   last write. */
-static bool set_a_high_score(const char *dir, const char *name, size_t id_len,
-                             const time_t *high_scores, size_t n) {
+/* When the recording name in dir was running: from the time in its name
+   (after "<game_id>-") to its last write, give or take REPLAY_SCORE_SLACK. */
+static bool recording_span(const char *dir, const char *name, size_t id_len, time_t *from,
+                           time_t *to) {
     struct tm tm = {.tm_isdst = -1};
     char path[PATH_MAX];
     struct stat st;
     snprintf(path, sizeof path, "%s/%s", dir, name);
     if (!strptime(name + id_len + 1, "%Y-%m-%d-%H%M%S", &tm) || stat(path, &st) != 0)
         return false;
-    time_t from = mktime(&tm) - REPLAY_SCORE_SLACK, to = st.st_mtime + REPLAY_SCORE_SLACK;
+    *from = mktime(&tm) - REPLAY_SCORE_SLACK;
+    *to = st.st_mtime + REPLAY_SCORE_SLACK;
+    return true;
+}
+
+/* Whether the recording name in dir was running when one of the
+   high_scores was set. */
+static bool set_a_high_score(const char *dir, const char *name, size_t id_len,
+                             const time_t *high_scores, size_t n) {
+    time_t from, to;
+    if (!recording_span(dir, name, id_len, &from, &to))
+        return false;
     for (size_t i = 0; i < n; i++)
         if (high_scores[i] >= from && high_scores[i] <= to)
             return true;
@@ -469,14 +622,13 @@ static bool has_clips(const char *dir, const char *name) {
     return access(path, F_OK) == 0;
 }
 
-/* Deletes the game's recordings in dir but the newest keep, unless marked,
-   with clips or holding a high score. The names start with the date and
-   time, so they sort oldest first. */
-static void prune(const char *dir, const char *game_id, size_t keep, const time_t *high_scores,
-                  size_t nscores) {
+/* The names of the game's recordings in dir, malloc'd, oldest first (the
+   names start with the date and time). Returns how many. */
+static size_t list_recordings(const char *dir, const char *game_id, char ***out) {
+    *out = NULL;
     DIR *d = opendir(dir);
     if (!d)
-        return;
+        return 0;
     char **names = NULL;
     size_t n = 0, cap = 0, id_len = strlen(game_id);
     struct dirent *e;
@@ -490,7 +642,18 @@ static void prune(const char *dir, const char *game_id, size_t keep, const time_
             fatal("out of memory");
     }
     closedir(d);
-    qsort(names, n, sizeof *names, by_name);
+    if (n)
+        qsort(names, n, sizeof *names, by_name);
+    *out = names;
+    return n;
+}
+
+/* Deletes the game's recordings in dir but the newest keep, unless marked,
+   with clips or holding a high score. */
+static void prune(const char *dir, const char *game_id, size_t keep, const time_t *high_scores,
+                  size_t nscores) {
+    char **names;
+    size_t n = list_recordings(dir, game_id, &names), id_len = strlen(game_id);
     for (size_t i = 0; i < n; i++) {
         if (i + keep < n && !ends_with(names[i], "-marked.lwreplay") && !has_clips(dir, names[i]) &&
             !set_a_high_score(dir, names[i], id_len, high_scores, nscores)) {
@@ -504,6 +667,146 @@ static void prune(const char *dir, const char *game_id, size_t keep, const time_
         free(names[i]);
     }
     free(names);
+}
+
+bool replay_find_recording(const char *dir, const char *game_id, time_t when, char *out,
+                           size_t cap) {
+    char **names;
+    size_t n = list_recordings(dir, game_id, &names), id_len = strlen(game_id);
+    bool found = false;
+    for (size_t i = n; i-- > 0;) {
+        time_t from, to;
+        if (!found && recording_span(dir, names[i], id_len, &from, &to) && when >= from && when <= to) {
+            snprintf(out, cap, "%s/%s", dir, names[i]);
+            found = true;
+        }
+        free(names[i]);
+    }
+    free(names);
+    return found;
+}
+
+bool replay_share(const char *src, const char *dst, char *err, size_t errlen) {
+    size_t len;
+    uint8_t *data = gunzip_file(src, &len);
+    if (!data) {
+        snprintf(err, errlen, "can't read %s", src);
+        return false;
+    }
+    cursor c = {data, len, 0};
+    header h;
+    uint8_t *prefs = NULL;
+    size_t prefs_len = 0;
+    gzFile f = NULL;
+    bool made = false; /* tmp is ours to delete */
+    char tmp[PATH_MAX + 8];
+    snprintf(tmp, sizeof tmp, "%s.tmp", dst);
+    if (!parse_header(&c, &h, err, errlen))
+        goto fail;
+    if (h.version < 2) { /* a shared copy carries the calendar */
+        snprintf(err, errlen, "%s was recorded by an older version of LittleWing", src);
+        goto fail;
+    }
+    if (h.flags & FLAG_SHARED) {
+        prefs_len = h.prefs_len;
+        if (!(prefs = malloc(prefs_len ? prefs_len : 1)))
+            fatal("out of memory");
+        memcpy(prefs, h.prefs, prefs_len);
+    } else {
+        /* A game played unregistered can't be shared: its replay, given the
+           viewer's license, would not start the way it did. */
+        plist_entry *e;
+        uint32_t n;
+        char perr[256];
+        bool licensed = h.prefs_len && plist_parse(h.prefs, h.prefs_len, &e, &n, perr, sizeof perr) == PLIST_OK;
+        if (licensed) {
+            licensed = has_license(e, n);
+            plist_free(e, n);
+        }
+        if (!licensed) {
+            const game_info *g = game_by_id(h.game_id);
+            snprintf(err, errlen, "this game was played before %s was registered, so it can't be shared",
+                     g ? g->title : h.game_id);
+            goto fail;
+        }
+        if (!(prefs = with_license(h.prefs, h.prefs_len, NULL, 0, &prefs_len, err, errlen)))
+            goto fail;
+    }
+    if (!(f = gzopen(tmp, "wb6"))) {
+        snprintf(err, errlen, "can't create %s", tmp);
+        goto fail;
+    }
+    made = true;
+    uint8_t b[10];
+    size_t id_len = strlen(h.game_id);
+    bool ok = gzwrite(f, MAGIC, 8) == 8;
+    ok = ok && gzwrite(f, b, (unsigned)varint(b, SHARED_FORMAT)) > 0;
+    ok = ok && gzwrite(f, b, (unsigned)varint(b, id_len)) > 0;
+    ok = ok && gzwrite(f, h.game_id, (unsigned)id_len) == (int)id_len;
+    ok = ok && gzwrite(f, h.sha, sizeof h.sha) == (int)sizeof h.sha;
+    ok = ok && gzwrite(f, b, (unsigned)varint(b, h.flags | FLAG_SHARED)) > 0;
+    ok = ok && gzwrite(f, b, (unsigned)varint(b, (uint64_t)h.start_unix)) > 0;
+    ok = ok && gzwrite(f, b, (unsigned)varint(b, (uint32_t)h.gmtoff)) > 0;
+    ok = ok && gzwrite(f, b, (unsigned)varint(b, prefs_len)) > 0;
+    ok = ok && (!prefs_len || gzwrite(f, prefs, (unsigned)prefs_len) == (int)prefs_len);
+    /* The records as they are; a recording still being written stops where
+       it was last flushed, and the copy plays to there. */
+    size_t rest = len - c.pos;
+    ok = ok && (!rest || gzwrite(f, data + c.pos, (unsigned)rest) == (int)rest);
+    if (gzclose(f) != Z_OK)
+        ok = false;
+    f = NULL;
+    if (!ok || rename(tmp, dst) != 0) {
+        snprintf(err, errlen, "can't write %s", dst);
+        goto fail;
+    }
+    free(prefs);
+    free(data);
+    log_msg("replay: shared %s as %s, without its license", src, dst);
+    return true;
+fail:
+    if (f)
+        gzclose(f);
+    if (made)
+        unlink(tmp);
+    free(prefs);
+    free(data);
+    return false;
+}
+
+bool replay_check(const char *path, char *err, size_t errlen) {
+    size_t len;
+    uint8_t *data = gunzip_file(path, &len);
+    if (!data) {
+        snprintf(err, errlen, "it can't be read");
+        return false;
+    }
+    cursor c = {data, len, 0};
+    header h;
+    bool ok = parse_header(&c, &h, err, errlen);
+    const game_info *g = ok ? game_by_id(h.game_id) : NULL;
+    if (ok && !g) {
+        snprintf(err, errlen, "it is of a game LittleWing doesn't know");
+        ok = false;
+    }
+    if (ok && (h.flags & FLAG_SHARED)) {
+        /* Where replay_open will look, once LOONY_DATA_DIR is unset. */
+        const char *home = getenv("HOME");
+        char prefs[PATH_MAX], perr[256];
+        plist_entry *e;
+        uint32_t n;
+        snprintf(prefs, sizeof prefs, "%s/Library/Application Support/littlewing-shim/%s/prefs.plist",
+                 home ? home : "", h.game_id);
+        plist_status st = plist_read(prefs, &e, &n, perr, sizeof perr);
+        ok = st == PLIST_OK && has_license(e, n);
+        if (st == PLIST_OK)
+            plist_free(e, n);
+        if (!ok)
+            snprintf(err, errlen, "it was shared without a license: register %s in LittleWing to watch it",
+                     g->title);
+    }
+    free(data);
+    return ok;
 }
 
 void replay_record_into(const char *dir, const char *game_id, const time_t *high_scores, size_t n) {

@@ -42,8 +42,19 @@ plist_status plist_read(const char *path, plist_entry **out, uint32_t *n, char *
         snprintf(err, errlen, "can't read %s: %s", path, strerror(errno));
         return PLIST_UNREADABLE;
     }
-    CFDataRef data = CFDataCreate(NULL, buf, (CFIndex)len);
+    plist_status st = plist_parse(buf, len, out, n, err, errlen);
     free(buf);
+    if (st == PLIST_BAD)
+        snprintf(err, errlen, "%s is not a property list dictionary", path);
+    return st;
+}
+
+plist_status plist_parse(const uint8_t *buf, size_t len, plist_entry **out, uint32_t *n, char *err,
+                         size_t errlen) {
+    *out = NULL;
+    *n = 0;
+    err[0] = '\0';
+    CFDataRef data = CFDataCreate(NULL, buf, (CFIndex)len);
     if (!data)
         fatal("out of memory");
     CFPropertyListRef root = CFPropertyListCreateWithData(NULL, data, kCFPropertyListImmutable, NULL, NULL);
@@ -51,7 +62,7 @@ plist_status plist_read(const char *path, plist_entry **out, uint32_t *n, char *
     if (!root || CFGetTypeID(root) != CFDictionaryGetTypeID()) {
         if (root)
             CFRelease(root);
-        snprintf(err, errlen, "%s is not a property list dictionary", path);
+        snprintf(err, errlen, "not a property list dictionary");
         return PLIST_BAD;
     }
     CFIndex count = CFDictionaryGetCount(root);
@@ -92,13 +103,8 @@ plist_status plist_read(const char *path, plist_entry **out, uint32_t *n, char *
     return PLIST_OK;
 }
 
-bool plist_write(const char *path, const plist_entry *e, uint32_t n, char *err, size_t errlen) {
-    char dir[1024];
-    snprintf(dir, sizeof dir, "%s", path);
-    if (!make_dirs(dirname(dir))) {
-        snprintf(err, errlen, "can't create the folder for %s: %s", path, strerror(errno));
-        return false;
-    }
+/* The entries as an XML property list, or NULL. */
+static CFDataRef encode(const plist_entry *e, uint32_t n) {
     CFMutableDictionaryRef d = CFDictionaryCreateMutable(NULL, n, &kCFTypeDictionaryKeyCallBacks,
                                                          &kCFTypeDictionaryValueCallBacks);
     for (uint32_t i = 0; i < n; i++) {
@@ -111,6 +117,30 @@ bool plist_write(const char *path, const plist_entry *e, uint32_t n, char *err, 
     }
     CFDataRef data = CFPropertyListCreateData(NULL, d, kCFPropertyListXMLFormat_v1_0, 0, NULL);
     CFRelease(d);
+    return data;
+}
+
+uint8_t *plist_encode(const plist_entry *e, uint32_t n, size_t *len) {
+    CFDataRef data = encode(e, n);
+    if (!data)
+        return NULL;
+    *len = (size_t)CFDataGetLength(data);
+    uint8_t *out = malloc(*len ? *len : 1);
+    if (!out)
+        fatal("out of memory");
+    memcpy(out, CFDataGetBytePtr(data), *len);
+    CFRelease(data);
+    return out;
+}
+
+bool plist_write(const char *path, const plist_entry *e, uint32_t n, char *err, size_t errlen) {
+    char dir[1024];
+    snprintf(dir, sizeof dir, "%s", path);
+    if (!make_dirs(dirname(dir))) {
+        snprintf(err, errlen, "can't create the folder for %s: %s", path, strerror(errno));
+        return false;
+    }
+    CFDataRef data = encode(e, n);
     if (!data) {
         snprintf(err, errlen, "can't encode %s", path);
         return false;

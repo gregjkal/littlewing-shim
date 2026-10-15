@@ -1,10 +1,16 @@
 #include "menu.h"
 
 #import <AppKit/AppKit.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <SDL3/SDL.h>
+#include <limits.h>
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
+#include "cf.h"
+#include "game.h"
+#include "replay.h"
 #include "settings.h"
 #include "sound.h"
 
@@ -27,6 +33,151 @@
 @end
 
 static LoonySoundMenu *controller; /* the menu's delegate and the slider's target */
+
+static struct {
+    bool on;
+    char game_id[64], title[64], rec_dir[PATH_MAX];
+} scores_config;
+
+void menu_add_high_scores(const char *game_id, const char *title, const char *rec_dir) {
+    scores_config.on = true;
+    snprintf(scores_config.game_id, sizeof scores_config.game_id, "%s", game_id);
+    snprintf(scores_config.title, sizeof scores_config.title, "%s", title);
+    snprintf(scores_config.rec_dir, sizeof scores_config.rec_dir, "%s", rec_dir);
+}
+
+/* The High Scores menu, rebuilt each time it opens, so a score set a
+   moment ago is in it. A share item's representedObject holds the
+   recording's path and the shared copy's file name. */
+@interface LoonyHighScores : NSObject <NSMenuDelegate>
+@end
+
+static NSString *mac_roman(const char *s) {
+    NSString *t = [[NSString alloc] initWithCString:s encoding:NSMacOSRomanStringEncoding];
+    return t ?: @"";
+}
+
+/* "1   GREG        43,074,596": the name at a tab, the score at a right tab. */
+static NSAttributedString *score_row(int rank, NSString *name, NSString *score) {
+    NSMutableParagraphStyle *p = [[NSMutableParagraphStyle alloc] init];
+    p.tabStops = @[
+        [[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentLeft location:22 options:@{}],
+        [[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentRight location:230 options:@{}],
+    ];
+    NSFont *font = [NSFont monospacedDigitSystemFontOfSize:[NSFont systemFontSize]
+                                                    weight:NSFontWeightRegular];
+    NSString *text = [NSString stringWithFormat:@"%d\t%@\t%@", rank, name, score];
+    return [[NSAttributedString alloc]
+        initWithString:text
+            attributes:@{NSParagraphStyleAttributeName : p, NSFontAttributeName : font}];
+}
+
+static NSMenuItem *disabled_item(NSString *title) {
+    NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:nil keyEquivalent:@""];
+    item.enabled = NO;
+    return item;
+}
+
+@implementation LoonyHighScores
+- (void)menuNeedsUpdate:(NSMenu *)menu {
+    [menu removeAllItems];
+    game_high_score hs[GAME_HIGH_SCORES];
+    int n = game_high_scores(cf_pref_string, cf_pref_int, hs);
+    if (n == 0) {
+        [menu addItem:disabled_item(@"No high scores yet")];
+        return;
+    }
+    NSNumberFormatter *nf = [[NSNumberFormatter alloc] init];
+    nf.numberStyle = NSNumberFormatterDecimalStyle;
+    NSDateFormatter *df = [[NSDateFormatter alloc] init];
+    df.dateStyle = NSDateFormatterMediumStyle;
+    df.timeStyle = NSDateFormatterShortStyle;
+    NSCharacterSet *unsafe = [NSCharacterSet characterSetWithCharactersInString:@"/:"];
+    for (int i = 0; i < n; i++) {
+        NSString *name = mac_roman(hs[i].name);
+        NSString *score = [nf stringFromNumber:@(hs[i].score)];
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+        item.attributedTitle = score_row(i + 1, name.length ? name : @"(no name)", score);
+        NSMenu *sub = [[NSMenu alloc] init];
+        sub.autoenablesItems = NO;
+        char path[PATH_MAX];
+        if (hs[i].when) {
+            NSDate *when = [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)hs[i].when];
+            [sub addItem:[NSMenuItem sectionHeaderWithTitle:[df stringFromDate:when]]];
+        }
+        if (!hs[i].when) {
+            [sub addItem:disabled_item(@"One of the game's own scores")];
+        } else if (!replay_find_recording(scores_config.rec_dir, scores_config.game_id, hs[i].when,
+                                          path, sizeof path)) {
+            [sub addItem:disabled_item(@"No replay was kept of this game")];
+        } else {
+            NSString *file = [NSString stringWithFormat:@"%s %@ %@", scores_config.title, score, name];
+            file = [[file componentsSeparatedByCharactersInSet:unsafe] componentsJoinedByString:@"-"];
+            NSDictionary *info = @{
+                @"path" : @(path),
+                @"file" : [file stringByAppendingPathExtension:@"lwreplay"],
+            };
+            NSMenuItem *share = [[NSMenuItem alloc] initWithTitle:@"Share Replay…"
+                                                           action:@selector(share:)
+                                                    keyEquivalent:@""];
+            NSMenuItem *save = [[NSMenuItem alloc] initWithTitle:@"Save Replay…"
+                                                          action:@selector(save:)
+                                                   keyEquivalent:@""];
+            for (NSMenuItem *m in @[ share, save ]) {
+                m.target = self;
+                m.representedObject = info;
+                [sub addItem:m];
+            }
+        }
+        item.submenu = sub;
+        [menu addItem:item];
+    }
+}
+
+/* Writes the shared copy of info's recording to url, or says why not. */
+- (BOOL)write:(NSDictionary *)info to:(NSURL *)url {
+    char err[1024];
+    if (replay_share([info[@"path"] fileSystemRepresentation], url.fileSystemRepresentation, err,
+                     sizeof err))
+        return YES;
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = @"The replay can't be shared";
+    alert.informativeText = @(err);
+    [alert runModal];
+    return NO;
+}
+
+- (void)share:(NSMenuItem *)item {
+    NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"LittleWing Replays"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir
+                              withIntermediateDirectories:YES
+                                               attributes:nil
+                                                    error:nil];
+    NSURL *url = [NSURL fileURLWithPath:[dir stringByAppendingPathComponent:item.representedObject[@"file"]]];
+    if (![self write:item.representedObject to:url])
+        return;
+    NSView *view = (NSApp.keyWindow ?: NSApp.mainWindow).contentView;
+    if (!view) { /* no window to show the share sheet on */
+        [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[ url ]];
+        return;
+    }
+    NSSharingServicePicker *picker = [[NSSharingServicePicker alloc] initWithItems:@[ url ]];
+    NSRect middle = NSMakeRect(NSMidX(view.bounds), NSMidY(view.bounds), 1, 1);
+    [picker showRelativeToRect:middle ofView:view preferredEdge:NSRectEdgeMinY];
+}
+
+- (void)save:(NSMenuItem *)item {
+    NSSavePanel *panel = [NSSavePanel savePanel];
+    panel.nameFieldStringValue = item.representedObject[@"file"];
+    UTType *type = [UTType typeWithFilenameExtension:@"lwreplay"];
+    if (type)
+        panel.allowedContentTypes = @[ type ];
+    if ([panel runModal] == NSModalResponseOK)
+        [self write:item.representedObject to:panel.URL];
+}
+@end
+
+static LoonyHighScores *scores; /* the High Scores menu's delegate and its items' target */
 
 static NSImageView *icon(NSString *symbol, NSRect frame) {
     NSImageView *v = [[NSImageView alloc] initWithFrame:frame];
@@ -69,6 +220,19 @@ void menu_install(void) {
         NSMenuItem *top = [[NSMenuItem alloc] initWithTitle:@"Sound" action:nil keyEquivalent:@""];
         top.submenu = menu;
         NSInteger at = NSApp.windowsMenu ? [bar indexOfItemWithSubmenu:NSApp.windowsMenu] : -1;
-        [bar insertItem:top atIndex:at < 0 ? bar.numberOfItems : at];
+        if (at < 0)
+            at = bar.numberOfItems;
+        [bar insertItem:top atIndex:at++];
+
+        if (scores_config.on) {
+            scores = [[LoonyHighScores alloc] init];
+            NSMenu *list = [[NSMenu alloc] initWithTitle:@"High Scores"];
+            list.delegate = scores;
+            list.autoenablesItems = NO;
+            [list addItem:disabled_item(@"No high scores yet")]; /* until it opens */
+            NSMenuItem *entry = [[NSMenuItem alloc] initWithTitle:@"High Scores" action:nil keyEquivalent:@""];
+            entry.submenu = list;
+            [bar insertItem:entry atIndex:at];
+        }
     }
 }

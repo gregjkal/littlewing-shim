@@ -24,6 +24,7 @@
 #include "libc.h"
 #include "loader.h"
 #include "memmgr.h"
+#include "menu.h"
 #include "misc.h"
 #include "patch.h"
 #include "picker.h"
@@ -144,6 +145,10 @@ static uint32_t macho_data_symbol(const char *name) {
     return a;
 }
 
+/* How long the app waits at launch for macOS to say a recording was opened
+   to launch it. */
+#define LAUNCH_EVENTS_MS 150
+
 /* Set when the picker chose the game: its own quit goes back to the picker. */
 static bool return_to_picker;
 
@@ -194,6 +199,43 @@ static void restart_watching(void) {
     restart_self("watch: restarting the replay");
 }
 
+/* A recording opened from Finder or dropped on the window (display.h):
+   the program restarts to watch it (watch.h) at 0:00, in a save folder of
+   its own, whatever is playing. A game's preferences are saved first, and
+   its recording ends where it is (restart_self). */
+static void open_replay(const char *path) {
+    size_t n = strlen(path);
+    char full[PATH_MAX];
+    if (n < 9 || strcmp(path + n - 9, ".lwreplay") != 0 || clip_on()) {
+        log_msg("not opening %s: not a replay", path);
+        return;
+    }
+    char why[512];
+    if (!realpath(path, full)) {
+        log_msg("can't open %s: %s", path, strerror(errno));
+        return;
+    }
+    if (!replay_check(full, why, sizeof why)) { /* said here: the game goes on */
+        const char *video = getenv("SDL_VIDEO_DRIVER");
+        char msg[PATH_MAX + 600];
+        log_msg("can't open %s: %s", full, why);
+        snprintf(msg, sizeof msg, "LittleWing can't play %s: %s.", strrchr(full, '/') + 1, why);
+        if (!video || strcmp(video, "dummy") != 0)
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "LittleWing", msg, NULL);
+        return;
+    }
+    if (!replay_playing())
+        cf_save_prefs();
+    setenv("LOONY_REPLAY", full, 1);
+    setenv("LOONY_WATCH", "1", 1);
+    static const char *const clear[] = {"LOONY_GAME", "LOONY_DATA_DIR", "LOONY_RECORD",
+                                        "LOONY_CLIP", "LOONY_REPLAY_LICENSE", "LOONY_WATCH_FROM",
+                                        "LOONY_WATCH_SPEED", "LOONY_WATCH_PAUSED", "LOONY_WATCH_IN"};
+    for (size_t i = 0; i < sizeof clear / sizeof clear[0]; i++)
+        unsetenv(clear[i]);
+    restart_self("watch: opening a replay");
+}
+
 int main(int argc, char **argv) {
     log_to_file_if_app(argv[0]);
     char err[256];
@@ -203,6 +245,12 @@ int main(int argc, char **argv) {
         return startup_error("%s", err);
     if (!watch_open(err, sizeof err))
         return startup_error("%s", err);
+    display_set_open(open_replay);
+    /* Launched by opening a recording in Finder: watch it, before the
+       picker shows or a game starts recording (which deletes old ones). */
+    const char *replaying = getenv("LOONY_REPLAY");
+    if (strstr(argv[0], ".app/Contents/MacOS/") && (!replaying || !*replaying))
+        display_take_launch_events(LAUNCH_EVENTS_MS);
     files_move_old_data_root(); /* before the picker reads its file there */
     int64_t volume;
     if (settings_get_int(SETTINGS_VOLUME, &volume)) /* before the Sound menu shows it */
@@ -324,6 +372,9 @@ int main(int argc, char **argv) {
         }
         if (rec_dir[0])
             replay_record_into(rec_dir, game->id, scores, nscores);
+        const char *replay = getenv("LOONY_REPLAY");
+        if (rec_dir[0] && (!replay || !*replay) && !clip_on())
+            menu_add_high_scores(game->id, game->title, rec_dir);
     }
     if (!replay_start(game->id, buf, len, have_data ? data_dir : NULL, err, sizeof err))
         return startup_error("%s", err);

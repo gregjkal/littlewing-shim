@@ -21,6 +21,7 @@ static struct {
     unsigned frames;
     const char *screenshot;
     display_input input;
+    void (*open)(const char *path);
     bool no_vsync;
     bool cursor_hidden;
     bool raise; /* on opening */
@@ -260,6 +261,25 @@ unsigned display_frames(void) { return D.frames; }
 
 void display_set_input(const display_input *in) { D.input = *in; }
 
+void display_set_open(void (*fn)(const char *path)) { D.open = fn; }
+
+void display_take_launch_events(uint32_t wait_ms) {
+    const char *driver = getenv("SDL_VIDEO_DRIVER");
+    if ((driver && strcmp(driver, "cocoa") != 0) || !SDL_Init(SDL_INIT_VIDEO))
+        return;
+    /* Only the drops: the rest stay queued for display_poll. */
+    uint64_t until = SDL_GetTicks() + wait_ms;
+    do {
+        SDL_Event e;
+        SDL_PumpEvents();
+        while (SDL_PeepEvents(&e, 1, SDL_GETEVENT, SDL_EVENT_DROP_FILE, SDL_EVENT_DROP_POSITION) > 0)
+            if (e.type == SDL_EVENT_DROP_FILE && D.open && e.drop.data)
+                D.open(e.drop.data);
+        if (SDL_GetTicks() < until)
+            SDL_Delay(5);
+    } while (SDL_GetTicks() < until);
+}
+
 void display_set_vsync(bool on) {
     D.no_vsync = !on;
     if (D.renderer)
@@ -345,6 +365,10 @@ void display_poll(void) {
             D.input.mouse((int)SDL_floorf(x), (int)SDL_floorf(y), e.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
             break;
         }
+        case SDL_EVENT_DROP_FILE:
+            if (D.open && e.drop.data)
+                D.open(e.drop.data);
+            break;
         default:
             break;
         }
