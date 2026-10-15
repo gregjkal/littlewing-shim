@@ -9,9 +9,10 @@ set -eu
 [ $# -eq 1 ] || { echo "usage: tools/sparkle.sh <dir>" >&2; exit 1; }
 version=2.10.0
 sha256=c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c
-# <dir> is replaced, so it must be new, empty, or an earlier download.
-if [ -d "$1" ] && [ -n "$(ls -A "$1")" ] && [ ! -d "$1/Sparkle.framework" ]; then
-    echo "sparkle.sh: $1 has other files in it; name a new folder" >&2
+# <dir> is replaced, so it must be new, empty, or one this script made (it
+# leaves .littlewing-sparkle in it).
+if [ -e "$1" ] && { [ ! -d "$1" ] || { [ -n "$(ls -A "$1")" ] && [ ! -f "$1/.littlewing-sparkle" ]; }; }; then
+    echo "sparkle.sh: $1 isn't a new or empty folder, or one sparkle.sh made; name a new folder" >&2
     exit 1
 fi
 rm -rf "$1"
@@ -24,4 +25,5 @@ echo "$sha256  $archive" | shasum -a 256 -c - >/dev/null || {
 }
 tar -xf "$archive" -C "$1"
 rm "$archive"
+touch "$1/.littlewing-sparkle"
 echo "downloaded Sparkle $version to $1"

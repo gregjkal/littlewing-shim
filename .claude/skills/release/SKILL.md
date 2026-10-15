@@ -13,6 +13,7 @@ description: Cut a LittleWing release on GitHub with tools/release.sh. Use when 
    ```sh
    LOONY_SIGN_ID="<identity>" tools/release.sh <x.y.z> > <log> 2>&1; echo "exit=$?" >> <log>
    ```
+   Reading the Sparkle key, it can stop at a macOS dialog asking to let `generate_keys` or `generate_appcast` use the keychain. When the log ends at a line saying so, tell the user to click Always Allow.
 
 4. **Check.** The release is good when all of these hold:
    - the log ends with `exit=0`, and its test line says `0 failed`;

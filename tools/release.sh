@@ -37,6 +37,7 @@ fi
 unknown=$(grep -o '@[A-Z]*@' tools/release_notes.md | grep -vxE '@(VERSION|MACOS|UNICORN|SDL|SPARKLE)@' || true)
 [ -z "$unknown" ] || die "tools/release_notes.md has placeholders release.sh doesn't fill: $unknown"
 [ -s tools/sparkle_public_key.txt ] || die "tools/sparkle_public_key.txt is missing: make the Sparkle signing key (README: Releases)"
+gh auth status >/dev/null 2>&1 || die "gh isn't logged in to GitHub (gh auth login)"
 
 build=build-dist
 macos=14.0  # the oldest macOS a release runs on
@@ -44,6 +45,7 @@ rm -rf "$build"
 MACOSX_DEPLOYMENT_TARGET=$macos tools/build_deps.sh "$build/deps"
 sparkle=$PWD/$build/deps/sparkle
 key_account=littlewing-shim  # the keychain item holding the Sparkle signing key
+echo "reading the Sparkle key: if macOS asks to allow generate_keys keychain access, click Always Allow"
 key=$("$sparkle/bin/generate_keys" --account "$key_account" -p) || die "the keychain has no Sparkle key for $key_account (README: Releases)"
 [ "$key" = "$(tr -d ' \n' <tools/sparkle_public_key.txt)" ] ||
     die "the keychain's Sparkle key isn't the one in tools/sparkle_public_key.txt, so apps would refuse the update"
@@ -73,18 +75,20 @@ updates="$build/updates"
 mkdir "$updates"
 cp "$zip" "$updates/"
 printf '%s\n' "$generated" >"$updates/LittleWing-$version.md"
+echo "signing the update feed: if macOS asks to allow generate_appcast keychain access, click Always Allow"
 "$sparkle/bin/generate_appcast" --account "$key_account" --maximum-deltas 0 --embed-release-notes \
     --download-url-prefix "https://github.com/gregjkal/littlewing-shim/releases/download/$tag/" \
     --link https://github.com/gregjkal/littlewing-shim -o "$updates/appcast.xml" "$updates"
 grep -q "sparkle:edSignature" "$updates/appcast.xml" || die "$updates/appcast.xml has no signature"
 
-notes=$(mktemp)
+notes="$build/notes.md"
 sed -e "s/@VERSION@/$version/g" -e "s/@MACOS@/$macos/g" -e "s/@UNICORN@/$unicorn/g" -e "s/@SDL@/$sdl/g" \
     -e "s/@SPARKLE@/$sparkle_version/g" tools/release_notes.md >"$notes"
 printf '\n%s\n' "$generated" >>"$notes"
 git tag -a "$tag" -m "LittleWing $version"
 git push origin "$tag"
+# The tag is pushed, so a rerun would stop at it: say how to finish instead.
 gh release create "$tag" "$zip" "$updates/appcast.xml" --verify-tag --draft --title "LittleWing $version" \
-    --notes-file "$notes"
-rm -f "$notes"
+    --notes-file "$notes" ||
+    die "$tag is pushed but its release wasn't made; finish with: gh release create $tag $zip $updates/appcast.xml --verify-tag --draft --title 'LittleWing $version' --notes-file $notes"
 echo "made a draft release of $tag: check it on GitHub, then publish it"
