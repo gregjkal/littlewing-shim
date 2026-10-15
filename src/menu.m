@@ -13,6 +13,7 @@
 #include "replay.h"
 #include "settings.h"
 #include "sound.h"
+#include "util.h"
 
 @interface LoonySoundMenu : NSObject <NSMenuDelegate>
 @property(nonatomic) int saved; /* the volume as last saved, or as loaded */
@@ -39,11 +40,20 @@ static struct {
     char game_id[64], title[64], rec_dir[PATH_MAX];
 } scores_config;
 
-void menu_add_high_scores(const char *game_id, const char *title, const char *rec_dir) {
+static void set_scores_config(const char *game_id, const char *title, const char *rec_dir) {
     scores_config.on = true;
     snprintf(scores_config.game_id, sizeof scores_config.game_id, "%s", game_id);
     snprintf(scores_config.title, sizeof scores_config.title, "%s", title);
     snprintf(scores_config.rec_dir, sizeof scores_config.rec_dir, "%s", rec_dir);
+}
+
+static void add_scores_menu(void);
+
+void menu_add_high_scores(const char *game_id, const char *title, const char *rec_dir) {
+    set_scores_config(game_id, title, rec_dir);
+    @autoreleasepool {
+        add_scores_menu(); /* the picker has already made the menu bar */
+    }
 }
 
 /* The High Scores menu, rebuilt each time it opens, so a score set a
@@ -178,6 +188,23 @@ static NSMenuItem *disabled_item(NSString *title) {
 @end
 
 static LoonyHighScores *scores; /* the High Scores menu's delegate and its items' target */
+static NSMenuItem *sound_item;  /* the Sound menu's title in the bar, once installed */
+
+/* The High Scores menu, after the Sound menu. */
+static void add_scores_menu(void) {
+    NSMenu *bar = NSApp.mainMenu;
+    if (scores || !sound_item || !bar)
+        return;
+    scores = [[LoonyHighScores alloc] init];
+    NSMenu *list = [[NSMenu alloc] initWithTitle:@"High Scores"];
+    list.delegate = scores;
+    list.autoenablesItems = NO;
+    [list addItem:disabled_item(@"No high scores yet")]; /* until it opens */
+    NSMenuItem *entry = [[NSMenuItem alloc] initWithTitle:@"High Scores" action:nil keyEquivalent:@""];
+    entry.submenu = list;
+    [bar insertItem:entry atIndex:[bar indexOfItem:sound_item] + 1];
+    log_msg("menu: High Scores added");
+}
 
 static NSImageView *icon(NSString *symbol, NSRect frame) {
     NSImageView *v = [[NSImageView alloc] initWithFrame:frame];
@@ -219,20 +246,12 @@ void menu_install(void) {
 
         NSMenuItem *top = [[NSMenuItem alloc] initWithTitle:@"Sound" action:nil keyEquivalent:@""];
         top.submenu = menu;
+        sound_item = top;
         NSInteger at = NSApp.windowsMenu ? [bar indexOfItemWithSubmenu:NSApp.windowsMenu] : -1;
         if (at < 0)
             at = bar.numberOfItems;
-        [bar insertItem:top atIndex:at++];
-
-        if (scores_config.on) {
-            scores = [[LoonyHighScores alloc] init];
-            NSMenu *list = [[NSMenu alloc] initWithTitle:@"High Scores"];
-            list.delegate = scores;
-            list.autoenablesItems = NO;
-            [list addItem:disabled_item(@"No high scores yet")]; /* until it opens */
-            NSMenuItem *entry = [[NSMenuItem alloc] initWithTitle:@"High Scores" action:nil keyEquivalent:@""];
-            entry.submenu = list;
-            [bar insertItem:entry atIndex:at];
-        }
+        [bar insertItem:top atIndex:at];
+        if (scores_config.on)
+            add_scores_menu();
     }
 }

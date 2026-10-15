@@ -7,8 +7,9 @@
    other than Cocoa (the tests' dummy), or when called again. */
 void menu_install(void);
 
-/* Before menu_install: it also adds a High Scores menu after the Sound
-   menu. It lists the game's high scores as the game holds them when the
+/* Adds a High Scores menu after the Sound menu: at once if menu_install
+   has run (the picker's window made the menu bar), else when it does. It
+   lists the game's high scores as the game holds them when the
    menu opens (game_high_scores, from cf's live preferences), best first.
    Each has a submenu to share the replay of the game that set it, the
    recording kept in rec_dir (replay_find_recording): Share Replay... makes
