@@ -13,10 +13,12 @@ description: Cut a LittleWing release on GitHub with tools/release.sh. Use when 
    ```sh
    LOONY_SIGN_ID="<identity>" tools/release.sh <x.y.z> > <log> 2>&1; echo "exit=$?" >> <log>
    ```
+   Reading the Sparkle key, it can stop at a macOS dialog asking to let `generate_keys` or `generate_appcast` use the keychain. When the log ends at a line saying so, tell the user to click Always Allow.
 
 4. **Check.** The release is good when all of these hold:
    - the log ends with `exit=0`, and its test line says `0 failed`;
    - `git ls-remote --tags origin 'refs/tags/v<x.y.z>^{}'` is the `origin/main` commit from step 1. Other sessions switch branches in this checkout, and the script tags `HEAD`;
-   - `gh release view v<x.y.z>` is a draft with `LittleWing-<x.y.z>.zip` attached, and its notes open with the template.
+   - `gh release view v<x.y.z>` is a draft with `LittleWing-<x.y.z>.zip` and `appcast.xml` attached, and its notes open with the template;
+   - `build-dist/updates/appcast.xml` offers version `<x.y.z>` at `releases/download/v<x.y.z>/LittleWing-<x.y.z>.zip`, with a `sparkle:edSignature`.
 
-5. **Hand off.** Give the user the draft and the command to publish it after they've looked: `gh release edit v<x.y.z> --draft=false --latest`.
+5. **Hand off.** Give the user the draft and the command to publish it after they've looked: `gh release edit v<x.y.z> --draft=false --latest`. Publishing is what makes released apps offer the update, since they read the latest release's `appcast.xml`.

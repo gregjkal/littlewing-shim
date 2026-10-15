@@ -11,13 +11,23 @@
 # needs (a release builds them all for macOS 14; see tools/release.sh).
 # Resources/Licenses holds this project's license and the bundled libraries',
 # and Resources/hd-art the HD art (src/hd.h).
-#   [LOONY_SIGN_ID=<identity>] [LOONY_VERSION=<x.y.z>] tools/make_app.sh <loony binary> <output folder>
+# With LOONY_SPARKLE (a folder from tools/sparkle.sh), as a release has, the
+# app updates itself: it bundles Sparkle.framework, and its Info.plist names
+# the update feed (the latest release's appcast.xml), the public key that
+# checks the updates' signatures (tools/sparkle_public_key.txt), and turns on
+# the daily check (src/menu.h).
+#   [LOONY_SIGN_ID=<identity>] [LOONY_VERSION=<x.y.z>] [LOONY_SPARKLE=<dir>] tools/make_app.sh <loony binary> <output folder>
 set -eu
 bin=$1
 out=$2
 version=${LOONY_VERSION:-0.0.0}
+sparkle=${LOONY_SPARKLE:-}
 here=$(cd "$(dirname "$0")" && pwd)
 app="$out/LittleWing.app"
+if [ -n "$sparkle" ]; then
+    [ -d "$sparkle/Sparkle.framework" ] || { echo "make_app.sh: $sparkle has no Sparkle.framework (see tools/sparkle.sh)" >&2; exit 1; }
+    [ -s "$here/sparkle_public_key.txt" ] || { echo "make_app.sh: tools/sparkle_public_key.txt is missing (README: Releases)" >&2; exit 1; }
+fi
 # A sanitizer build (Debug) needs the compiler's runtime, which is found
 # through a search path like the other libraries but isn't for bundling.
 if otool -L "$bin" | grep -q libclang_rt; then
@@ -76,12 +86,25 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+# The updater: Sparkle's helpers that a sandboxed app needs (XPCServices)
+# are left out, as this one isn't.
+if [ -n "$sparkle" ]; then
+    fw="$app/Contents/Frameworks/Sparkle.framework"
+    ditto "$sparkle/Sparkle.framework" "$fw"
+    rm -rf "$fw/XPCServices" "$fw"/Versions/*/XPCServices
+    plutil -insert SUFeedURL -string "https://github.com/gregjkal/littlewing-shim/releases/latest/download/appcast.xml" "$app/Contents/Info.plist"
+    plutil -insert SUPublicEDKey -string "$(tr -d ' \n' <"$here/sparkle_public_key.txt")" "$app/Contents/Info.plist"
+    plutil -insert SUEnableAutomaticChecks -bool YES "$app/Contents/Info.plist"
+fi
 # Copy each library the binary links from outside the system (Homebrew's, or
 # tools/build_deps.sh's, found through the binary's search paths) and point
 # the binary at the copy, with the license files of the package it came from.
 licenses="$app/Contents/Resources/Licenses"
 mkdir -p "$licenses"
 cp "$here/../LICENSE" "$licenses/littlewing-shim-LICENSE"
+if [ -n "$sparkle" ]; then
+    cp "$sparkle/LICENSE" "$licenses/Sparkle-LICENSE"
+fi
 rpaths=$(otool -l "$bin" | awk '/cmd LC_RPATH/ {getline; getline; print $2}')
 for dep in $(otool -L "$bin" | tail -n +2 | awk '{print $1}'); do  # paths without spaces
     case "$dep" in
@@ -147,6 +170,12 @@ if [ "$sign" = - ]; then set -- ; else set -- --timestamp; fi
 for lib in "$app"/Contents/Frameworks/*.dylib; do
     codesign --force --sign "$sign" "$@" --options runtime "$lib"
 done
+# Sparkle's helpers inside out, then the framework (Sparkle's documented order).
+if [ -n "$sparkle" ]; then
+    codesign --force --sign "$sign" "$@" --options runtime "$fw/Versions/B/Autoupdate"
+    codesign --force --sign "$sign" "$@" --options runtime "$fw/Versions/B/Updater.app"
+    codesign --force --sign "$sign" "$@" --options runtime "$fw"
+fi
 codesign --force --sign "$sign" "$@" --options runtime --entitlements "$here/loony.entitlements" "$app"
 codesign --verify --deep --strict "$app"
 echo "built $app (for macOS $min and later)"

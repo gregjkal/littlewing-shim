@@ -3,7 +3,8 @@
 # SDL3, from their release sources for macOS MACOSX_DEPLOYMENT_TARGET and
 # later. Homebrew's copies need the macOS they were built for, so a release
 # uses these. Each is installed in <prefix>/<name>, with its license files;
-# the release build finds them through PKG_CONFIG_PATH.
+# the release build finds them through PKG_CONFIG_PATH. It also downloads
+# Sparkle, the updater, to <prefix>/sparkle (tools/sparkle.sh).
 #   MACOSX_DEPLOYMENT_TARGET=<x.y> tools/build_deps.sh <prefix>
 set -eu
 [ $# -eq 1 ] || { echo "usage: MACOSX_DEPLOYMENT_TARGET=<x.y> tools/build_deps.sh <prefix>" >&2; exit 1; }
@@ -11,7 +12,7 @@ set -eu
 mkdir -p "$1"
 prefix=$(cd "$1" && pwd)
 src="$prefix/src"
-rm -rf "$src" "$prefix/unicorn" "$prefix/sdl3"
+rm -rf "$src" "$prefix/unicorn" "$prefix/sdl3" "$prefix/sparkle"
 mkdir -p "$src"
 
 # fetch <url> <sha256> <file>: downloads and checks one source archive.
@@ -40,4 +41,6 @@ cmake --build "$src/build-sdl3" -j "$(sysctl -n hw.ncpu)"
 cmake --install "$src/build-sdl3"
 cp "$src/SDL3-3.4.16/LICENSE.txt" "$prefix/sdl3/"
 
-echo "built Unicorn 2.1.4 and SDL 3.4.16 for macOS $MACOSX_DEPLOYMENT_TARGET in $prefix"
+"$(dirname "$0")/sparkle.sh" "$prefix/sparkle"
+
+echo "built Unicorn 2.1.4 and SDL 3.4.16 for macOS $MACOSX_DEPLOYMENT_TARGET, with Sparkle, in $prefix"
