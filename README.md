@@ -218,6 +218,21 @@ LOONY_AUTO_ALERTS=1 ./build/loony     # answer alerts with their default button,
 LOONY_DATA_DIR=/tmp/fresh ./build/loony   # use another folder for preferences and saved files
 ```
 
+To read a game's own code, `tools/disasm.py` disassembles its PowerPC
+functions by name. The Classic games keep a traceback table after each
+function with its C++ name and length, so it can list them and label calls.
+It needs Capstone, a development dependency only (the app doesn't use it):
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r tools/requirements-dev.txt
+.venv/bin/python tools/disasm.py "/Applications/Loony Labyrinth/LOONY LABYRINTH 3.0.1" --list Event_
+.venv/bin/python tools/disasm.py "/Applications/Loony Labyrinth/LOONY LABYRINTH 3.0.1" Event_StartGame
+```
+
+Offsets are code offsets, as the shim prints them (`code+0x154f0`); an
+offset in place of a name shows the function holding it. Mach-O games
+(MONSTER FAIR) aren't read yet.
+
 At exit (and before going back to the picker) the log has a line on what
 showing frames cost: `display: <n> presents, <bytes> bytes uploaded per present
 on average; upload <ms> average, <ms> max; upload and present <ms> average,
