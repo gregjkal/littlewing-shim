@@ -274,13 +274,13 @@ static bool table_int(const char *key, int64_t *out) {
 TEST(game_high_scores_read_the_table) {
     game_high_score hs[GAME_HIGH_SCORES];
     CHECK_EQ(game_high_scores(table_str, table_int, hs), 3);
-    CHECK_EQ(hs[0].score, 43074596);
+    CHECK_EQ(hs[0].score, 430745960); /* the game saves scores over 10 */
     CHECK_STR(hs[0].name, "GREG");
     CHECK_EQ(hs[0].when, local_time(2026, 10, 14, 15, 20, 0));
-    CHECK_EQ(hs[1].score, 23757430);
+    CHECK_EQ(hs[1].score, 237574300);
     CHECK_STR(hs[1].name, "");
     CHECK_EQ(hs[1].when, local_time(2026, 10, 7, 10, 47, 40));
-    CHECK_EQ(hs[2].score, 4000);
+    CHECK_EQ(hs[2].score, 40000);
     CHECK_STR(hs[2].name, "MIO");
     CHECK_EQ(hs[2].when, 0);
     time_t t;

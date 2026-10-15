@@ -60,8 +60,9 @@ bool game_parse_score_time(const char *s, time_t *out);
    the table the game holds now). Writes the entries that have a score to
    out and returns how many. */
 #define GAME_HIGH_SCORES 4
+#define GAME_SCORE_SCALE 10 /* the game saves a score over 10 (its last digit is always 0) */
 typedef struct {
-    int64_t score;
+    int64_t score; /* as the game shows it */
     char name[32]; /* Mac Roman */
     time_t when;   /* 0 when the score has no stamp (one the game starts with) */
 } game_high_score;

@@ -68,6 +68,7 @@ int game_high_scores(const char *(*get_str)(const char *key),
         snprintf(key, sizeof key, "highscore %d", i + 1);
         if (!get_int(key, &h->score))
             continue;
+        h->score *= GAME_SCORE_SCALE;
         snprintf(key, sizeof key, "highscore name %d", i + 1);
         const char *name = get_str(key);
         snprintf(h->name, sizeof h->name, "%s", name ? name : "");

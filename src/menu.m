@@ -67,7 +67,7 @@ static NSString *mac_roman(const char *s) {
     return t ?: @"";
 }
 
-/* "1   GREG        43,074,596": the name at a tab, the score at a right tab. */
+/* "1   GREG       430,745,960": the name at a tab, the score at a right tab. */
 static NSAttributedString *score_row(int rank, NSString *name, NSString *score) {
     NSMutableParagraphStyle *p = [[NSMutableParagraphStyle alloc] init];
     p.tabStops = @[

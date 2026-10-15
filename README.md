@@ -422,7 +422,7 @@ opens, so a score set a minute ago is there. Each score has a submenu with
 the date it was set and two items. **Share Replay…** opens the share sheet
 (AirDrop, Mail, Messages and so on) with the replay of the game that set
 the score. **Save Replay…** saves the same file wherever you choose. It is
-named like `Loony Labyrinth 43,074,596 GREG.lwreplay`; an hour of play comes
+named like `Loony Labyrinth 449,655,220 GREG.lwreplay`; an hour of play comes
 to about 400 KB. The replay is the recording kept for that score (see
 above), found by the score's date. A score set before the app recorded
 games has none, and neither does a score without a date, and its submenu
