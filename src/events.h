@@ -124,7 +124,9 @@ bool events_quit_requested(void);
 
 /* Input from the host (the window, a script): logged on a recording,
    dropped on a replay, whose input comes from its file (a quit stops the
-   replay), then passed to events_post_key and the others. */
+   replay), then passed to events_post_key and the others. On a replay,
+   keys go to the events_set_replay_key function instead, if there is one. */
+void events_set_replay_key(void (*fn)(int scancode, bool down, bool repeat));
 void events_host_key(int scancode, bool down, bool repeat);
 void events_host_mouse(int x, int y, bool down);
 void events_host_text(const char *utf8);

@@ -390,6 +390,36 @@ TEST(replay_keeps_the_games_whose_high_scores_are_in_the_table) {
     CHECK(exists_in(rec_dir, old[2]));
 }
 
+/* An older game with clips saved from watching it (watch.h) is kept, like a
+   marked one; its list of clips is never deleted. */
+TEST(replay_keeps_the_games_with_clips_from_watching) {
+    BEGIN_TEST();
+    char rec_dir[1300];
+    snprintf(rec_dir, sizeof rec_dir, "%s/recordings", dir);
+    CHECK(make_dirs(rec_dir));
+    static const char *const old[] = {
+        "loony-labyrinth-2026-01-01-120000.lwreplay",
+        "loony-labyrinth-2026-01-01-120000.clips",
+        "loony-labyrinth-2026-01-02-120000.lwreplay",
+        "loony-labyrinth-2026-01-03-120000-marked.lwreplay",
+        "loony-labyrinth-2026-01-03-120000-marked.clips",
+        "loony-labyrinth-2026-01-04-120000.clips", /* its game is gone */
+        "loony-labyrinth-2026-01-05-120000.lwreplay",
+        "loony-labyrinth-2026-01-06-120000.lwreplay",
+    };
+    for (size_t i = 0; i < sizeof old / sizeof old[0]; i++)
+        touch(rec_dir, old[i]);
+    unsetenv("LOONY_RECORD");
+    unsetenv("LOONY_FIXED_CLOCK");
+    unsetenv("LOONY_REPLAY");
+    replay_reset();
+    replay_record_into(rec_dir, "loony-labyrinth", NULL, 0);
+    for (size_t i = 0; i < sizeof old / sizeof old[0]; i++)
+        if (i != 2)
+            CHECK(exists_in(rec_dir, old[i]));
+    CHECK(!exists_in(rec_dir, old[2]));
+}
+
 /* LOONY_RECORD=0 turns it off; LOONY_RECORD names the file instead; a
    fixed clock or a replay never records. */
 TEST(replay_records_every_game_unless_told_otherwise) {

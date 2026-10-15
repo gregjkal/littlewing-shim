@@ -35,6 +35,7 @@
 #include "sound.h"
 #include "trap.h"
 #include "util.h"
+#include "watch.h"
 
 /* Launched as the app (from Finder or `open`), there is no terminal: the
    log goes to ~/Library/Logs/littlewing-shim/loony.log (the one before it is kept
@@ -87,8 +88,8 @@ static void save_prefs_at_exit(void) {
 }
 
 /* The event pump's present: when a frame check is due (a recording or a
-   replay), the screen's hash goes to replay_frame first. A clip takes the
-   frame in place of the window. */
+   replay), the screen's hash goes to replay_frame first. A clip, or a
+   watched replay, takes the frame in place of the window. */
 static void present_frame(void) {
     bool dirty = qd_take_dirty();
     if (dirty && replay_frame_due()) {
@@ -102,6 +103,8 @@ static void present_frame(void) {
     }
     if (clip_on())
         clip_present(dirty);
+    else if (watch_on())
+        watch_present(dirty);
     else if (dirty)
         display_present();
 }
@@ -144,18 +147,14 @@ static uint32_t macho_data_symbol(const char *name) {
 /* Set when the picker chose the game: its own quit goes back to the picker. */
 static bool return_to_picker;
 
-/* The game ended by itself (ExitToShell, or its main returned). After a
-   pick, and unless the host asked to quit or something failed, the
-   preferences are saved and the process restarts itself to show the picker
-   again: the emulator's state can't be reset in place. */
-static void back_to_picker(void) {
-    if (!return_to_picker || events_quit_requested() || util_failed())
-        return;
-    cf_save_prefs();
+/* Restarts this program in place, in the same window mode and log, for
+   why (logged): the emulator's state can't be reset in place. Returns only
+   if it can't. */
+static void restart_self(const char *why) {
     char self[PATH_MAX];
     uint32_t size = sizeof self;
     if (_NSGetExecutablePath(self, &size) != 0) {
-        log_msg("can't find this program to go back to the picker");
+        log_msg("can't find this program to restart it");
         return;
     }
     setenv("LOONY_FULLSCREEN", display_fullscreen() ? "1" : "0", 1);
@@ -163,12 +162,36 @@ static void back_to_picker(void) {
         setenv("LOONY_LOG_INHERITED", "1", 1);
     display_log_stats(); /* exec skips the atexit handlers */
     replay_finish();
-    unsetenv("LOONY_RECORD"); /* the next game doesn't record over this one */
-    unsetenv("LOONY_REPLAY");
-    log_msg("back to the picker");
+    log_msg("%s", why);
     fflush(stderr);
     execv(self, (char *const[]){self, NULL});
-    log_msg("can't restart for the picker: %s", strerror(errno));
+    log_msg("can't restart: %s", strerror(errno));
+}
+
+/* The game ended by itself (ExitToShell, or its main returned). A watched
+   replay holds its last frame first. After a pick, and unless the host
+   asked to quit or something failed, the preferences are saved and the
+   process restarts itself to show the picker again. */
+static void back_to_picker(void) {
+    watch_hold();
+    if (!return_to_picker || events_quit_requested() || util_failed())
+        return;
+    cf_save_prefs();
+    unsetenv("LOONY_RECORD"); /* the next game doesn't record over this one */
+    unsetenv("LOONY_REPLAY");
+    unsetenv("LOONY_WATCH");
+    restart_self("back to the picker");
+}
+
+/* Going back in a watched replay: the replay starts again in its save
+   folder (always LOONY_DATA_DIR on a replay), without the preferences it
+   wrote there, which it refuses to start over. */
+static void restart_watching(void) {
+    char prefs[PATH_MAX + 16];
+    snprintf(prefs, sizeof prefs, "%s/prefs.plist", getenv("LOONY_DATA_DIR"));
+    if (unlink(prefs) != 0 && errno != ENOENT)
+        log_msg("can't delete %s: %s", prefs, strerror(errno));
+    restart_self("watch: restarting the replay");
 }
 
 int main(int argc, char **argv) {
@@ -177,6 +200,8 @@ int main(int argc, char **argv) {
     if (!replay_open(err, sizeof err)) /* sets the game, save folder and alerts it needs */
         return startup_error("%s", err);
     if (!clip_open(err, sizeof err))
+        return startup_error("%s", err);
+    if (!watch_open(err, sizeof err))
         return startup_error("%s", err);
     files_move_old_data_root(); /* before the picker reads its file there */
     int64_t volume;
@@ -330,6 +355,10 @@ int main(int argc, char **argv) {
     display_set_input(&input);
     display_set_vsync(!misc_fixed_clock() && !replay_playing());
     sound_start_output();
+    if (watch_on()) {
+        events_set_replay_key(watch_key);
+        watch_start(game->title, restart_watching);
+    }
     const char *script = getenv("LOONY_SCRIPT");
     if (script && *script && !script_load(script, err, sizeof err)) {
         fprintf(stderr, "loony: can't load the script %s: %s\n", script, err);

@@ -23,6 +23,10 @@
    extension: <replay>-clip-1.mp4 and so on next to the replay, or
    LOONY_CLIP_OUT-1.mp4 when it names one.
 
+   LOONY_CLIP=clips makes a clip of each span in the replay's list of clips
+   (clip_list_path; watching a replay saves them there, watch.h), named as
+   for marks. Spans that overlap or touch share one clip.
+
    The picture is the window's: in HD mode (hd.h) the HD frame, at 2x unless
    LOONY_HD_SCALE says otherwise, scaled down to CLIP_HD_WIDTH pixels wide;
    else the 800x600 screen. LOONY_CLIP_WIDTH sets the width instead (the
@@ -60,6 +64,24 @@ typedef struct {
 /* Parses a span "<start>-<end>" into ticks. False unless start < end. */
 bool clip_parse_span(const char *s, uint32_t *start, uint32_t *end);
 
+/* ticks as m:ss (h:mm:ss past an hour), with hundredths when not whole, as
+   clip_parse_span reads them back. Returns buf. */
+const char *clip_format_time(uint32_t ticks, char *buf, size_t cap);
+
+/* The list of clips beside the replay: its path with .clips in place of
+   .lwreplay (or after it, for another name). False if that is too long. */
+bool clip_list_path(const char *replay, char *out, size_t cap);
+
+/* Parses a list of clips: a span a line, as clip_parse_span takes it, with
+   spaces around it, blank lines and lines starting with # ignored. *spans
+   (to free) gets them in the list's order, 0 and 0 for their marks. False,
+   with err naming the line, if one isn't a span. */
+bool clip_parse_list(const char *text, clip_span **spans, size_t *n, char *err, size_t errlen);
+
+/* Sorts n spans by start and merges those that overlap or touch, in place:
+   returns how many there are then. */
+size_t clip_merge_spans(clip_span *spans, size_t n);
+
 /* The clips of n marks at these ticks, in order: from before ticks before
    each (but not before 0) to after ticks after it, merged as LOONY_CLIP=marks
    merges them. before + after must be above 0. out has room for n; returns
@@ -77,7 +99,8 @@ int clip_default_kbps(int w, int h);
    False, with err, if they're wrong, or set without a replay, or if a file
    to write is the replay itself or in a folder that can't be written (found
    now rather than after the seek), or if LOONY_CLIP=marks and the replay
-   has none. */
+   has none, or LOONY_CLIP=clips and its list can't be read, is wrong or is
+   empty. */
 bool clip_open(char *err, size_t errlen);
 
 /* True when a clip is being made: the window shows nothing. */

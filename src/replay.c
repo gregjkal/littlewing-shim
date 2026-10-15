@@ -71,6 +71,8 @@ static struct {
     record next;
     uint32_t *mark_ticks; /* every mark in the file */
     size_t nmark_ticks;
+    void (*pace)(uint64_t clock_us);
+    void (*end)(void);
 } R;
 
 bool replay_recording(void) { return R.mode == RECORDING; }
@@ -106,6 +108,9 @@ _Noreturn void replay_desync(const char *fmt, ...) {
     R.desynced = true;
     exit(REPLAY_DESYNC_STATUS);
 }
+
+void replay_set_pace(void (*fn)(uint64_t clock_us)) { R.pace = fn; }
+void replay_set_end(void (*fn)(void)) { R.end = fn; }
 
 bool replay_desynced(void) { return R.desynced; }
 bool replay_reached_end(void) { return R.reached_end; }
@@ -457,9 +462,16 @@ static bool set_a_high_score(const char *dir, const char *name, size_t id_len,
     return false;
 }
 
-/* Deletes the game's recordings in dir but the newest keep, unless marked or
-   holding a high score. The names start with the date and time, so they
-   sort oldest first. */
+/* Whether the recording name in dir has a list of clips beside it. */
+static bool has_clips(const char *dir, const char *name) {
+    char path[PATH_MAX];
+    snprintf(path, sizeof path, "%s/%.*s.clips", dir, (int)(strlen(name) - strlen(".lwreplay")), name);
+    return access(path, F_OK) == 0;
+}
+
+/* Deletes the game's recordings in dir but the newest keep, unless marked,
+   with clips or holding a high score. The names start with the date and
+   time, so they sort oldest first. */
 static void prune(const char *dir, const char *game_id, size_t keep, const time_t *high_scores,
                   size_t nscores) {
     DIR *d = opendir(dir);
@@ -480,7 +492,7 @@ static void prune(const char *dir, const char *game_id, size_t keep, const time_
     closedir(d);
     qsort(names, n, sizeof *names, by_name);
     for (size_t i = 0; i < n; i++) {
-        if (i + keep < n && !ends_with(names[i], "-marked.lwreplay") &&
+        if (i + keep < n && !ends_with(names[i], "-marked.lwreplay") && !has_clips(dir, names[i]) &&
             !set_a_high_score(dir, names[i], id_len, high_scores, nscores)) {
             char path[PATH_MAX];
             snprintf(path, sizeof path, "%s/%s", dir, names[i]);
@@ -572,6 +584,8 @@ void replay_step(void) {
     if (R.next.kind == REPLAY_END && R.step > R.next.step) {
         R.step--; /* where the recording stopped */
         R.reached_end = true;
+        if (R.end)
+            R.end();
         log_msg("replay: exiting where the recording stopped");
         exit(0);
     }
@@ -591,8 +605,11 @@ uint64_t replay_clock(uint64_t host_us) {
         }
     } else if (R.mode == PLAYING) {
         uint32_t d;
-        if (replay_take(REPLAY_CLOCK, &d))
+        if (replay_take(REPLAY_CLOCK, &d)) {
+            if (R.pace)
+                R.pace((R.clock_ms + d) * 1000);
             R.clock_ms += d;
+        }
     }
     return R.clock_ms * 1000;
 }

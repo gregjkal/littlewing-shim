@@ -18,7 +18,8 @@ bool util_failed(void);
 /* Prints "loony: <msg>" to stderr. */
 void log_msg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
-/* Reads a whole file into a malloc'd buffer. Returns NULL (errno set) on failure. */
+/* Reads a whole file into a malloc'd buffer, followed by a NUL byte (not
+   counted), so a text file is a string. Returns NULL (errno set) on failure. */
 uint8_t *read_file(const char *path, size_t *len_out);
 
 /* Creates a folder and any missing parents, like mkdir -p. False (errno set)
