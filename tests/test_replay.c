@@ -276,9 +276,24 @@ static bool exists_in(const char *folder, const char *name) {
     return access(path, F_OK) == 0;
 }
 
-/* The app records every game by itself: before it starts, the game's
-   recordings beyond the last REPLAY_KEEP_GAMES (this one counted) go, but
-   not a marked one or another game's. The first mark renames the file. */
+/* A recording in folder made by the test (not one of January's), other
+   than except: its name, or "". */
+static void new_recording(const char *folder, const char *except, char *name, size_t cap) {
+    DIR *d = opendir(folder);
+    struct dirent *e;
+    name[0] = '\0';
+    while (d && (e = readdir(d)))
+        if (strncmp(e->d_name, "loony-labyrinth-2026-01", 23) != 0 &&
+            strncmp(e->d_name, "loony-labyrinth-", 16) == 0 && strcmp(e->d_name, except) != 0)
+            snprintf(name, cap, "%s", e->d_name);
+    if (d)
+        closedir(d);
+}
+
+/* The app records each game by itself, into a file of its own: at launch,
+   the game's recordings beyond the last REPLAY_KEEP_GAMES go, but not a
+   marked one or another game's. Nothing is written until a game starts;
+   then its file holds what came before it too, and a mark renames it. */
 TEST(replay_records_every_game_keeping_the_last_three_and_the_marked) {
     BEGIN_TEST();
     char rec_dir[1300];
@@ -302,26 +317,23 @@ TEST(replay_records_every_game_keeping_the_last_three_and_the_marked) {
     replay_record_into(rec_dir, "loony-labyrinth", NULL, 0);
     CHECK(!exists_in(rec_dir, old[0]));
     CHECK(exists_in(rec_dir, old[1])); /* marked */
-    CHECK(!exists_in(rec_dir, old[2]));
-    CHECK(exists_in(rec_dir, old[3]));
-    CHECK(exists_in(rec_dir, old[4]));
-    CHECK(exists_in(rec_dir, old[5])); /* another game's */
-    CHECK(exists_in(rec_dir, old[6]));
+    for (size_t i = 2; i < sizeof old / sizeof old[0]; i++)
+        CHECK(exists_in(rec_dir, old[i])); /* the last three, another game's, not a recording */
 
-    char err[256];
+    char err[256], name[256], first[256];
     CHECK(replay_start("loony-labyrinth", exe, sizeof exe, NULL, err, sizeof err));
     CHECK(replay_recording());
-    DIR *d = opendir(rec_dir);
-    char name[256] = "";
-    struct dirent *e;
-    while (d && (e = readdir(d)))
-        if (strncmp(e->d_name, "loony-labyrinth-2026-01", 23) != 0 &&
-            strncmp(e->d_name, "loony-labyrinth-", 16) == 0)
-            snprintf(name, sizeof name, "%s", e->d_name);
-    if (d)
-        closedir(d);
+    replay_step();
+    CHECK_EQ(replay_mark(), 0); /* no game: nothing to mark */
+    new_recording(rec_dir, "", name, sizeof name);
+    CHECK_STR(name, "");
+
+    replay_step();
+    replay_log(REPLAY_KEY, (uint32_t[3]){40, 1, 0}); /* before the games: in both files */
+    replay_game(true);
+    replay_play(true);
+    new_recording(rec_dir, "", name, sizeof name);
     CHECK(strlen(name) == strlen("loony-labyrinth-2026-10-15-101500.lwreplay"));
-    CHECK(strstr(name, ".lwreplay") != NULL);
     replay_step();
     CHECK_EQ(replay_mark(), 1);
     char marked[300];
@@ -329,14 +341,45 @@ TEST(replay_records_every_game_keeping_the_last_three_and_the_marked) {
     CHECK(!exists_in(rec_dir, name));
     CHECK(exists_in(rec_dir, marked));
     CHECK_EQ(replay_mark(), 2); /* renamed once */
-    replay_finish();
-    CHECK(exists_in(rec_dir, marked));
+    replay_step();
+    replay_play(false);
+    replay_game(false);
+    snprintf(first, sizeof first, "%s", marked);
 
-    /* The kept recording replays, marks and all. */
-    snprintf(file, sizeof file, "%s/%s", rec_dir, marked);
+    replay_step();
+    replay_log(REPLAY_KEY, (uint32_t[3]){41, 1, 0}); /* between the games: in the second */
+    replay_step();
+    replay_game(true);
+    replay_play(true);
+    replay_step();
+    replay_finish(); /* quitting ends the game */
+    new_recording(rec_dir, first, name, sizeof name);
+    CHECK(strstr(name, ".lwreplay") && !strstr(name, "-marked")); /* -2 in the same second */
+
+    /* Each replays from launch with its own marks: the first has both. */
+    snprintf(file, sizeof file, "%s/%s", rec_dir, first);
     CHECK(play_back());
     const uint32_t *ticks;
     CHECK_EQ(replay_marks(&ticks), 2);
+    for (int i = 0; i < 2; i++) {
+        replay_step();
+        uint32_t v[3];
+        CHECK(replay_take(REPLAY_KEY, v) == (i == 1));
+        CHECK(replay_take_play() == (i == 1)); /* the game starts */
+        CHECK(replay_take_play() == (i == 1)); /* play goes on */
+    }
+    snprintf(file, sizeof file, "%s/%s", rec_dir, name);
+    CHECK(play_back());
+    CHECK_EQ(replay_marks(&ticks), 0);
+    for (int i = 0; i < 5; i++) {
+        replay_step();
+        uint32_t v[3];
+        CHECK(replay_take(REPLAY_KEY, v) == (i == 1 || i == 4));
+        CHECK(!replay_take_mark()); /* the first game's are its own */
+        CHECK(!replay_take_play()); /* and so is its game */
+    }
+    replay_step();
+    CHECK(replay_take_play() && replay_take_play());
 }
 
 static time_t local_time(int day, int h, int mi, int sec) {
@@ -368,8 +411,9 @@ TEST(replay_keeps_the_games_whose_high_scores_are_in_the_table) {
         "loony-labyrinth-2026-01-04-120000.lwreplay", /* a score long after its end */
         "loony-labyrinth-2026-01-05-120000.lwreplay",
         "loony-labyrinth-2026-01-06-120000.lwreplay",
+        "loony-labyrinth-2026-01-07-120000.lwreplay",
     };
-    for (int i = 0; i < 6; i++)
+    for (int i = 0; i < 7; i++)
         recording_ending(rec_dir, old[i], local_time(i + 1, 12, 10, 0));
     time_t scores[] = {local_time(1, 12, 5, 0), local_time(3, 12, 10, 1), local_time(4, 13, 0, 0)};
     unsetenv("LOONY_RECORD");
@@ -381,8 +425,9 @@ TEST(replay_keeps_the_games_whose_high_scores_are_in_the_table) {
     CHECK(!exists_in(rec_dir, old[1]));
     CHECK(exists_in(rec_dir, old[2]));
     CHECK(!exists_in(rec_dir, old[3]));
-    CHECK(exists_in(rec_dir, old[4])); /* the last two, with this game three */
+    CHECK(exists_in(rec_dir, old[4])); /* the last three */
     CHECK(exists_in(rec_dir, old[5]));
+    CHECK(exists_in(rec_dir, old[6]));
 
     /* The first game's score leaves the table: next time, so does the game. */
     replay_reset();
@@ -495,7 +540,7 @@ TEST(replay_share_leaves_the_license_out_and_a_replay_puts_the_viewers_in) {
     CHECK(replay_share(file, shared, err, sizeof err));
     size_t n = gunzip_into(shared, buf, sizeof buf);
     CHECK(n > 9);
-    CHECK_EQ((uint8_t)buf[8], 4); /* format 4 */
+    CHECK_EQ((uint8_t)buf[8], 5); /* format 5, shared */
     CHECK(!memmem(buf, n, "me@example.com", 14));
     CHECK(!memmem(buf, n, "123456789012", 12));
     CHECK(memmem(buf, n, "GREG", 4) != NULL);
@@ -525,6 +570,60 @@ TEST(replay_share_leaves_the_license_out_and_a_replay_puts_the_viewers_in) {
     replay_step();
     CHECK(replay_take(REPLAY_KEY, v));
     CHECK_EQ(v[0], SDL_SCANCODE_Z);
+}
+
+/* A high score set during a game finds that game's own file (Loony
+   Labyrinth saves the score before its game ends), and the file shares and
+   replays like a whole-session recording: what came before the game, then
+   the game. */
+TEST(replay_shares_the_file_of_the_game_that_set_a_high_score) {
+    BEGIN_TEST();
+    char rec_dir[1300], name[256], want[1600], path[1600], shared[1300], err[256];
+    snprintf(rec_dir, sizeof rec_dir, "%s/recordings", dir);
+    CHECK(write_prefs(data, "me@example.com", "123456789012"));
+    unsetenv("LOONY_RECORD");
+    unsetenv("LOONY_FIXED_CLOCK");
+    unsetenv("LOONY_REPLAY");
+    replay_reset();
+    replay_record_into(rec_dir, "loony-labyrinth", NULL, 0);
+    CHECK(replay_start("loony-labyrinth", exe, sizeof exe, data, err, sizeof err));
+    replay_step();
+    replay_log(REPLAY_KEY, (uint32_t[3]){SDL_SCANCODE_X, 1, 0}); /* before the game */
+    replay_game(true);
+    replay_play(true);
+    replay_step();
+    replay_log(REPLAY_KEY, (uint32_t[3]){SDL_SCANCODE_Z, 1, 0});
+    time_t when = time(NULL); /* the score is saved */
+    replay_clock(5000);
+    replay_play(false);
+    replay_game(false);
+    replay_finish();
+
+    new_recording(rec_dir, "", name, sizeof name);
+    snprintf(want, sizeof want, "%s/%s", rec_dir, name);
+    CHECK(replay_find_recording(rec_dir, "loony-labyrinth", when, path, sizeof path));
+    CHECK_STR(path, want);
+    snprintf(shared, sizeof shared, "%s/shared.lwreplay", dir);
+    CHECK(replay_share(path, shared, err, sizeof err));
+
+    char viewer[1300], license[1400];
+    snprintf(viewer, sizeof viewer, "%s/viewer", dir);
+    CHECK(write_prefs(viewer, "you@example.org", "999"));
+    snprintf(license, sizeof license, "%s/prefs.plist", viewer);
+    setenv("LOONY_REPLAY_LICENSE", license, 1);
+    snprintf(file, sizeof file, "%s", shared);
+    CHECK(play_back());
+    const replay_span *spans;
+    CHECK_EQ(replay_play_spans(&spans), 1);
+    uint32_t v[3];
+    replay_step();
+    CHECK(replay_take(REPLAY_KEY, v));
+    CHECK_EQ(v[0], SDL_SCANCODE_X);
+    CHECK(replay_take_play() && replay_take_play()); /* the game starts, and play */
+    replay_step();
+    CHECK(replay_take(REPLAY_KEY, v));
+    CHECK_EQ(v[0], SDL_SCANCODE_Z);
+    CHECK_EQ(replay_clock(0), 5000); /* the game's 5 ms of play */
 }
 
 /* A game played unregistered isn't shared: given the viewer's license, its
@@ -693,6 +792,82 @@ TEST(replay_clock_values_come_back) {
     call_import("Delay", 2, 2u, 0u);
     call_import("Microseconds", 1, us);
     CHECK_EQ(gm_r32(us + 4), micro[1]);
+}
+
+/* Recording, Microseconds and Delay(0) polled in one ms (Loony Labyrinth's
+   menus spin on them) sleep to the next ms every MS_SPIN_POLLS polls, so a
+   spin is a few steps a ms, and a replay passes the same polls and values. */
+TEST(replay_microseconds_spins_wait_for_the_next_ms) {
+    BEGIN_TEST();
+    setup();
+    CHECK(record(NULL));
+    uint32_t us = scratch(8), got[15];
+    for (int i = 0; i < 15; i++) {
+        call_import("Delay", 2, 0u, 0u);
+        call_import("Microseconds", 1, us);
+        got[i] = gm_r32(us + 4);
+    }
+    replay_finish();
+    CHECK(got[14] - got[0] >= 9000); /* 30 polls, a ms every 3 */
+    CHECK(got[14] - got[0] < 1000000);
+
+    setup();
+    CHECK(play_back());
+    for (int i = 0; i < 15; i++) {
+        call_import("Delay", 2, 0u, 0u);
+        call_import("Microseconds", 1, us);
+        CHECK_EQ(gm_r32(us + 4), got[i]);
+    }
+}
+
+/* A replay knows where the game was played before it plays it, and maps its
+   clock to play time and back, leaving out what isn't play: before the
+   game, and a pause. Without play records, all of it is play. */
+TEST(replay_play_time_leaves_out_what_isnt_play) {
+    BEGIN_TEST();
+    CHECK(record(NULL));
+    replay_clock(1000000); /* a second before the game */
+    replay_game(true);
+    replay_play(true);
+    replay_clock(3000000); /* two seconds of play */
+    replay_play(false);
+    replay_clock(63000000); /* a minute's pause */
+    replay_play(true);
+    replay_clock(64000000);
+    replay_finish(); /* in play */
+    CHECK(play_back());
+    const replay_span *spans;
+    CHECK_EQ(replay_play_spans(&spans), 2);
+    CHECK_EQ(spans[0].on_us, 1000000);
+    CHECK_EQ(spans[0].off_us, 3000000);
+    CHECK_EQ(spans[1].on_us, 63000000);
+    CHECK(spans[1].off_us == UINT64_MAX);
+    CHECK_EQ(replay_play_us(500000), 0);
+    CHECK_EQ(replay_play_us(2000000), 1000000);
+    CHECK_EQ(replay_play_us(30000000), 2000000);
+    CHECK_EQ(replay_play_us(63500000), 2500000);
+    CHECK_EQ(replay_clock_us(0), 1000000);
+    CHECK_EQ(replay_clock_us(1500000), 2500000);
+    CHECK_EQ(replay_clock_us(2000000), 63000000); /* where the pause ends */
+    CHECK_EQ(replay_clock_us(2500000), 63500000);
+    CHECK_EQ(replay_play_ticks(63 * 60 + 30), 2 * 60 + 30);
+    CHECK_EQ(replay_clock_ticks(2 * 60 + 30), 63 * 60 + 30);
+    uint64_t next;
+    CHECK(!replay_in_play(500000, &next));
+    CHECK_EQ(next, 1000000);
+    CHECK(replay_in_play(2000000, &next));
+    CHECK(!replay_in_play(30000000, &next));
+    CHECK_EQ(next, 63000000);
+    CHECK(replay_in_play(70000000, &next));
+
+    CHECK(record(NULL));
+    replay_clock(1000000);
+    replay_finish();
+    CHECK(play_back());
+    CHECK_EQ(replay_play_spans(&spans), 0);
+    CHECK_EQ(replay_play_us(500000), 500000);
+    CHECK_EQ(replay_clock_us(500000), 500000);
+    CHECK(replay_in_play(0, &next));
 }
 
 /* The date is the recording's start plus the game's clock (Loony Labyrinth
@@ -1049,9 +1224,9 @@ static void write_replay(const void *bytes, size_t len) {
     gzclose(f);
 }
 
-/* A format 2 header for "x" with this start and time zone (varints). */
+/* A format 5 header for "x" with this start and time zone (varints). */
 static size_t header_with(uint8_t *h, const char *start, const char *gmtoff) {
-    memcpy(h, "LWREPLAY\x02\x01x", 11);
+    memcpy(h, "LWREPLAY\x05\x01x", 11);
     memset(h + 11, 0, 32); /* the SHA-256 */
     size_t n = 43;
     h[n++] = 0; /* no flags */
@@ -1071,10 +1246,19 @@ TEST(replay_refuses_a_damaged_header) {
     write_replay("LWREPLAY", 8); /* no version */
     CHECK(!replay_open(err, sizeof err));
     CHECK_STR(err, "the replay's header is damaged");
-    write_replay("LWREPLAY\x09", 9);
+    write_replay("LWREPLAY\x06", 9);
     CHECK(!replay_open(err, sizeof err));
-    CHECK_STR(err, "replay format 9 (this program reads 1 to 4)");
+    CHECK_STR(err, "the replay was recorded by a newer version of LittleWing");
     uint8_t h[64];
+    /* The prototype's formats, which recorded a whole session. */
+    for (uint8_t old = 3; old <= 4; old++) {
+        size_t n = header_with(h, "\x01", "\x02");
+        h[8] = old;
+        write_replay(h, n);
+        CHECK(!replay_open(err, sizeof err));
+        CHECK_STR(err, "the replay was recorded by an early prototype of LittleWing, "
+                       "and this version can't play it");
+    }
     static const char *const damaged[][2] = {
         {"\x80\x80\x80\x80\x80\x20", "\x01"}, /* a start of 2^40 s: 36812 AD */
         {"\x01", "\x90\xBF\x05"},             /* 90000 s east of UTC */
@@ -1087,31 +1271,6 @@ TEST(replay_refuses_a_damaged_header) {
     }
     write_replay(h, header_with(h, "\x01", "\x90\x1C")); /* 1 s, an hour east */
     CHECK(replay_open(err, sizeof err));
-}
-
-/* Format 1, from before dates were recorded, has no start or time zone: it
-   plays, and its dates are the host's. */
-TEST(replay_plays_the_first_format_with_the_hosts_dates) {
-    BEGIN_TEST();
-    uint8_t h[128];
-    memcpy(h, "LWREPLAY\x01\x0floony-labyrinth", 25); /* format 1, the game's id */
-    CC_SHA256(exe, sizeof exe, h + 25);
-    size_t n = 25 + CC_SHA256_DIGEST_LENGTH;
-    h[n++] = 0;           /* no flags */
-    h[n++] = 0;           /* no preferences */
-    h[n++] = 5;           /* at step 5, */
-    h[n++] = REPLAY_END;  /* the end */
-    write_replay(h, n);
-    char err[256] = "";
-    bool ok = play("loony-labyrinth", exe, sizeof exe, err, sizeof err);
-    if (!ok)
-        fprintf(stderr, "%s\n", err);
-    CHECK(ok);
-    CHECK(replay_playing());
-    int64_t start;
-    int32_t gmtoff;
-    bool dst;
-    CHECK(!replay_calendar(&start, &gmtoff, &dst));
 }
 
 static int urls_opened;

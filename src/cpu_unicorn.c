@@ -19,6 +19,7 @@ struct cpu_context {
 static uc_engine *uc;
 static uc_hook mem_hook, intr_hook, write_hook;
 static cpu_write_fn write_fn;
+static int nexec_hooks;
 static bool mem_fault;
 static uc_mem_type mem_fault_type;
 static uint32_t mem_fault_addr;
@@ -104,6 +105,7 @@ void cpu_shutdown(void) {
         uc_close(uc);
     uc = NULL;
     write_fn = NULL;
+    nexec_hooks = 0;
 }
 
 static void on_write(uc_engine *engine, uc_mem_type type, uint64_t address, int size,
@@ -125,6 +127,23 @@ void cpu_watch_writes(uint32_t begin, uint32_t end, cpu_write_fn fn) {
     check(uc_hook_add(uc, &write_hook, UC_HOOK_MEM_WRITE, (void *)on_write, NULL, begin, end),
           "add write hook");
     write_fn = fn;
+}
+
+static void on_exec(uc_engine *engine, uint64_t address, uint32_t size, void *user) {
+    (void)engine;
+    (void)address;
+    (void)size;
+    ((cpu_exec_fn)user)();
+}
+
+void cpu_on_exec(uint32_t addr, cpu_exec_fn fn) {
+    if (nexec_hooks == CPU_MAX_EXEC_HOOKS)
+        fatal("cpu_on_exec: more than %d hooks", CPU_MAX_EXEC_HOOKS);
+    uc_hook h;
+    /* A bounded code hook is only compiled into the instructions it covers. */
+    check(uc_hook_add(uc, &h, UC_HOOK_CODE, (void *)on_exec, (void *)fn, addr, addr),
+          "add code hook");
+    nexec_hooks++;
 }
 
 uint32_t cpu_gpr(int n) { return (uint32_t)reg_read(UC_PPC_REG_0 + n); }

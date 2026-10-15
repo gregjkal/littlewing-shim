@@ -33,6 +33,8 @@ static struct {
     uint64_t last_us; /* what elapsed_us last returned */
     uint32_t spin_tick; /* the tick TickCount last returned, and how often since it moved */
     int spins;
+    uint64_t spin_ms; /* the ms Microseconds or Delay(0) last saw, and how often since */
+    int ms_spins;
     int polls; /* time polls since the virtual clock last moved */
     misc_url_fn open_url;
     void (*exit_hook)(void);
@@ -209,6 +211,27 @@ static uint32_t wait_out_spin(uint32_t t) {
     return misc_ticks();
 }
 
+/* The same for a game that polls Microseconds and Delay(0) until a time
+   comes (Loony Labyrinth's menus do, tens of thousands of times a second):
+   a recording's clock moves in whole ms, so after MS_SPIN_POLLS polls in
+   the same ms it sleeps until the next. Counted, not timed, as above. */
+#define MS_SPIN_POLLS 3
+
+static void wait_out_ms_spin(void) {
+    if (!replay_recording() && !replay_playing())
+        return;
+    uint64_t ms = M.last_us / 1000;
+    if (ms != M.spin_ms) {
+        M.spin_ms = ms;
+        M.ms_spins = 1; /* this is the ms's first poll */
+        return;
+    }
+    if (++M.ms_spins < MS_SPIN_POLLS)
+        return;
+    M.ms_spins = 0;
+    misc_wait((double)((ms + 1) * 1000 - M.last_us) / 1e6);
+}
+
 static void h_tick_count(void) {
     misc_poll();
     uint32_t t = wait_out_spin(misc_ticks());
@@ -218,6 +241,7 @@ static void h_tick_count(void) {
 
 static void h_microseconds(void) {
     misc_poll();
+    wait_out_ms_spin();
     uint64_t us = elapsed_us() + MISC_BOOT_TICKS * 1000000ull / 60;
     uint32_t out = trap_arg(0);
     gm_w32(out, (uint32_t)(us >> 32));
@@ -250,6 +274,8 @@ void misc_sleep_us(uint64_t us) {
    the idle hook between steps. */
 static void h_delay(void) {
     uint32_t ticks = trap_arg(0), final_ticks = trap_arg(1);
+    if ((int32_t)ticks <= 0)
+        wait_out_ms_spin();
     uint32_t end = misc_ticks() + ((int32_t)ticks > 0 ? ticks : 0);
     if (M.fixed && end == misc_ticks()) /* Delay(0) on the virtual clock: one tick passes */
         end++;
@@ -275,7 +301,7 @@ static void h_delay(void) {
 #define FIXED_CLOCK_UNIX 1041379200
 
 /* The host's wall clock (Unix seconds) and time zone. On a recording or a
-   replay (of format 2 on): the recording's start plus the game's clock, in
+   replay: the recording's start plus the game's clock, in
    the time zone it started in, so dates (a high score's timestamp) replay
    too. */
 static int64_t wall_clock(int32_t *gmtoff, bool *dst) {
