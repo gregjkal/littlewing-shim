@@ -435,8 +435,9 @@ across a pause goes straight from before it to after it.
 The window's title shows the play time and the speed, and a clip's start
 once I has marked it. Only 1x has sound. Cut scenes draw up to twice as many
 frames as play, more than the window can show; when watching falls behind,
-it skips frames to keep time, and shows the latest once it has caught up. Each clip goes into `game.clips`
-next to `game.lwreplay`, one `<start>-<end>` a line in `LOONY_CLIP`'s
+it skips frames to keep time, and shows the latest once it has caught up,
+or a few times a second when it can't catch up (HD at 8x). Each clip goes
+into `game.clips` next to `game.lwreplay`, one `<start>-<end>` a line in `LOONY_CLIP`'s
 format, so the file can be edited by hand too; `LOONY_CLIP=clips` then
 renders each into `game-clip-1.mp4` and so on, in one pass, as
 `LOONY_CLIP=marks` does (clips that overlap become one). A recording in
