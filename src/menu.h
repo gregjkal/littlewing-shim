@@ -4,7 +4,12 @@
    slider that sets sound_volume as it moves. The volume is saved
    (SETTINGS_VOLUME) when the menu closes, if it changed. Call once SDL's video
    is initialized, which makes the menu bar; does nothing with a video driver
-   other than Cocoa (the tests' dummy), or when called again. */
+   other than Cocoa (the tests' dummy), or when called again. In an app
+   that bundles Sparkle and names its feed (a release), it also starts
+   Sparkle, which checks for updates once a day, and adds Check for
+   Updates... to the app menu, after About. An update found mid-game
+   retitles that item ("Update to LittleWing 0.5.0...") rather than
+   interrupting with a window. */
 void menu_install(void);
 
 /* Adds a High Scores menu after the Sound menu: at once if menu_install

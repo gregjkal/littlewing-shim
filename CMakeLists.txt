@@ -22,7 +22,8 @@ pkg_check_modules(UNICORN REQUIRED IMPORTED_TARGET unicorn)
 pkg_check_modules(SDL3 REQUIRED IMPORTED_TARGET sdl3)
 
 # Objective-C only where Apple's frameworks need it (menu.m: the Sound and
-# High Scores menus; mp4.m: clips, written with AVFoundation).
+# High Scores menus, and Check for Updates, with Sparkle loaded at run time;
+# mp4.m: clips, written with AVFoundation).
 file(GLOB CORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.c ${CMAKE_SOURCE_DIR}/src/*.m)
 list(REMOVE_ITEM CORE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.c)
 
