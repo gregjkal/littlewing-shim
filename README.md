@@ -424,10 +424,13 @@ the date it was set and two items. **Share Replay…** opens the share sheet
 the score. **Save Replay…** saves the same file wherever you choose. It is
 named like `Loony Labyrinth 43,074,596 GREG.lwreplay`; an hour of play comes
 to about 400 KB. The replay is the recording kept for that score (see
-above), so a score set before the app recorded games, or one without a date
-(the scores the game starts with, and see below), has none, and its submenu says so. A recording holds
-the whole launch, so the replay starts at the opening, and any games played
-before the high score in that launch come with it.
+above), found by the score's date. A score set before the app recorded
+games has none, and neither does a score without a date, and its submenu
+says so. The game starts with undated scores, and it loses dates too: when
+a new score pushes the others down, their names move with them but their
+dates stay in place, so a lower score can show another's date, or none. A
+recording holds the whole launch, so the replay starts at the opening, and
+any games played before the high score in that launch come with it.
 
 The shared file leaves your registration out. The app writes a copy with
 the e-mail address and key code emptied, and the original recording stays
