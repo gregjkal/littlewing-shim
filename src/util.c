@@ -70,6 +70,7 @@ uint8_t *read_file(const char *path, size_t *len_out) {
         free(buf);
         return NULL;
     }
+    buf[len] = 0; /* the last read returned nothing, so len < cap */
     *len_out = len;
     return buf;
 }

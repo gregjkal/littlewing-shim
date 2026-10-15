@@ -328,11 +328,12 @@ refuses a folder that already has preferences, so it can't write over yours) and
 at the end, whether it reached the end of the recording with every frame
 check matching. Every 30 presents the recording keeps a hash of the screen;
 at the first one that differs, the replay stops with status 3 and logs the
-step and tick (a desync). A replay plays no sound (`LOONY_WAV` still records
-it) and needs the same game program; a replay made by another version of the
-shim may desync. HD mode can be on or off in either. `LOONY_SCRIPT`
-screenshots work in a replay; its keys are ignored, and its quit (like
-closing the window) stops the replay.
+step and tick (a desync). A replay plays no sound unless it is watched
+(below; `LOONY_WAV` still records it) and needs the same game program; a
+replay made by another version of the shim may desync. HD mode can be on or
+off in either. `LOONY_SCRIPT` screenshots work in a replay; the game never
+sees its keys (a watched replay takes them), and its quit (like closing the
+window) stops the replay.
 
 A replay can also go straight to a short video, with its sound:
 
@@ -379,6 +380,39 @@ replay with no marks is refused. When nothing is being recorded
 (`LOONY_RECORD=0`, or with `LOONY_FIXED_CLOCK=1`), Cmd-S marks nothing and
 the title says so. Recordings are now in format 3 (the one with marks), which
 older builds refuse.
+
+To find a moment you didn't mark, watch the replay in a window, at the speed
+it was played and with its sound:
+
+```bash
+LOONY_REPLAY=game.lwreplay LOONY_WATCH=1 ./build-release/loony
+LOONY_REPLAY=game.lwreplay LOONY_CLIP=clips ./build-release/loony
+```
+
+| Key | While watching |
+| --- | --- |
+| Space, K | Pause, or go on |
+| Right, Left | Faster or slower: 1x, 2x, 4x, 8x, as fast as it can |
+| I, O | Where a clip starts, and where it ends (O saves it) |
+| J, L | Back or ahead 10 seconds (with Shift, a minute) |
+
+The window's title shows the game's time and the speed, and a clip's start
+once I has marked it. Only 1x has sound. Each clip goes into `game.clips`
+next to `game.lwreplay`, one `<start>-<end>` a line in `LOONY_CLIP`'s
+format, so the file can be edited by hand too; `LOONY_CLIP=clips` then
+renders each into `game-clip-1.mp4` and so on, in one pass, as
+`LOONY_CLIP=marks` does (clips that overlap become one). A recording in
+`recordings` with a `.clips` file is kept, like a marked one.
+
+Going ahead replays without pacing to the time. A replay only runs
+forward, so going back restarts the program, which replays from the start
+to the time wanted: at about 8 times real time, going back from minute 14 of
+a game takes about a minute and a half (more in HD). The speed, a pause
+and a clip's start carry over. At the end of the replay, or when the game
+quits, the last frame stays up until you close the window. At 1x each
+minute of play logs how long it took on the wall clock: within a few
+milliseconds. The keys of a `LOONY_SCRIPT` go to the viewer too (`60 down
+i`), until a restart.
 
 While recording, the game's clock moves in whole milliseconds, and when the
 game spins on `TickCount` waiting for the next tick, it sleeps instead. The

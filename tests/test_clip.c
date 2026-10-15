@@ -63,6 +63,70 @@ TEST(clip_marks_make_spans_merged_where_they_meet) {
     CHECK_EQ(s[0].end, 1);
 }
 
+/* What clip_format_time writes, clip_parse_span reads back as the same
+   ticks, hundredths and all. */
+TEST(clip_times_read_back_as_written) {
+    char a[32], b[32], s[80];
+    bool all = true;
+    for (uint32_t t = 0; t < 2 * 3600 * 60; t += t < 7200 ? 1 : 997) {
+        snprintf(s, sizeof s, "%s-%s", clip_format_time(t, a, sizeof a),
+                 clip_format_time(t + 1, b, sizeof b));
+        if (!span(s, t, t + 1)) {
+            fprintf(stderr, "%u: %s\n", t, s);
+            all = false;
+        }
+    }
+    CHECK(all);
+    CHECK_STR(clip_format_time(3600 * 60 + 61, a, sizeof a), "1:00:01.01");
+    CHECK_STR(clip_format_time(600, a, sizeof a), "0:10");
+}
+
+/* A list of clips (watching a replay saves one): a span a line. */
+TEST(clip_lists_are_a_span_a_line) {
+    clip_span *s;
+    size_t n;
+    char err[256] = "";
+    CHECK(clip_parse_list("# ramps\n9:40-10:15\n\n  1:00-1:30 \r\n600-700", &s, &n, err, sizeof err));
+    CHECK_EQ(n, 3);
+    CHECK_EQ(s[0].start, 34800);
+    CHECK_EQ(s[0].end, 36900);
+    CHECK_EQ(s[1].start, 3600);
+    CHECK_EQ(s[1].end, 5400);
+    CHECK_EQ(s[2].start, 600);
+    CHECK_EQ(s[2].end, 700);
+    CHECK_EQ(s[2].first_mark, 0);
+    free(s);
+    CHECK(clip_parse_list("", &s, &n, err, sizeof err));
+    CHECK_EQ(n, 0);
+    free(s);
+    CHECK(!clip_parse_list("1:00-1:30\n1:30-1:00\n", &s, &n, err, sizeof err));
+    CHECK_CONTAINS(err, "line 2: 1:30-1:00 isn't <start>-<end>");
+    CHECK(!s);
+    CHECK_EQ(n, 0);
+}
+
+/* Spans from a list are sorted, and those that overlap or touch are one. */
+TEST(clip_list_spans_are_sorted_and_merged_where_they_overlap) {
+    clip_span s[] = {{600, 700, 0, 0}, {100, 200, 0, 0}, {650, 900, 0, 0}, {200, 300, 0, 0},
+                     {301, 400, 0, 0}, {610, 620, 0, 0}};
+    CHECK_EQ(clip_merge_spans(s, 6), 3);
+    CHECK_EQ(s[0].start, 100);
+    CHECK_EQ(s[0].end, 300); /* touching */
+    CHECK_EQ(s[1].start, 301);
+    CHECK_EQ(s[1].end, 400);
+    CHECK_EQ(s[2].start, 600);
+    CHECK_EQ(s[2].end, 900); /* overlapping, and one inside another */
+}
+
+TEST(clip_lists_go_beside_the_replay) {
+    char p[64];
+    CHECK(clip_list_path("/a/game.lwreplay", p, sizeof p));
+    CHECK_STR(p, "/a/game.clips");
+    CHECK(clip_list_path("game.rec", p, sizeof p));
+    CHECK_STR(p, "game.rec.clips");
+    CHECK(!clip_list_path("/a/very-long-name-of-a-recorded-game-from-last-tuesday.lwreplay", p, 32));
+}
+
 TEST(clip_default_bitrate_grows_with_the_picture) {
     CHECK(clip_default_kbps(800, 600) < clip_default_kbps(1600, 1200));
     CHECK(clip_default_kbps(1600, 1200) < clip_default_kbps(3200, 2400));
@@ -237,7 +301,7 @@ TEST(clip_open_checks_its_settings) {
     CHECK_EQ(clip_open_with(NULL, "x.mp4", NULL, NULL, out, sizeof out), 1);
     CHECK_CONTAINS(out, "need LOONY_CLIP");
     CHECK_EQ(clip_open_with("1:30-1:00", NULL, NULL, "r.lwreplay", out, sizeof out), 1);
-    CHECK_CONTAINS(out, "isn't marks or <start>-<end>");
+    CHECK_CONTAINS(out, "isn't marks, clips or <start>-<end>");
     CHECK_EQ(clip_open_with("1:00-1:30", NULL, "fast", "r.lwreplay", out, sizeof out), 1);
     CHECK_CONTAINS(out, "LOONY_CLIP_KBPS=fast");
     /* The child exits before the clip starts, but not at the end of a
@@ -277,6 +341,40 @@ TEST(clip_open_checks_its_settings) {
     /* No replay was opened here, so it has no marks. */
     CHECK_EQ(clip_open_with("marks", NULL, NULL, "r.lwreplay", out, sizeof out), 1);
     CHECK_CONTAINS(out, "the replay r.lwreplay has no marks");
+    CHECK_EQ(clip_open_with("clips", NULL, NULL, "/nonexistent/r.lwreplay", out, sizeof out), 1);
+    CHECK_CONTAINS(out, "can't read the clips of /nonexistent/r.lwreplay from /nonexistent/r.clips");
+    before = "10";
+    CHECK_EQ(clip_open_with("clips", NULL, NULL, "r.lwreplay", out, sizeof out), 1);
+    CHECK_CONTAINS(out, "are for LOONY_CLIP=marks");
+    before = NULL;
+}
+
+/* LOONY_CLIP=clips: a clip of each span in the replay's list, sorted and
+   merged, numbered as for marks; a list that is wrong or empty is refused. */
+TEST(clip_open_makes_a_clip_of_each_span_in_the_list) {
+    char out[4096], dir[1024], replay[1100], list[1100];
+    test_tmp_dir(dir, sizeof dir);
+    snprintf(replay, sizeof replay, "%s/game.lwreplay", dir);
+    snprintf(list, sizeof list, "%s/game.clips", dir);
+    FILE *f = fopen(list, "w");
+    fputs("0:20-0:30\n0:01-0:02.5\n0:02-0:03\n", f);
+    fclose(f);
+    int listed = clip_open_with("clips", NULL, NULL, replay, out, sizeof out);
+    char clip1[1200], clip2[1200], log2[4096];
+    snprintf(clip1, sizeof clip1, "clip: 0:01-0:03 to %s/game-clip-1.mp4", dir);
+    snprintf(clip2, sizeof clip2, "clip: 0:20-0:30 to %s/game-clip-2.mp4", dir);
+    f = fopen(list, "w");
+    fputs("# nothing yet\n", f);
+    fclose(f);
+    int empty = clip_open_with("clips", NULL, NULL, replay, log2, sizeof log2);
+    test_remove_tree(dir);
+    CHECK_EQ(listed, 0);
+    CHECK_CONTAINS(out, "clip: 3 listed in");
+    CHECK_CONTAINS(out, ", some overlapping");
+    CHECK_CONTAINS(out, clip1);
+    CHECK_CONTAINS(out, clip2);
+    CHECK_EQ(empty, 1);
+    CHECK_CONTAINS(log2, "game.clips has no clips");
 }
 
 /* An output the clip couldn't write is refused before the seek, and so is

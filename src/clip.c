@@ -23,7 +23,7 @@ static struct {
     bool on, finished;
     clip_span *spans; /* the clips to make, in order */
     size_t nspans, cur;
-    bool marks;          /* LOONY_CLIP=marks: the files are numbered */
+    bool numbered;       /* LOONY_CLIP=marks or clips: the files are numbered */
     char base[PATH_MAX]; /* the file, or what the numbered ones are named from */
     uint32_t start, end; /* ticks: the clip being made is [start, end) */
     char out[PATH_MAX];  /* and its file */
@@ -125,8 +125,7 @@ size_t clip_mark_spans(const uint32_t *marks, size_t n, uint32_t before, uint32_
     return k;
 }
 
-/* ticks as m:ss (h:mm:ss past an hour), with hundredths when not whole. */
-static const char *fmt_ticks(uint32_t ticks, char *buf, size_t cap) {
+const char *clip_format_time(uint32_t ticks, char *buf, size_t cap) {
     uint32_t s = ticks / 60, rem = ticks % 60;
     int n = s >= 3600 ? snprintf(buf, cap, "%u:%02u:%02u", s / 3600, s / 60 % 60, s % 60)
                       : snprintf(buf, cap, "%u:%02u", s / 60, s % 60);
@@ -140,6 +139,77 @@ static const char *fmt_ticks(uint32_t ticks, char *buf, size_t cap) {
 /* 1.2 Mbit/s at 1600x1200, about what CLIP_QUALITY comes to there (Apple's
    encoder holds its quality on fewer bits than it needs at a set bitrate),
    scaled with the picture's side. */
+bool clip_list_path(const char *replay, char *out, size_t cap) {
+    size_t len = strlen(replay), ext = strlen(".lwreplay");
+    if (len > ext && strcmp(replay + len - ext, ".lwreplay") == 0)
+        len -= ext;
+    return (size_t)snprintf(out, cap, "%.*s.clips", (int)len, replay) < cap;
+}
+
+bool clip_parse_list(const char *text, clip_span **spans, size_t *n, char *err, size_t errlen) {
+    size_t cap = 1;
+    for (const char *p = text; *p; p++)
+        cap += *p == '\n';
+    if (!(*spans = malloc(cap * sizeof **spans)))
+        fatal("out of memory");
+    *n = 0;
+    int line_no = 0;
+    for (const char *p = text; *p;) {
+        const char *eol = strchr(p, '\n');
+        if (!eol)
+            eol = p + strlen(p);
+        line_no++;
+        const char *a = p, *b = eol;
+        while (a < b && (*a == ' ' || *a == '\t'))
+            a++;
+        while (b > a && (b[-1] == ' ' || b[-1] == '\t' || b[-1] == '\r'))
+            b--;
+        p = *eol ? eol + 1 : eol;
+        if (a == b || *a == '#')
+            continue;
+        char span[64];
+        clip_span *s = &(*spans)[*n];
+        if ((size_t)(b - a) >= sizeof span) {
+            snprintf(err, errlen, "line %d is too long for a span", line_no);
+            goto bad;
+        }
+        memcpy(span, a, (size_t)(b - a));
+        span[b - a] = '\0';
+        if (!clip_parse_span(span, &s->start, &s->end)) {
+            snprintf(err, errlen, "line %d: %s isn't <start>-<end>, each m:ss, h:mm:ss or ticks, start first",
+                     line_no, span);
+            goto bad;
+        }
+        s->first_mark = s->last_mark = 0;
+        (*n)++;
+    }
+    return true;
+bad:
+    free(*spans);
+    *spans = NULL;
+    *n = 0;
+    return false;
+}
+
+static int by_start(const void *a, const void *b) {
+    const clip_span *x = a, *y = b;
+    return x->start < y->start ? -1 : x->start > y->start;
+}
+
+size_t clip_merge_spans(clip_span *spans, size_t n) {
+    qsort(spans, n, sizeof *spans, by_start);
+    size_t k = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (k && spans[i].start <= spans[k - 1].end) {
+            if (spans[i].end > spans[k - 1].end)
+                spans[k - 1].end = spans[i].end;
+            continue;
+        }
+        spans[k++] = spans[i];
+    }
+    return k;
+}
+
 int clip_default_kbps(int w, int h) {
     int kbps = (int)lround(1200.0 * sqrt((double)w * h / (1600.0 * 1200.0)));
     return kbps < 100 ? 100 : kbps;
@@ -187,7 +257,7 @@ static void open_file(void) {
     else
         snprintf(size, sizeof size, "%dx%d (scaled from %dx%d)", vw, vh, C.w, C.h);
     log_msg("clip: reached %s after %.1f s; writing to %s, %s at %d fps, %s",
-            fmt_ticks(C.start, a, sizeof a), since_launch(), C.out, size, CLIP_FPS, how);
+            clip_format_time(C.start, a, sizeof a), since_launch(), C.out, size, CLIP_FPS, how);
     if (C.early_frames) /* a failure shows at the next frame */
         mp4_audio(C.mp4, C.early, (uint32_t)C.early_frames, (int64_t)C.early_at);
     free(C.early);
@@ -209,16 +279,16 @@ static bool finish(void) {
     struct stat st;
     double mb = stat(C.out, &st) == 0 ? (double)st.st_size / 1e6 : 0;
     log_msg("clip: wrote %s-%s to %s: %llu frames, %.1f MB, %.1f s after launch",
-            fmt_ticks(C.start, a, sizeof a), fmt_ticks(C.start + (uint32_t)C.frames, b, sizeof b),
+            clip_format_time(C.start, a, sizeof a), clip_format_time(C.start + (uint32_t)C.frames, b, sizeof b),
             C.out, (unsigned long long)C.frames, mb, since_launch());
     C.wrote = true;
     return true;
 }
 
 /* The file of clip i: the base, numbered from 1 before its extension for
-   LOONY_CLIP=marks. False if that is too long. */
+   LOONY_CLIP=marks and clips. False if that is too long. */
 static bool file_of(size_t i, char *out, size_t cap) {
-    if (!C.marks)
+    if (!C.numbered)
         return (size_t)snprintf(out, cap, "%s", C.base) < cap;
     const char *slash = strrchr(C.base, '/'), *name = slash ? slash + 1 : C.base;
     const char *dot = strrchr(name, '.');
@@ -254,7 +324,7 @@ static void finish_at_exit(void) {
         if (failed)
             return;
         log_msg("clip: the replay stopped before %s, where the clip starts: nothing written",
-                fmt_ticks(C.start, a, sizeof a));
+                clip_format_time(C.start, a, sizeof a));
         if (!C.wrote && replay_reached_end()) {
             fflush(NULL);
             _exit(CLIP_NOTHING_STATUS);
@@ -262,7 +332,7 @@ static void finish_at_exit(void) {
         return;
     }
     log_msg("clip: the replay stopped at %s, before the clip's end at %s",
-            fmt_ticks(C.next, a, sizeof a), fmt_ticks(C.end, b, sizeof b));
+            clip_format_time(C.next, a, sizeof a), clip_format_time(C.end, b, sizeof b));
     if (!finish() && !failed) {
         fflush(NULL);
         _exit(1);
@@ -341,8 +411,8 @@ void clip_present(bool dirty) {
             if (t / 3600 > C.logged) {
                 char a[32], b[32];
                 C.logged = t / 3600;
-                log_msg("clip: replaying, at %s of %s after %.1f s", fmt_ticks(t, a, sizeof a),
-                        fmt_ticks(C.start, b, sizeof b), since_launch());
+                log_msg("clip: replaying, at %s of %s after %.1f s", clip_format_time(t, a, sizeof a),
+                        clip_format_time(C.start, b, sizeof b), since_launch());
             }
             return;
         }
@@ -441,6 +511,53 @@ static bool check_out(const char *path, const char *replay, char *err, size_t er
     return true;
 }
 
+/* The numbered clips' files are named from out, or else the replay. */
+static void numbered_base(const char *out, const char *replay) {
+    C.numbered = true;
+    if (out && *out) {
+        snprintf(C.base, sizeof C.base, "%s", out);
+    } else {
+        size_t len = strlen(replay), ext = strlen(".lwreplay");
+        if (len > ext && strcmp(replay + len - ext, ".lwreplay") == 0)
+            len -= ext;
+        snprintf(C.base, sizeof C.base, "%.*s-clip.mp4", (int)len, replay);
+    }
+}
+
+/* LOONY_CLIP=clips: a clip for each span in the replay's list. */
+static bool open_list(const char *out, const char *replay, char *err, size_t errlen) {
+    char path[PATH_MAX];
+    if (!clip_list_path(replay, path, sizeof path)) {
+        snprintf(err, errlen, "LOONY_REPLAY is longer than %d characters", PATH_MAX - 16);
+        return false;
+    }
+    size_t len;
+    char *text = (char *)read_file(path, &len);
+    if (!text) {
+        snprintf(err, errlen, "can't read the clips of %s from %s: %s (LOONY_WATCH=1 saves them)",
+                 replay, path, strerror(errno));
+        return false;
+    }
+    char why[200];
+    bool ok = clip_parse_list(text, &C.spans, &C.nspans, why, sizeof why);
+    free(text);
+    if (!ok) {
+        snprintf(err, errlen, "%s, %s", path, why);
+        return false;
+    }
+    if (!C.nspans) {
+        snprintf(err, errlen, "%s has no clips", path);
+        free(C.spans);
+        C.spans = NULL;
+        return false;
+    }
+    size_t listed = C.nspans;
+    C.nspans = clip_merge_spans(C.spans, C.nspans);
+    numbered_base(out, replay);
+    log_msg("clip: %zu listed in %s%s", listed, path, C.nspans < listed ? ", some overlapping" : "");
+    return true;
+}
+
 /* LOONY_CLIP=marks: a clip for each mark in the replay, merged where they
    meet, named from out or else the replay's name. */
 static bool open_marks(const char *out, const char *replay, const char *before, const char *after,
@@ -462,18 +579,10 @@ static bool open_marks(const char *out, const char *replay, const char *before, 
     if (!(C.spans = malloc(n * sizeof *C.spans)))
         fatal("out of memory");
     C.nspans = clip_mark_spans(marks, n, b, a, C.spans);
-    C.marks = true;
-    if (out && *out) {
-        snprintf(C.base, sizeof C.base, "%s", out);
-    } else {
-        size_t len = strlen(replay), ext = strlen(".lwreplay");
-        if (len > ext && strcmp(replay + len - ext, ".lwreplay") == 0)
-            len -= ext;
-        snprintf(C.base, sizeof C.base, "%.*s-clip.mp4", (int)len, replay);
-    }
+    numbered_base(out, replay);
     char t[32];
     for (size_t i = 0; i < n; i++)
-        log_msg("clip: mark %zu at tick %u (%s)", i + 1, marks[i], fmt_ticks(marks[i], t, sizeof t));
+        log_msg("clip: mark %zu at tick %u (%s)", i + 1, marks[i], clip_format_time(marks[i], t, sizeof t));
     return true;
 }
 
@@ -499,11 +608,18 @@ bool clip_open(char *err, size_t errlen) {
     if (strcmp(span, "marks") == 0) {
         if (!open_marks(out, replay, before, after, err, errlen))
             return false;
+    } else if (strcmp(span, "clips") == 0) {
+        if (around) {
+            snprintf(err, errlen, "LOONY_CLIP_BEFORE and LOONY_CLIP_AFTER are for LOONY_CLIP=marks");
+            return false;
+        }
+        if (!open_list(out, replay, err, errlen))
+            return false;
     } else {
         static clip_span one;
         if (!clip_parse_span(span, &one.start, &one.end)) {
             snprintf(err, errlen,
-                     "LOONY_CLIP=%s isn't marks or <start>-<end>, each m:ss, h:mm:ss or ticks, "
+                     "LOONY_CLIP=%s isn't marks, clips or <start>-<end>, each m:ss, h:mm:ss or ticks, "
                      "start first",
                      span);
             return false;
@@ -571,10 +687,12 @@ bool clip_open(char *err, size_t errlen) {
     for (size_t i = 0; i < C.nspans; i++) {
         const clip_span *c = &C.spans[i];
         file_of(i, path, sizeof path);
-        fmt_ticks(c->start, a, sizeof a);
-        fmt_ticks(c->end, b, sizeof b);
-        if (!C.marks)
+        clip_format_time(c->start, a, sizeof a);
+        clip_format_time(c->end, b, sizeof b);
+        if (!C.numbered)
             log_msg("clip: replaying to %s, then writing %s-%s to %s", a, a, b, path);
+        else if (!c->first_mark)
+            log_msg("clip: %s-%s to %s", a, b, path);
         else if (c->first_mark == c->last_mark)
             log_msg("clip: %s-%s (mark %d) to %s", a, b, c->first_mark, path);
         else
