@@ -294,6 +294,14 @@ int main(int argc, char **argv) {
         cpu_init();
         if (!image_load(buf, len, &img, err, sizeof err))
             return startup_error("can't load %s: %s", path, err);
+        /* Esc pauses during cut-scenes too (see patch.h). Without it the game
+           still plays, as it always did. */
+        if (strcmp(game->id, "loony-labyrinth") == 0) {
+            if (patch_loony_esc_in_cutscenes(img.code_base, err, sizeof err))
+                log_msg("Loony Labyrinth: Esc pauses during cut-scenes");
+            else
+                log_msg("Loony Labyrinth: Esc can't pause during cut-scenes: %s", err);
+        }
         if (!rsrc_open(fork, fork_len, err, sizeof err))
             return startup_error("can't load the resources of %s: %s", path, err);
         mm_init();
