@@ -12,6 +12,7 @@
      <tick> type <text>       type the rest of the line into a dialog, as Cmd-V would
      <tick> blur              the window loses focus (kEventAppDeactivated)
      <tick> focus             the window gains focus (kEventAppActivated)
+     <tick> mark              mark the moment for a clip, as Cmd-S would (replay.h)
    Blank lines and lines starting with '#' are ignored. Ticks are 1/60 s
    since launch and must not decrease. */
 
@@ -24,6 +25,7 @@ typedef enum {
     SCRIPT_TYPE,
     SCRIPT_BLUR,
     SCRIPT_FOCUS,
+    SCRIPT_MARK,
 } script_kind;
 
 typedef struct {

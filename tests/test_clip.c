@@ -40,6 +40,29 @@ TEST(clip_spans_are_times_or_ticks) {
     CHECK(bad_span("99999999999-99999999999999"));
 }
 
+/* Each mark's clip runs from before it to after it; clips that overlap or
+   nearly meet are one. */
+TEST(clip_marks_make_spans_merged_where_they_meet) {
+    uint32_t marks[] = {1800, 2000, 9000, 9000 + 180 + CLIP_MERGE_GAP + 1800,
+                        9000 + 2 * (180 + CLIP_MERGE_GAP + 1800) + 1};
+    clip_span s[5];
+    CHECK_EQ(clip_mark_spans(marks, 5, 1800, 180, s), 3);
+    CHECK_EQ(s[0].start, 0);
+    CHECK_EQ(s[0].end, 2180);
+    CHECK_EQ(s[0].first_mark, 1);
+    CHECK_EQ(s[0].last_mark, 2);
+    CHECK_EQ(s[1].start, 7200);
+    CHECK_EQ(s[1].end, marks[3] + 180); /* CLIP_MERGE_GAP apart: one clip */
+    CHECK_EQ(s[1].first_mark, 3);
+    CHECK_EQ(s[1].last_mark, 4);
+    CHECK_EQ(s[2].start, marks[4] - 1800); /* a tick more: another */
+    CHECK_EQ(s[2].first_mark, 5);
+    uint32_t zero = 0;
+    CHECK_EQ(clip_mark_spans(&zero, 1, 60, 0, s), 1);
+    CHECK_EQ(s[0].start, 0);
+    CHECK_EQ(s[0].end, 1);
+}
+
 TEST(clip_default_bitrate_grows_with_the_picture) {
     CHECK(clip_default_kbps(800, 600) < clip_default_kbps(1600, 1200));
     CHECK(clip_default_kbps(1600, 1200) < clip_default_kbps(3200, 2400));
@@ -163,15 +186,17 @@ TEST(mp4_needs_a_first_frame_to_repeat) {
     CHECK_CONTAINS(err, "no frame to show again");
 }
 
-static const char *const env_names[] = {"LOONY_CLIP", "LOONY_CLIP_OUT", "LOONY_CLIP_KBPS",
-                                        "LOONY_REPLAY", "LOONY_CLIP_QUALITY", "LOONY_CLIP_WIDTH"};
+static const char *const env_names[] = {"LOONY_CLIP",         "LOONY_CLIP_OUT",   "LOONY_CLIP_KBPS",
+                                        "LOONY_REPLAY",       "LOONY_CLIP_QUALITY", "LOONY_CLIP_WIDTH",
+                                        "LOONY_CLIP_BEFORE",  "LOONY_CLIP_AFTER"};
 
 static void clear_env(void) {
     for (size_t i = 0; i < sizeof env_names / sizeof env_names[0]; i++)
         unsetenv(env_names[i]);
 }
 
-static const char *quality, *width; /* LOONY_CLIP_QUALITY and _WIDTH for clip_open_with */
+/* LOONY_CLIP_QUALITY, _WIDTH, _BEFORE and _AFTER for clip_open_with */
+static const char *quality, *width, *before, *after;
 
 /* clip_open, in a child: it turns the clip on for good. Its err is the
    output. The child exits with exit, so what a clip logs at exit is there.
@@ -194,8 +219,8 @@ static void child_clip_open(void *unused) {
 static int clip_open_with(const char *clip, const char *out, const char *kbps, const char *replay,
                           char *log, size_t cap) {
     clear_env();
-    const char *v[] = {clip, out, kbps, replay, quality, width};
-    for (int i = 0; i < 6; i++)
+    const char *v[] = {clip, out, kbps, replay, quality, width, before, after};
+    for (int i = 0; i < 8; i++)
         if (v[i])
             setenv(env_names[i], v[i], 1);
     int status = test_run_child(child_clip_open, NULL, log, cap);
@@ -212,7 +237,7 @@ TEST(clip_open_checks_its_settings) {
     CHECK_EQ(clip_open_with(NULL, "x.mp4", NULL, NULL, out, sizeof out), 1);
     CHECK_CONTAINS(out, "need LOONY_CLIP");
     CHECK_EQ(clip_open_with("1:30-1:00", NULL, NULL, "r.lwreplay", out, sizeof out), 1);
-    CHECK_CONTAINS(out, "isn't <start>-<end>");
+    CHECK_CONTAINS(out, "isn't marks or <start>-<end>");
     CHECK_EQ(clip_open_with("1:00-1:30", NULL, "fast", "r.lwreplay", out, sizeof out), 1);
     CHECK_CONTAINS(out, "LOONY_CLIP_KBPS=fast");
     /* The child exits before the clip starts, but not at the end of a
@@ -236,6 +261,22 @@ TEST(clip_open_checks_its_settings) {
     width = "1600";
     CHECK_EQ(clip_open_with("1:00-1:30", NULL, NULL, "r.lwreplay", out, sizeof out), 0);
     width = NULL;
+    before = "10";
+    CHECK_EQ(clip_open_with(NULL, NULL, NULL, "r.lwreplay", out, sizeof out), 1);
+    CHECK_CONTAINS(out, "LOONY_CLIP_AFTER need LOONY_CLIP");
+    CHECK_EQ(clip_open_with("1:00-1:30", NULL, NULL, "r.lwreplay", out, sizeof out), 1);
+    CHECK_CONTAINS(out, "are for LOONY_CLIP=marks");
+    before = "-1";
+    CHECK_EQ(clip_open_with("marks", NULL, NULL, "r.lwreplay", out, sizeof out), 1);
+    CHECK_CONTAINS(out, "LOONY_CLIP_BEFORE=-1 isn't 0 to 3600 (seconds)");
+    before = "0";
+    after = "0";
+    CHECK_EQ(clip_open_with("marks", NULL, NULL, "r.lwreplay", out, sizeof out), 1);
+    CHECK_CONTAINS(out, "can't both be 0");
+    before = after = NULL;
+    /* No replay was opened here, so it has no marks. */
+    CHECK_EQ(clip_open_with("marks", NULL, NULL, "r.lwreplay", out, sizeof out), 1);
+    CHECK_CONTAINS(out, "the replay r.lwreplay has no marks");
 }
 
 /* An output the clip couldn't write is refused before the seek, and so is

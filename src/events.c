@@ -287,7 +287,7 @@ static void replay_input(void) {
             events_post_activation(v[0]);
         else if (replay_take(REPLAY_QUIT, v))
             events_request_quit();
-        else
+        else if (!replay_take_mark()) /* a mark is only logged */
             return;
     }
 }
@@ -464,6 +464,7 @@ static void run_script(uint32_t now) {
         case SCRIPT_TYPE: events_host_text(a.path); break;
         case SCRIPT_BLUR: events_host_activation(false); break;
         case SCRIPT_FOCUS: events_host_activation(true); break;
+        case SCRIPT_MARK: replay_mark(); break;
         }
     }
 }

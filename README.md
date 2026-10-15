@@ -95,6 +95,7 @@ and right sides):
 | / | Right flipper |
 | Space | Nudge |
 | Cmd-F | Full screen on or off |
+| Cmd-S | Mark the moment for a clip (Loony Labyrinth; see Replays) |
 | Cmd-Q or closing the window | Quit |
 
 The keys can be changed from the game's OPTIONS menu. Unregistered, games are
@@ -247,7 +248,8 @@ action per line:
 
 Scripts can also click (`20 click 460 270`, in emulated-screen pixels) and type
 into a dialog (`50 type me@example.com`, the rest of the line), take focus away
-and give it back (`60 blur`, `90 focus`), and may be any length. `tools/soak_script.py` writes one that keeps playing for an hour (game
+and give it back (`60 blur`, `90 focus`), mark a clip while recording
+(`70 mark`, as Cmd-S does), and may be any length. `tools/soak_script.py` writes one that keeps playing for an hour (game
 starts, plunger, flippers, nudges, a screenshot every 5 minutes):
 
 ```bash
@@ -298,12 +300,23 @@ Design: `docs/superpowers/specs/2026-09-30-loony-shim-design.md`
 
 ### Replays (prototype, Loony Labyrinth)
 
-`LOONY_RECORD` saves what reached the game from outside while you play
-normally (the clock and date, keys and focus, when sound callbacks came, and
-the preferences it started from) into a small file, a few KB a minute. The
-date a replay sees is the recording's: a high score keeps its timestamp.
-`LOONY_REPLAY` plays that file back headless, frame for frame and faster
-than real time, from those preferences in a folder of its own:
+Every game of Loony Labyrinth is recorded: what reached the game from
+outside while you played (the clock and date, keys and focus, when sound
+callbacks came, and the preferences it started from) goes into a small file,
+a few KB a minute, in `~/Library/Application Support/littlewing-shim/recordings`
+(`recordings` in `LOONY_DATA_DIR` when that is set). Files are named
+`loony-labyrinth-<date>-<time>.lwreplay`. The last three games are kept, and
+so is every game where you pressed Cmd-S (renamed `...-marked.lwreplay` at
+the first press) and every game that set a high score still in the table: a
+game whose score is pushed off the table goes with it. A game is matched to
+a score by time: the score's timestamp falls between the start in the
+recording's name and its last write. Older ones are deleted when a game
+starts.
+`LOONY_RECORD=game.lwreplay` records to a file of your choosing instead, and
+`LOONY_RECORD=0` records nothing. The date a replay sees is the recording's:
+a high score keeps its timestamp. `LOONY_REPLAY` plays a recording back
+headless, frame for frame and faster than real time, from those preferences
+in a folder of its own:
 
 ```bash
 LOONY_GAME=loony-labyrinth LOONY_RECORD=game.lwreplay ./build-release/loony
@@ -345,6 +358,27 @@ past it writes nothing and exits with status 4. A file already at
 `LOONY_CLIP_OUT` is replaced, but the replay itself is refused, as is a
 folder that can't be written, before the seek. Recordings in the
 first format (before dates were recorded) replay too, with the host's dates.
+
+While you play, Cmd-S marks the moment, the way a console saves the last
+30 seconds. The window's title says "clip 1 marked" for a couple of seconds,
+and the game never sees the key. A mark is one record in the file, and a
+replay only logs it. Afterwards, `LOONY_CLIP=marks` makes a clip of every
+mark in a single pass:
+
+```bash
+LOONY_REPLAY=game.lwreplay LOONY_CLIP=marks ./build-release/loony
+```
+
+Each clip runs from 30 seconds before its mark to 3 seconds after it, since
+the key comes a moment late; `LOONY_CLIP_BEFORE` and `LOONY_CLIP_AFTER` set
+those, in seconds. The clips go next to the replay as `game-clip-1.mp4`,
+`game-clip-2.mp4` and so on (with `LOONY_CLIP_OUT=ramps.mp4`, `ramps-1.mp4`
+and so on), and the other `LOONY_CLIP_` settings apply to each. Marks whose
+clips overlap, or come within a second of each other, share one clip. A
+replay with no marks is refused. When nothing is being recorded
+(`LOONY_RECORD=0`, or with `LOONY_FIXED_CLOCK=1`), Cmd-S marks nothing and
+the title says so. Recordings are now in format 3 (the one with marks), which
+older builds refuse.
 
 While recording, the game's clock moves in whole milliseconds, and when the
 game spins on `TickCount` waiting for the next tick, it sleeps instead. The

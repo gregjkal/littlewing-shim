@@ -9,6 +9,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "plist.h"
 #include "util.h"
 
 static const game_info games[] = {
@@ -30,6 +31,25 @@ const game_info *game_by_id(const char *id) {
         if (strcmp(games[i].id, id) == 0)
             return &games[i];
     return NULL;
+}
+
+size_t game_high_score_times(const char *prefs, time_t *out, size_t cap) {
+    plist_entry *e;
+    uint32_t n;
+    char err[256];
+    if (plist_read(prefs, &e, &n, err, sizeof err) != PLIST_OK)
+        return 0;
+    size_t k = 0;
+    for (uint32_t i = 0; i < n && k < cap; i++) {
+        struct tm tm = {.tm_isdst = -1};
+        const char *end;
+        if (e[i].is_number || strncmp(e[i].key, "highscore timestamp ", 20) != 0 ||
+            !(end = strptime(e[i].str, "%Y-%m-%d %H:%M:%S", &tm)) || *end)
+            continue;
+        out[k++] = mktime(&tm);
+    }
+    plist_free(e, n);
+    return k;
 }
 
 const char *game_apps_dir(void) {

@@ -1,6 +1,8 @@
 #include "test.h"
 
 #include <CommonCrypto/CommonDigest.h>
+#include <dirent.h>
+#include <sys/time.h>
 #include <SDL3/SDL_scancode.h>
 #include <stdlib.h>
 #include <time.h>
@@ -8,6 +10,7 @@
 #include <zlib.h>
 
 #include "asm.h"
+#include "clip.h"
 #include "events.h"
 #include "harness.h"
 #include "memmgr.h"
@@ -180,6 +183,245 @@ TEST(replay_file_round_trips_every_kind_and_the_starting_state) {
     CHECK(replay_take(REPLAY_FOCUS, v));
     CHECK_EQ(v[0], 0);
     CHECK(replay_take(REPLAY_QUIT, NULL));
+}
+
+/* Marks (Cmd-S while recording) are found before the replay reaches them,
+   at the ticks they were made, and a replay takes each where it was made. A
+   replay marks nothing itself. */
+TEST(replay_marks_are_found_before_they_are_played) {
+    BEGIN_TEST();
+    CHECK_EQ(replay_mark(), 0); /* nothing recorded */
+    CHECK(record(NULL));
+    replay_clock(1000000); /* 1 s: tick 60 */
+    CHECK_EQ(replay_mark(), 1);
+    replay_clock(2500000); /* tick 150 */
+    replay_step();
+    CHECK_EQ(replay_mark(), 2);
+    replay_step();
+    replay_finish();
+
+    CHECK(play_back());
+    const uint32_t *ticks;
+    CHECK_EQ(replay_marks(&ticks), 2);
+    CHECK_EQ(ticks[0], 60);
+    CHECK_EQ(ticks[1], 150);
+    CHECK_EQ(replay_mark(), 0);
+    CHECK(!replay_take_mark());
+    CHECK_EQ(replay_clock(0), 1000000);
+    CHECK(replay_take_mark());
+    CHECK(!replay_take_mark());
+    CHECK_EQ(replay_clock(0), 2500000);
+    replay_step();
+    CHECK(replay_take_mark());
+}
+
+/* LOONY_CLIP=marks, in a child (clip_open turns clips on for good): the
+   clips of the replay's marks, and their files. */
+static void child_clip_marks(void *unused) {
+    (void)unused;
+    char err[256], play_data[1300];
+    snprintf(play_data, sizeof play_data, "%s/play", dir);
+    replay_reset();
+    unsetenv("LOONY_RECORD");
+    setenv("LOONY_REPLAY", file, 1);
+    setenv("LOONY_DATA_DIR", play_data, 1);
+    setenv("LOONY_CLIP", "marks", 1);
+    setenv("LOONY_CLIP_BEFORE", "1", 1);
+    setenv("LOONY_CLIP_AFTER", "0.5", 1);
+    if (!replay_open(err, sizeof err) || !clip_open(err, sizeof err)) {
+        fprintf(stderr, "%s\n", err);
+        _exit(1);
+    }
+    _exit(0);
+}
+
+TEST(replay_marks_become_clips_named_after_the_replay) {
+    BEGIN_TEST();
+    CHECK(record(NULL));
+    replay_clock(1000000); /* tick 60 */
+    replay_mark();
+    replay_clock(2500000); /* tick 150: its clip meets the first's */
+    replay_mark();
+    replay_clock(6666667); /* tick 399 */
+    replay_mark();
+    replay_finish();
+    char out[8192], want[2048];
+    CHECK_EQ(test_run_child(child_clip_marks, NULL, out, sizeof out), 0);
+    CHECK_CONTAINS(out, "clip: mark 1 at tick 60 (0:01)");
+    CHECK_CONTAINS(out, "clip: mark 2 at tick 150 (0:02.50)");
+    CHECK_CONTAINS(out, "clip: mark 3 at tick 399 (0:06.65)");
+    snprintf(want, sizeof want, "clip: 0:00-0:03 (marks 1 to 2) to %s/run-clip-1.mp4", dir);
+    CHECK_CONTAINS(out, want);
+    snprintf(want, sizeof want, "clip: 0:05.65-0:07.15 (mark 3) to %s/run-clip-2.mp4", dir);
+    CHECK_CONTAINS(out, want);
+
+    CHECK(record(NULL)); /* none */
+    replay_finish();
+    CHECK_EQ(test_run_child(child_clip_marks, NULL, out, sizeof out), 1);
+    CHECK_CONTAINS(out, "has no marks (Cmd-S marks one while recording)");
+}
+
+static void touch(const char *folder, const char *name) {
+    char path[1400];
+    snprintf(path, sizeof path, "%s/%s", folder, name);
+    FILE *f = fopen(path, "w");
+    if (f)
+        fclose(f);
+}
+
+static bool exists_in(const char *folder, const char *name) {
+    char path[1400];
+    snprintf(path, sizeof path, "%s/%s", folder, name);
+    return access(path, F_OK) == 0;
+}
+
+/* The app records every game by itself: before it starts, the game's
+   recordings beyond the last REPLAY_KEEP_GAMES (this one counted) go, but
+   not a marked one or another game's. The first mark renames the file. */
+TEST(replay_records_every_game_keeping_the_last_three_and_the_marked) {
+    BEGIN_TEST();
+    char rec_dir[1300];
+    snprintf(rec_dir, sizeof rec_dir, "%s/recordings", dir);
+    CHECK(make_dirs(rec_dir));
+    static const char *const old[] = {
+        "loony-labyrinth-2026-01-01-120000.lwreplay",
+        "loony-labyrinth-2026-01-02-120000-marked.lwreplay",
+        "loony-labyrinth-2026-01-03-120000.lwreplay",
+        "loony-labyrinth-2026-01-04-120000.lwreplay",
+        "loony-labyrinth-2026-01-05-120000.lwreplay",
+        "crystal-caliburn-2026-01-01-120000.lwreplay",
+        "notes.txt",
+    };
+    for (size_t i = 0; i < sizeof old / sizeof old[0]; i++)
+        touch(rec_dir, old[i]);
+    unsetenv("LOONY_RECORD");
+    unsetenv("LOONY_FIXED_CLOCK");
+    unsetenv("LOONY_REPLAY");
+    replay_reset();
+    replay_record_into(rec_dir, "loony-labyrinth", NULL, 0);
+    CHECK(!exists_in(rec_dir, old[0]));
+    CHECK(exists_in(rec_dir, old[1])); /* marked */
+    CHECK(!exists_in(rec_dir, old[2]));
+    CHECK(exists_in(rec_dir, old[3]));
+    CHECK(exists_in(rec_dir, old[4]));
+    CHECK(exists_in(rec_dir, old[5])); /* another game's */
+    CHECK(exists_in(rec_dir, old[6]));
+
+    char err[256];
+    CHECK(replay_start("loony-labyrinth", exe, sizeof exe, NULL, err, sizeof err));
+    CHECK(replay_recording());
+    DIR *d = opendir(rec_dir);
+    char name[256] = "";
+    struct dirent *e;
+    while (d && (e = readdir(d)))
+        if (strncmp(e->d_name, "loony-labyrinth-2026-01", 23) != 0 &&
+            strncmp(e->d_name, "loony-labyrinth-", 16) == 0)
+            snprintf(name, sizeof name, "%s", e->d_name);
+    if (d)
+        closedir(d);
+    CHECK(strlen(name) == strlen("loony-labyrinth-2026-10-15-101500.lwreplay"));
+    CHECK(strstr(name, ".lwreplay") != NULL);
+    replay_step();
+    CHECK_EQ(replay_mark(), 1);
+    char marked[300];
+    snprintf(marked, sizeof marked, "%.*s-marked.lwreplay", (int)(strlen(name) - 9), name);
+    CHECK(!exists_in(rec_dir, name));
+    CHECK(exists_in(rec_dir, marked));
+    CHECK_EQ(replay_mark(), 2); /* renamed once */
+    replay_finish();
+    CHECK(exists_in(rec_dir, marked));
+
+    /* The kept recording replays, marks and all. */
+    snprintf(file, sizeof file, "%s/%s", rec_dir, marked);
+    CHECK(play_back());
+    const uint32_t *ticks;
+    CHECK_EQ(replay_marks(&ticks), 2);
+}
+
+static time_t local_time(int day, int h, int mi, int sec) {
+    struct tm tm = {.tm_year = 2026 - 1900, .tm_mon = 0, .tm_mday = day, .tm_hour = h,
+                    .tm_min = mi, .tm_sec = sec, .tm_isdst = -1};
+    return mktime(&tm);
+}
+
+/* A recording of its own name that ended (was last written) at end. */
+static void recording_ending(const char *folder, const char *name, time_t end) {
+    char path[1400];
+    touch(folder, name);
+    snprintf(path, sizeof path, "%s/%s", folder, name);
+    struct timeval tv[2] = {{end, 0}, {end, 0}};
+    utimes(path, tv);
+}
+
+/* An older game is kept while a high score it set is in the table (it was
+   recording when the score's time came), and goes once the score is gone. */
+TEST(replay_keeps_the_games_whose_high_scores_are_in_the_table) {
+    BEGIN_TEST();
+    char rec_dir[1300];
+    snprintf(rec_dir, sizeof rec_dir, "%s/recordings", dir);
+    CHECK(make_dirs(rec_dir));
+    static const char *const old[] = {
+        "loony-labyrinth-2026-01-01-120000.lwreplay", /* its score is in the table */
+        "loony-labyrinth-2026-01-02-120000.lwreplay", /* its score was evicted */
+        "loony-labyrinth-2026-01-03-120000.lwreplay", /* a score a second after its end */
+        "loony-labyrinth-2026-01-04-120000.lwreplay", /* a score long after its end */
+        "loony-labyrinth-2026-01-05-120000.lwreplay",
+        "loony-labyrinth-2026-01-06-120000.lwreplay",
+    };
+    for (int i = 0; i < 6; i++)
+        recording_ending(rec_dir, old[i], local_time(i + 1, 12, 10, 0));
+    time_t scores[] = {local_time(1, 12, 5, 0), local_time(3, 12, 10, 1), local_time(4, 13, 0, 0)};
+    unsetenv("LOONY_RECORD");
+    unsetenv("LOONY_FIXED_CLOCK");
+    unsetenv("LOONY_REPLAY");
+    replay_reset();
+    replay_record_into(rec_dir, "loony-labyrinth", scores, 3);
+    CHECK(exists_in(rec_dir, old[0]));
+    CHECK(!exists_in(rec_dir, old[1]));
+    CHECK(exists_in(rec_dir, old[2]));
+    CHECK(!exists_in(rec_dir, old[3]));
+    CHECK(exists_in(rec_dir, old[4])); /* the last two, with this game three */
+    CHECK(exists_in(rec_dir, old[5]));
+
+    /* The first game's score leaves the table: next time, so does the game. */
+    replay_reset();
+    replay_record_into(rec_dir, "loony-labyrinth", &scores[1], 1);
+    CHECK(!exists_in(rec_dir, old[0]));
+    CHECK(exists_in(rec_dir, old[2]));
+}
+
+/* LOONY_RECORD=0 turns it off; LOONY_RECORD names the file instead; a
+   fixed clock or a replay never records. */
+TEST(replay_records_every_game_unless_told_otherwise) {
+    BEGIN_TEST();
+    char rec_dir[1300], err[256];
+    snprintf(rec_dir, sizeof rec_dir, "%s/recordings", dir);
+    unsetenv("LOONY_REPLAY");
+    unsetenv("LOONY_FIXED_CLOCK");
+    setenv("LOONY_RECORD", "0", 1);
+    replay_reset();
+    replay_record_into(rec_dir, "loony-labyrinth", NULL, 0);
+    CHECK(replay_start("loony-labyrinth", exe, sizeof exe, NULL, err, sizeof err));
+    CHECK(!replay_recording());
+    CHECK(access(rec_dir, F_OK) != 0);
+
+    unsetenv("LOONY_RECORD");
+    setenv("LOONY_FIXED_CLOCK", "1", 1);
+    replay_reset();
+    replay_record_into(rec_dir, "loony-labyrinth", NULL, 0);
+    CHECK(replay_start("loony-labyrinth", exe, sizeof exe, NULL, err, sizeof err));
+    CHECK(!replay_recording());
+
+    unsetenv("LOONY_FIXED_CLOCK");
+    setenv("LOONY_RECORD", file, 1);
+    replay_reset();
+    replay_record_into(rec_dir, "loony-labyrinth", NULL, 0);
+    CHECK(replay_start("loony-labyrinth", exe, sizeof exe, NULL, err, sizeof err));
+    CHECK(replay_recording());
+    CHECK_EQ(replay_mark(), 1);
+    replay_finish();
+    CHECK(access(file, F_OK) == 0); /* a name given is kept as it is */
+    CHECK(access(rec_dir, F_OK) != 0);
 }
 
 TEST(replay_refuses_another_game_or_program) {
@@ -607,7 +849,7 @@ TEST(replay_refuses_a_damaged_header) {
     CHECK_STR(err, "the replay's header is damaged");
     write_replay("LWREPLAY\x09", 9);
     CHECK(!replay_open(err, sizeof err));
-    CHECK_STR(err, "replay format 9 (this program reads 1 to 2)");
+    CHECK_STR(err, "replay format 9 (this program reads 1 to 3)");
     uint8_t h[64];
     static const char *const damaged[][2] = {
         {"\x80\x80\x80\x80\x80\x20", "\x01"}, /* a start of 2^40 s: 36812 AD */

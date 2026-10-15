@@ -282,6 +282,24 @@ int main(int argc, char **argv) {
     bool have_data = files_data_dir(game->id, data_dir, sizeof data_dir);
     if (!have_data)
         log_msg("neither LOONY_DATA_DIR nor HOME is set: nothing will be saved");
+    if (strcmp(game->id, "loony-labyrinth") == 0) { /* replays are its alone, for now */
+        char rec_dir[PATH_MAX + 16];
+        if (files_data_root(data_root, sizeof data_root))
+            snprintf(rec_dir, sizeof rec_dir, "%s/recordings", data_root);
+        else if (have_data)
+            snprintf(rec_dir, sizeof rec_dir, "%s/recordings", data_dir);
+        else
+            rec_dir[0] = '\0';
+        time_t scores[16];
+        size_t nscores = 0;
+        if (have_data) {
+            char prefs[PATH_MAX + 16];
+            snprintf(prefs, sizeof prefs, "%s/prefs.plist", data_dir);
+            nscores = game_high_score_times(prefs, scores, 16);
+        }
+        if (rec_dir[0])
+            replay_record_into(rec_dir, game->id, scores, nscores);
+    }
     if (!replay_start(game->id, buf, len, have_data ? data_dir : NULL, err, sizeof err))
         return startup_error("%s", err);
     if (files_init(dir, have_data ? data_dir : NULL)) {
@@ -307,7 +325,8 @@ int main(int argc, char **argv) {
     events_set_screenshot(display_write_png);
     events_set_cursor(display_set_cursor);
     static const display_input input = {events_host_key, events_host_activation,
-                                        events_host_quit, events_host_mouse, events_host_text};
+                                        events_host_quit, events_host_mouse, events_host_text,
+                                        replay_mark};
     display_set_input(&input);
     display_set_vsync(!misc_fixed_clock() && !replay_playing());
     sound_start_output();

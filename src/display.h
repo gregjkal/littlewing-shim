@@ -11,7 +11,10 @@
    the process exits, including after a crash. */
 void display_init(void);
 
-/* The window's title. Sets it at once on an open window. */
+#define DISPLAY_FLASH_MS 2500
+
+/* The window's title. Sets it at once on an open window (after a message
+   display_poll shows there). */
 void display_set_title(const char *title);
 
 /* Draws the current screen. */
@@ -34,11 +37,13 @@ typedef struct {
     void (*quit)(void); /* window closed or Cmd-Q */
     void (*mouse)(int x, int y, bool down); /* left button, emulated screen coordinates */
     void (*paste)(const char *utf8);        /* Cmd-V: the clipboard's text */
+    int (*mark)(void); /* Cmd-S: marks a clip; its number, or 0 if nothing is recorded */
 } display_input;
 void display_set_input(const display_input *in);
 
 /* Handles pending SDL events: keys go to the input callbacks, except Cmd-Q
-   (quit), Cmd-F (toggle full screen) and Cmd-V (paste), which the game never
+   (quit), Cmd-F (toggle full screen), Cmd-V (paste) and Cmd-S (mark a clip,
+   said in the window's title for DISPLAY_FLASH_MS), which the game never
    sees. Left-button clicks are mapped from the window to the emulated
    screen, through the letterboxing and scaling. */
 void display_poll(void);

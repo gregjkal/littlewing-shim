@@ -63,11 +63,13 @@ TEST(script_clicks_typing_and_focus) {
     CHECK_STR(a.path, "me@example.com  two words");
     CHECK(script_next(7, &a));
     CHECK_STR(a.path, "");
-    CHECK(script_parse("8 blur\n9 focus\n", err, sizeof err));
+    CHECK(script_parse("8 blur\n9 focus\n10 mark\n", err, sizeof err));
     CHECK(script_next(8, &a));
     CHECK_EQ(a.kind, SCRIPT_BLUR);
     CHECK(script_next(9, &a));
     CHECK_EQ(a.kind, SCRIPT_FOCUS);
+    CHECK(script_next(10, &a));
+    CHECK_EQ(a.kind, SCRIPT_MARK);
     CHECK(!script_parse("5 click 320\n", err, sizeof err));
     CHECK_CONTAINS(err, "line 1: click needs x and y");
 }
