@@ -391,7 +391,7 @@ LOONY_REPLAY=game.lwreplay LOONY_CLIP=clips ./build-release/loony
 
 | Key | While watching |
 | --- | --- |
-| Space | Pause, or go on |
+| Space, K | Pause, or go on |
 | Right, Left | Faster or slower: 1x, 2x, 4x, 8x, as fast as it can |
 | I, O | Where a clip starts, and where it ends (O saves it) |
 | J, L | Back or ahead 10 seconds (with Shift, a minute) |

@@ -8,7 +8,7 @@
    moment in a long game and mark a clip of it. The host takes the keys (a
    replay's game never sees the host's input):
 
-     Space         pause, or go on
+     Space, K      pause, or go on
      Right, Left   faster or slower: 1x, 2x, 4x, 8x, as fast as it can
      I, O          the start and end of a clip; O saves it
      J, L          back or ahead 10 seconds (Shift: a minute)

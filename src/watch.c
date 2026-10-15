@@ -339,6 +339,7 @@ void watch_key(int scancode, bool down, bool repeat) {
     char t[32];
     switch (scancode) {
     case SDL_SCANCODE_SPACE:
+    case SDL_SCANCODE_K: /* as on YouTube */
         if (repeat || W.at_end)
             break;
         W.paused = !W.paused;

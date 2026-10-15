@@ -1,6 +1,8 @@
 #include "test.h"
 
+#include <SDL3/SDL.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include "watch.h"
 
@@ -51,4 +53,33 @@ TEST(watch_open_checks_its_settings) {
     CHECK(!open_with("game.lwreplay", "LOONY_WATCH_IN", "x", err, sizeof err));
     CHECK_CONTAINS(err, "LOONY_WATCH_IN=x");
     watch_reset();
+}
+
+/* Pressing keys: K pauses as Space does (YouTube's key), a repeat or a
+   release does nothing, and Right speeds up. Logged by watch_key. */
+static void child_press_keys(void *unused) {
+    (void)unused;
+    char err[256];
+    clear_env();
+    setenv("LOONY_WATCH", "1", 1);
+    setenv("LOONY_REPLAY", "game.lwreplay", 1);
+    if (!watch_open(err, sizeof err))
+        _exit(1);
+    watch_start("Game", NULL);
+    watch_key(SDL_SCANCODE_K, true, false);
+    watch_key(SDL_SCANCODE_K, true, true);   /* held: no change */
+    watch_key(SDL_SCANCODE_K, false, false); /* released */
+    watch_key(SDL_SCANCODE_SPACE, true, false);
+    watch_key(SDL_SCANCODE_RIGHT, true, false);
+    _exit(0);
+}
+
+TEST(watch_k_pauses_like_space) {
+    char out[4096];
+    CHECK_EQ(test_run_child(child_press_keys, NULL, out, sizeof out), 0);
+    const char *paused = strstr(out, "watch: paused at 0:00");
+    CHECK(paused);
+    CHECK(paused && !strstr(paused + 1, "watch: paused"));
+    CHECK_CONTAINS(out, "watch: going on at 0:00");
+    CHECK_CONTAINS(out, "watch: 2x");
 }
