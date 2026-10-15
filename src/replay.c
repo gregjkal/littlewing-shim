@@ -700,8 +700,26 @@ static bool start_recording(const char *path, const char *game_id, const uint8_t
 
 static void finish_at_exit(void) { replay_finish(); }
 
-static int by_name(const void *a, const void *b) {
-    return strcmp(*(char *const *)a, *(char *const *)b);
+/* Which game a recording was in the second it started, from what follows
+   the time in its name: the nth for "-<n>" (open_game_file), else the first. */
+static long game_in_second(const char *rest) {
+    return rest[0] == '-' && rest[1] >= '1' && rest[1] <= '9' ? strtol(rest + 1, NULL, 10) : 1;
+}
+
+static size_t time_end; /* by_start's: where the time ends in each name */
+
+/* Oldest first: by the time in the name, then by the game in that second.
+   (By name alone, "-2" would come before the second's first game: '-'
+   sorts before '.'.) */
+static int by_start(const void *a, const void *b) {
+    const char *x = *(char *const *)a, *y = *(char *const *)b;
+    if (strlen(x) < time_end || strlen(y) < time_end)
+        return strcmp(x, y);
+    int c = strncmp(x, y, time_end);
+    if (c)
+        return c;
+    long m = game_in_second(x + time_end), n = game_in_second(y + time_end);
+    return m < n ? -1 : m > n ? 1 : strcmp(x, y);
 }
 
 static bool ends_with(const char *s, const char *end) {
@@ -745,7 +763,7 @@ static bool has_clips(const char *dir, const char *name) {
 }
 
 /* The names of the game's recordings in dir, malloc'd, oldest first (the
-   names start with the date and time). Returns how many. */
+   names start with the date and time; by_start). Returns how many. */
 static size_t list_recordings(const char *dir, const char *game_id, char ***out) {
     *out = NULL;
     DIR *d = opendir(dir);
@@ -764,8 +782,9 @@ static size_t list_recordings(const char *dir, const char *game_id, char ***out)
             fatal("out of memory");
     }
     closedir(d);
+    time_end = id_len + strlen("-YYYY-mm-dd-HHMMSS");
     if (n)
-        qsort(names, n, sizeof *names, by_name);
+        qsort(names, n, sizeof *names, by_start);
     *out = names;
     return n;
 }

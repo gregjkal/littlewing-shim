@@ -87,7 +87,7 @@ static bool record_each_game(void) {
     return replay_start("loony-labyrinth", exe, sizeof exe, NULL, err, sizeof err);
 }
 
-/* The recordings in rec_dir, by name, oldest first (names hold the time). */
+/* The recordings in rec_dir, by name. */
 static int recordings(char names_out[][256], int cap) {
     int n = 0;
     DIR *d = opendir(rec_dir);
@@ -97,13 +97,6 @@ static int recordings(char names_out[][256], int cap) {
             snprintf(names_out[n++], 256, "%s", e->d_name);
     if (d)
         closedir(d);
-    for (int i = 1; i < n; i++) /* few: insertion sort */
-        for (int j = i; j > 0 && strcmp(names_out[j - 1], names_out[j]) > 0; j--) {
-            char t[256];
-            memcpy(t, names_out[j], 256);
-            memcpy(names_out[j], names_out[j - 1], 256);
-            memcpy(names_out[j - 1], t, 256);
-        }
     return n;
 }
 
@@ -201,20 +194,24 @@ TEST(play_records_each_game_with_its_pauses) {
     set(IN_LOOP, true);
     play_pump(true);
     replay_clock(6000000);
-    sleep(1); /* the next game's file is named for another second */
     run(START_NEW_GAME); /* from the game, without game over */
     play_pump(true);
     replay_clock(7000000);
     replay_finish();
 
     CHECK_EQ(recordings(names_got, 4), 2);
+    char *first = names_got[0], *second = names_got[1]; /* the second's name: "-2" or later */
+    if (strlen(first) > strlen(second) || (strlen(first) == strlen(second) && strcmp(first, second) > 0)) {
+        first = names_got[1];
+        second = names_got[0];
+    }
     const replay_span *spans;
-    CHECK_EQ(spans_of(names_got[0], &spans), 2);
+    CHECK_EQ(spans_of(first, &spans), 2);
     CHECK_EQ(spans[0].on_us, 1000000);
     CHECK_EQ(spans[0].off_us, 2000000);
     CHECK_EQ(spans[1].on_us, 5000000);
     CHECK_EQ(spans[1].off_us, 6000000);
-    CHECK_EQ(spans_of(names_got[1], &spans), 1);
+    CHECK_EQ(spans_of(second, &spans), 1);
     CHECK_EQ(spans[0].on_us, 6000000);
     CHECK(spans[0].off_us == UINT64_MAX);
 }
