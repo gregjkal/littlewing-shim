@@ -34,6 +34,11 @@ void cf_load_prefs(const char *path);
    is no longer a live object is left out (logged). */
 bool cf_save_prefs(void);
 
+/* The preferences as the game holds them now (saved or not): key's string
+   (Mac Roman), or NULL if it has none; key's integer, false if it has none. */
+const char *cf_pref_string(const char *key);
+bool cf_pref_int(const char *key, int64_t *out);
+
 /* The CFStringRef stored in the kCFPreferencesCurrentApplication data import. */
 uint32_t cf_current_app(void);
 

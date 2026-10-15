@@ -48,6 +48,18 @@ typedef struct {
 } display_input;
 void display_set_input(const display_input *in);
 
+/* Where display_poll sends a file opened from Finder (one of the app's
+   documents) or dropped on the window: fn gets its path. Apart from
+   display_set_input, so it holds in the picker too. */
+void display_set_open(void (*fn)(const char *path));
+
+/* At launch, before anything is shown: starts SDL's video and handles the
+   events macOS sends within wait_ms, so a file opened from Finder to launch
+   the app reaches display_set_open's fn before the game starts. Other
+   events wait for display_poll. Does nothing with a video driver other than
+   Cocoa. */
+void display_take_launch_events(uint32_t wait_ms);
+
 /* Handles pending SDL events: keys go to the input callbacks, except Cmd-Q
    (quit), Cmd-F (toggle full screen), Cmd-V (paste) and Cmd-S (mark a clip,
    said in the window's title for DISPLAY_FLASH_MS), which the game never

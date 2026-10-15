@@ -28,4 +28,11 @@ plist_status plist_read(const char *path, plist_entry **out, uint32_t *n, char *
    (through path.tmp and a rename). Creates missing parent folders. */
 bool plist_write(const char *path, const plist_entry *e, uint32_t n, char *err, size_t errlen);
 
+/* plist_read and plist_write on bytes in memory: the property list in buf
+   (no PLIST_MISSING or PLIST_UNREADABLE), and a malloc'd XML encoding of
+   the entries, or NULL if they can't be encoded. */
+plist_status plist_parse(const uint8_t *buf, size_t len, plist_entry **out, uint32_t *n, char *err,
+                         size_t errlen);
+uint8_t *plist_encode(const plist_entry *e, uint32_t n, size_t *len);
+
 void plist_free(plist_entry *e, uint32_t n);

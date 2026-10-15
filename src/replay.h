@@ -23,10 +23,10 @@
    wall clock and time zone at the start, and the preferences file the run
    started from), then the records. Format 1 had no wall clock or time zone:
    its replays see the host's dates, which no frame depends on. Format 3
-   added marks (an older program would take one for the end of the file). A
-   replay starts from those preferences in a folder of its own
-   (LOONY_DATA_DIR, or a new temporary folder), and refuses another game or
-   another program.
+   added marks (an older program would take one for the end of the file).
+   Format 4 is a copy made to share (replay_share). A replay starts from
+   those preferences in a folder of its own (LOONY_DATA_DIR, or a new
+   temporary folder), and refuses another game or another program.
 
    Every REPLAY_FRAME_EVERY presents, a hash of the screen is logged; a
    replay compares them and exits with status 3 at the first difference (a
@@ -96,6 +96,34 @@ bool replay_start(const char *game_id, const uint8_t *exe, size_t exe_len, const
    the table. */
 #define REPLAY_SCORE_SLACK 2
 void replay_record_into(const char *dir, const char *game_id, const time_t *high_scores, size_t n);
+
+/* The kept recording in dir of the game that set a high score at when (from
+   the score's timestamp): the newest whose span holds it, as
+   replay_record_into keeps them. Its path goes to out. False if none does. */
+bool replay_find_recording(const char *dir, const char *game_id, time_t when, char *out,
+                           size_t cap);
+
+/* Writes a copy of the recording src to dst (replacing it) that can be
+   given away: the license (e-mail address and key code) is emptied in its
+   preferences, and the copy is marked shared (format 4). A replay of a
+   shared copy puts in the license from LOONY_REPLAY_LICENSE's preferences:
+   by default, where the viewer's own copy of the game saves them (set by
+   replay_open, so a restart keeps it); without a license there it refuses.
+   The game only checks the license, and never shows it, so the frames are
+   the same. Everything else is shared as recorded: the high-score names,
+   and anything typed while playing. A recording still being written copies
+   to its last frame check. False, with err, if src can't be read, was
+   played unregistered (with the viewer's license its replay would start
+   differently), is format 1, or dst can't be written. */
+bool replay_share(const char *src, const char *dst, char *err, size_t errlen);
+
+/* Before the app restarts to watch path, so a file it can't play doesn't
+   end the game being played: whether path is a replay of a game it knows,
+   in a format it reads, and, if shared, whether the viewer's own
+   preferences (under HOME) hold a license. False, with err saying why
+   ("it was shared without a license: ..."). The game's program is
+   checked once the replay starts. */
+bool replay_check(const char *path, char *err, size_t errlen);
 
 /* Replay: fn is called with the clock, in us, each time it is about to move,
    before the game sees it (watch.h paces the replay there). */

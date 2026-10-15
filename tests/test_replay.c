@@ -15,6 +15,7 @@
 #include "harness.h"
 #include "memmgr.h"
 #include "misc.h"
+#include "plist.h"
 #include "replay.h"
 #include "sound.h"
 #include "util.h"
@@ -56,7 +57,7 @@ static void setup(void) {
    the test. */
 static const char *const env_names[] = {
     "LOONY_RECORD", "LOONY_REPLAY", "LOONY_GAME", "LOONY_DATA_DIR", "LOONY_AUTO_ALERTS",
-    "LOONY_FIXED_CLOCK",
+    "LOONY_FIXED_CLOCK", "LOONY_REPLAY_LICENSE", "HOME",
 };
 static char *env_saved[sizeof env_names / sizeof env_names[0]];
 
@@ -418,6 +419,199 @@ TEST(replay_keeps_the_games_with_clips_from_watching) {
         if (i != 2)
             CHECK(exists_in(rec_dir, old[i]));
     CHECK(!exists_in(rec_dir, old[2]));
+}
+
+/* The kept recording of the game that set a high score: the newest whose
+   span (the time in its name to its last write) holds the score's time. */
+TEST(replay_finds_the_recording_of_a_high_score) {
+    BEGIN_TEST();
+    char rec_dir[1300], path[1500], want[1500];
+    snprintf(rec_dir, sizeof rec_dir, "%s/recordings", dir);
+    CHECK(make_dirs(rec_dir));
+    recording_ending(rec_dir, "loony-labyrinth-2026-01-01-120000.lwreplay", local_time(1, 12, 30, 0));
+    recording_ending(rec_dir, "loony-labyrinth-2026-01-02-120000-marked.lwreplay",
+                     local_time(2, 12, 30, 0));
+    recording_ending(rec_dir, "crystal-caliburn-2026-01-03-120000.lwreplay", local_time(3, 12, 30, 0));
+    CHECK(replay_find_recording(rec_dir, "loony-labyrinth", local_time(2, 12, 20, 0), path, sizeof path));
+    snprintf(want, sizeof want, "%s/loony-labyrinth-2026-01-02-120000-marked.lwreplay", rec_dir);
+    CHECK_STR(path, want);
+    CHECK(replay_find_recording(rec_dir, "loony-labyrinth", local_time(1, 12, 30, 2), path, sizeof path));
+    snprintf(want, sizeof want, "%s/loony-labyrinth-2026-01-01-120000.lwreplay", rec_dir);
+    CHECK_STR(path, want);
+    CHECK(!replay_find_recording(rec_dir, "loony-labyrinth", local_time(1, 13, 0, 0), path, sizeof path));
+    CHECK(!replay_find_recording(rec_dir, "loony-labyrinth", local_time(3, 12, 20, 0), path, sizeof path));
+    snprintf(want, sizeof want, "%s/missing", dir);
+    CHECK(!replay_find_recording(want, "loony-labyrinth", local_time(2, 12, 20, 0), path, sizeof path));
+}
+
+/* Preferences in folder holding a score and this license, as the game
+   saves them. */
+static bool write_prefs(const char *folder, const char *email, const char *id) {
+    char path[1400], err[256];
+    snprintf(path, sizeof path, "%s/prefs.plist", folder);
+    plist_entry e[] = {
+        {"highscore 1", true, 43074596, NULL},
+        {"highscore name 1", false, 0, "GREG"},
+        {"user email", false, 0, (char *)email},
+        {"user id", false, 0, (char *)id},
+    };
+    return make_dirs(folder) && plist_write(path, e, 4, err, sizeof err);
+}
+
+/* A recording made from preferences with this license, holding one key. */
+static bool record_licensed(const char *email, const char *id) {
+    if (!write_prefs(data, email, id) || !record(data))
+        return false;
+    replay_step();
+    replay_log(REPLAY_KEY, (uint32_t[3]){SDL_SCANCODE_Z, 1, 0});
+    replay_finish();
+    return true;
+}
+
+/* The decompressed bytes of path (at most cap). */
+static size_t gunzip_into(const char *path, char *buf, size_t cap) {
+    gzFile g = gzopen(path, "rb");
+    int n = g ? gzread(g, buf, (unsigned)cap) : -1;
+    if (g)
+        gzclose(g);
+    return n > 0 ? (size_t)n : 0;
+}
+
+static const char *string_in(plist_entry *e, uint32_t n, const char *key) {
+    for (uint32_t i = 0; i < n; i++)
+        if (strcmp(e[i].key, key) == 0 && !e[i].is_number)
+            return e[i].str;
+    return "(none)";
+}
+
+/* A shared copy holds no license; its replay puts in the viewer's, keeps
+   everything else, and plays the records as they were. Sharing it again
+   keeps it shared. */
+TEST(replay_share_leaves_the_license_out_and_a_replay_puts_the_viewers_in) {
+    BEGIN_TEST();
+    CHECK(record_licensed("me@example.com", "123456789012"));
+    char shared[1300], again[1300], err[256], buf[65536];
+    snprintf(shared, sizeof shared, "%s/shared.lwreplay", dir);
+    CHECK(replay_share(file, shared, err, sizeof err));
+    size_t n = gunzip_into(shared, buf, sizeof buf);
+    CHECK(n > 9);
+    CHECK_EQ((uint8_t)buf[8], 4); /* format 4 */
+    CHECK(!memmem(buf, n, "me@example.com", 14));
+    CHECK(!memmem(buf, n, "123456789012", 12));
+    CHECK(memmem(buf, n, "GREG", 4) != NULL);
+    snprintf(again, sizeof again, "%s/again.lwreplay", dir);
+    CHECK(replay_share(shared, again, err, sizeof err));
+
+    char viewer[1300], license[1400], played[1400];
+    snprintf(viewer, sizeof viewer, "%s/viewer", dir);
+    CHECK(write_prefs(viewer, "you@example.org", "999"));
+    snprintf(license, sizeof license, "%s/prefs.plist", viewer);
+    setenv("LOONY_REPLAY_LICENSE", license, 1);
+    snprintf(file, sizeof file, "%s", again);
+    CHECK(play_back());
+    snprintf(played, sizeof played, "%s/play/prefs.plist", dir);
+    plist_entry *e;
+    uint32_t ne;
+    CHECK_EQ(plist_read(played, &e, &ne, err, sizeof err), PLIST_OK);
+    char email[64], id[64], name[64];
+    snprintf(email, sizeof email, "%s", string_in(e, ne, "user email"));
+    snprintf(id, sizeof id, "%s", string_in(e, ne, "user id"));
+    snprintf(name, sizeof name, "%s", string_in(e, ne, "highscore name 1"));
+    plist_free(e, ne);
+    CHECK_STR(email, "you@example.org");
+    CHECK_STR(id, "999");
+    CHECK_STR(name, "GREG");
+    uint32_t v[3];
+    replay_step();
+    CHECK(replay_take(REPLAY_KEY, v));
+    CHECK_EQ(v[0], SDL_SCANCODE_Z);
+}
+
+/* A game played unregistered isn't shared: given the viewer's license, its
+   replay would start differently. */
+TEST(replay_share_refuses_a_game_played_unregistered) {
+    BEGIN_TEST();
+    char shared[1300], err[256];
+    snprintf(shared, sizeof shared, "%s/shared.lwreplay", dir);
+    CHECK(record_licensed("", ""));
+    CHECK(!replay_share(file, shared, err, sizeof err));
+    CHECK_STR(err, "this game was played before Loony Labyrinth was registered, so it can't be shared");
+    CHECK(access(shared, F_OK) != 0);
+    CHECK(record(NULL)); /* no preferences at all */
+    replay_finish();
+    CHECK(!replay_share(file, shared, err, sizeof err));
+    CHECK_STR(err, "this game was played before Loony Labyrinth was registered, so it can't be shared");
+}
+
+/* A shared copy needs a license to replay: by default, the one in the
+   viewer's own save folder, found before LOONY_DATA_DIR names the
+   replay's. */
+TEST(replay_of_a_shared_copy_needs_the_viewers_license) {
+    BEGIN_TEST();
+    CHECK(record_licensed("me@example.com", "123456789012"));
+    char shared[1300], err[512], unlicensed[1300], want[1600];
+    snprintf(shared, sizeof shared, "%s/shared.lwreplay", dir);
+    CHECK(replay_share(file, shared, err, sizeof err));
+    snprintf(file, sizeof file, "%s", shared);
+    snprintf(unlicensed, sizeof unlicensed, "%s/unlicensed", dir);
+    CHECK(write_prefs(unlicensed, "", ""));
+    snprintf(unlicensed, sizeof unlicensed, "%s/unlicensed/prefs.plist", dir);
+    setenv("LOONY_REPLAY_LICENSE", unlicensed, 1);
+    CHECK(!play("loony-labyrinth", exe, sizeof exe, err, sizeof err));
+    snprintf(want, sizeof want,
+             "this replay was shared without a license: register Loony Labyrinth in LittleWing to "
+             "watch it (%s has none)",
+             unlicensed);
+    CHECK_STR(err, want);
+    unsetenv("LOONY_REPLAY_LICENSE");
+    CHECK(!play("loony-labyrinth", exe, sizeof exe, err, sizeof err));
+    CHECK_STR(err, "this replay was shared without a license: set LOONY_REPLAY_LICENSE to the "
+                   "preferences of a registered Loony Labyrinth");
+
+    /* With no LOONY_DATA_DIR, the viewer's own preferences under HOME. */
+    char *home = getenv("HOME") ? strdup(getenv("HOME")) : NULL;
+    setenv("HOME", dir, 1);
+    unsetenv("LOONY_DATA_DIR");
+    replay_reset();
+    setenv("LOONY_REPLAY", file, 1);
+    bool opened = replay_open(err, sizeof err);
+    char made[1300];
+    snprintf(made, sizeof made, "%s", getenv("LOONY_DATA_DIR") ? getenv("LOONY_DATA_DIR") : "");
+    if (home)
+        setenv("HOME", home, 1);
+    free(home);
+    if (made[0])
+        rmdir(made);
+    CHECK(opened);
+    snprintf(want, sizeof want, "%s/Library/Application Support/littlewing-shim/loony-labyrinth/prefs.plist",
+             dir);
+    CHECK_STR(getenv("LOONY_REPLAY_LICENSE"), want);
+}
+
+/* What the app checks before it restarts to watch a file: a replay it can
+   read, and for a shared copy, a license in the viewer's own preferences. */
+TEST(replay_check_says_why_a_file_cant_be_watched) {
+    BEGIN_TEST();
+    char err[512], shared[1300], other[1300], own[1300];
+    CHECK(record_licensed("me@example.com", "123456789012"));
+    CHECK(replay_check(file, err, sizeof err));
+    snprintf(shared, sizeof shared, "%s/shared.lwreplay", dir);
+    CHECK(replay_share(file, shared, err, sizeof err));
+    setenv("HOME", dir, 1);
+    CHECK(!replay_check(shared, err, sizeof err));
+    CHECK_STR(err, "it was shared without a license: register Loony Labyrinth in LittleWing to watch it");
+    snprintf(own, sizeof own, "%s/Library/Application Support/littlewing-shim/loony-labyrinth", dir);
+    CHECK(write_prefs(own, "you@example.org", "999"));
+    CHECK(replay_check(shared, err, sizeof err));
+    snprintf(other, sizeof other, "%s/not-a-replay.lwreplay", dir);
+    gzFile g = gzopen(other, "wb");
+    gzwrite(g, "PNG", 3);
+    gzclose(g);
+    CHECK(!replay_check(other, err, sizeof err));
+    CHECK_STR(err, "not a replay file");
+    snprintf(other, sizeof other, "%s/missing.lwreplay", dir);
+    CHECK(!replay_check(other, err, sizeof err));
+    CHECK_STR(err, "it can't be read");
 }
 
 /* LOONY_RECORD=0 turns it off; LOONY_RECORD names the file instead; a
@@ -879,7 +1073,7 @@ TEST(replay_refuses_a_damaged_header) {
     CHECK_STR(err, "the replay's header is damaged");
     write_replay("LWREPLAY\x09", 9);
     CHECK(!replay_open(err, sizeof err));
-    CHECK_STR(err, "replay format 9 (this program reads 1 to 3)");
+    CHECK_STR(err, "replay format 9 (this program reads 1 to 4)");
     uint8_t h[64];
     static const char *const damaged[][2] = {
         {"\x80\x80\x80\x80\x80\x20", "\x01"}, /* a start of 2^40 s: 36812 AD */
