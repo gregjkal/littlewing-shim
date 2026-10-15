@@ -652,6 +652,14 @@ static void make_pieces(void) {
     }
 }
 
+/* How many pieces clip i has. */
+static size_t pieces_of(size_t clip) {
+    size_t n = 0;
+    for (size_t k = 0; k < C.npieces; k++)
+        n += C.pieces[k].clip == clip;
+    return n;
+}
+
 bool clip_open(char *err, size_t errlen) {
     const char *span = getenv("LOONY_CLIP"), *out = getenv("LOONY_CLIP_OUT");
     const char *kbps = getenv("LOONY_CLIP_KBPS"), *quality = getenv("LOONY_CLIP_QUALITY");
@@ -745,20 +753,26 @@ bool clip_open(char *err, size_t errlen) {
     if (!scale || !*scale)
         setenv("LOONY_HD_SCALE", "2", 1);
     make_pieces();
+    char a[32], b[32];
+    for (size_t i = 0; i < C.nspans; i++) {
+        if (!pieces_of(i)) { /* its play rounds away to nothing */
+            clip_format_time(C.spans[i].start, a, sizeof a);
+            clip_format_time(C.spans[i].end, b, sizeof b);
+            snprintf(err, errlen, "the clip %s-%s holds less than a tick of play", a, b);
+            return false;
+        }
+    }
     begin_piece(0);
     C.on = true;
     clock_gettime(CLOCK_MONOTONIC, &C.t0);
     sound_set_tap(clip_sound);
     atexit(finish_at_exit);
-    char a[32], b[32];
     for (size_t i = 0; i < C.nspans; i++) {
         const clip_span *c = &C.spans[i];
         file_of(i, path, sizeof path);
         clip_format_time(c->start, a, sizeof a);
         clip_format_time(c->end, b, sizeof b);
-        size_t pieces = 0;
-        for (size_t k = 0; k < C.npieces; k++)
-            pieces += C.pieces[k].clip == i;
+        size_t pieces = pieces_of(i);
         if (pieces > 1)
             log_msg("clip: %s-%s leaves out %zu stretches that aren't play", a, b, pieces - 1);
         if (!C.numbered)

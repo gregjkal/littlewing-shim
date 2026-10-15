@@ -83,3 +83,20 @@ TEST(watch_k_pauses_like_space) {
     CHECK_CONTAINS(out, "watch: going on at 0:00");
     CHECK_CONTAINS(out, "watch: 2x");
 }
+
+/* Each frame at 1x and 2x, one a frame of wall clock above, a few a second
+   while going; none while the replay is behind, but one at least every
+   quarter second, so a game slower than the speed asked still shows. */
+TEST(watch_draws_skip_frames_behind_but_not_for_long) {
+    CHECK(watch_draws(0, 0, 1, false));
+    CHECK(watch_draws(0, 0, 2, false));
+    CHECK(!watch_draws(0.01, 0, 8, false));
+    CHECK(watch_draws(0.02, 0, 8, false));
+    CHECK(!watch_draws(0.1, 0, 1, true));
+    CHECK(watch_draws(0.25, 0, 1, true));
+    CHECK(!watch_draws(0.02, 0.05, 8, false)); /* behind */
+    CHECK(!watch_draws(0.2, 0.05, 1, false));
+    CHECK(watch_draws(0.25, 0.05, 8, false)); /* behind for long */
+    CHECK(watch_draws(0.02, 0.05, 0, false)); /* as fast as it can: never behind */
+    CHECK(watch_draws(0.25, 5, 1, true));     /* going: never behind */
+}

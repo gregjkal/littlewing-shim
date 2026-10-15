@@ -171,6 +171,11 @@ int replay_mark(void);
 void replay_game(bool started);
 void replay_play(bool on);
 
+/* Recording each game into a file of its own (replay_record_into), when
+   games can't be told apart (play_init found another program): nothing
+   would ever be written, so recording stops, and says so. */
+void replay_no_games(void);
+
 /* Replay: takes a mark at this step and logs it. */
 bool replay_take_mark(void);
 
