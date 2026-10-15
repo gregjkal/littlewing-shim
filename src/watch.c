@@ -25,6 +25,11 @@ static const int speeds[] = {1, 2, 4, 8, 0};
    where the game draws faster than the display shows. */
 #define GOING_DRAW_GAP 0.25
 #define FAST_DRAW_GAP (1.0 / 60)
+/* More than this behind the wall clock, a frame isn't drawn: a cut scene
+   presents up to twice a frame, more than a window can show, and drawing
+   each would leave the replay further behind. The latest is drawn once it
+   has caught up. */
+#define BEHIND_DRAW_LAG (1.0 / 60)
 /* While waiting (paused, held at the end, or a wait longer than this): how
    often the window is polled, in seconds. */
 #define IDLE_GAP 0.01
@@ -37,9 +42,13 @@ static struct {
     bool paused;
     bool going; /* to from, without pacing or drawing every frame */
     uint32_t from;
+    bool skipping; /* what isn't play, without pacing, drawing or sound */
     bool have_in;
     uint32_t in;
     char list[PATH_MAX]; /* the clips' list */
+    /* Times shown and keyed (from, in, the list) are in play time; the
+       replay's own clock is clock_us (replay_play_us maps one to the
+       other). */
     uint64_t clock_us;   /* the replay's clock as the game has seen it */
     /* Pacing: the wall clock was anchor_wall when the clock was anchor_us. */
     double anchor_wall;
@@ -68,7 +77,10 @@ static void sleep_for(double seconds) {
 
 static uint32_t tick_of(uint64_t us) { return (uint32_t)(us * 60 / 1000000); }
 
-static uint32_t now_tick(void) { return tick_of(W.clock_us); }
+/* Play time: the replay's clock less what isn't play. */
+static uint32_t play_tick_of(uint64_t clock_us) { return tick_of(replay_play_us(clock_us)); }
+
+static uint32_t now_tick(void) { return play_tick_of(W.clock_us); }
 
 /* ticks as m:ss, in whole seconds. */
 static const char *fmt_seconds(uint32_t ticks, char *buf, size_t cap) {
@@ -83,7 +95,12 @@ static void update_title(void) {
     fmt_seconds(now_tick(), t, sizeof t);
     if (W.have_in)
         snprintf(in, sizeof in, ", clip from %s", fmt_seconds(W.in, u, sizeof u));
-    if (W.going)
+    const replay_span *spans;
+    if (W.going && replay_play_spans(&spans) && W.clock_us < spans[0].on_us)
+        snprintf(text, sizeof text, "%s: replaying what came before the game, %s of %s", title,
+                 fmt_seconds(tick_of(W.clock_us), t, sizeof t),
+                 fmt_seconds(tick_of(spans[0].on_us), u, sizeof u));
+    else if (W.going)
         snprintf(text, sizeof text, "%s: going to %s (at %s)%s", title,
                  fmt_seconds(W.from, u, sizeof u), t, in);
     else if (W.at_end)
@@ -124,7 +141,11 @@ void watch_present(bool dirty) {
         return;
     int speed = speeds[W.speed];
     double gap = W.going ? GOING_DRAW_GAP : speed == 1 || speed == 2 ? 0 : FAST_DRAW_GAP;
-    if (wall() - W.drawn >= gap) {
+    double now = wall();
+    bool behind = !W.going && !W.paused && speed &&
+                  now - (W.anchor_wall + (double)(W.clock_us - W.anchor_us) / 1e6 / speed) >
+                      BEHIND_DRAW_LAG;
+    if (!W.skipping && !behind && now - W.drawn >= gap) {
         draw();
     } else if (dirty && hd_scale()) { /* the HD copy kept in step, as when every frame is drawn */
         qd_pixels px;
@@ -146,7 +167,9 @@ static void idle(void) {
 
 /* ---- pacing ---- */
 
-static bool sound_on(void) { return speeds[W.speed] == 1 && !W.paused && !W.going && !W.at_end; }
+static bool sound_on(void) {
+    return speeds[W.speed] == 1 && !W.paused && !W.going && !W.skipping && !W.at_end;
+}
 
 /* The wall clock and the replay's clock line up from now. */
 static void anchor(void) {
@@ -163,29 +186,53 @@ static void log_run(const char *what) {
     double game = (double)(W.clock_us - W.anchor_us) / 1e6, took = W.paced_wall - W.anchor_wall;
     char a[32], b[32];
     log_msg("watch: %s, %s-%s at 1x, took %.3f s on the wall clock (%+.1f ms)", what,
-            clip_format_time(tick_of(W.anchor_us), a, sizeof a),
+            clip_format_time(play_tick_of(W.anchor_us), a, sizeof a),
             clip_format_time(now_tick(), b, sizeof b), took, (took - game) * 1000);
 }
 
+/* Going or skipping: the window stays live, a few times a second. */
+static void poll_now_and_then(void) {
+    if (wall() - W.polled >= GOING_DRAW_GAP / 4) {
+        W.polled = wall();
+        display_poll();
+        update_title();
+    }
+}
+
 /* The replay's clock is about to move to clock_us: waits until the wall
-   clock has reached it at this speed. */
+   clock has reached it at this speed. What isn't play goes by unpaced. */
 static void pace(uint64_t clock_us) {
+    uint64_t next_on;
+    bool in_play = replay_in_play(clock_us, &next_on);
     if (W.going) {
         W.clock_us = clock_us;
-        if (tick_of(clock_us) < W.from) {
-            if (wall() - W.polled >= GOING_DRAW_GAP / 4) {
-                W.polled = wall();
-                display_poll();
-                update_title();
-            }
+        if (!in_play || play_tick_of(clock_us) < W.from) {
+            poll_now_and_then();
             return;
         }
-        W.going = false;
+        W.going = W.skipping = false;
         char t[32];
         log_msg("watch: reached %s", clip_format_time(W.from, t, sizeof t));
         anchor();
         update_title();
         return;
+    }
+    if (!in_play) {
+        if (!W.skipping) {
+            char t[32];
+            W.skipping = true;
+            log_run("the last stretch");
+            log_msg("watch: leaving out what isn't play from %s", clip_format_time(now_tick(), t, sizeof t));
+            sound_monitor(false);
+        }
+        W.clock_us = clock_us;
+        poll_now_and_then();
+        return;
+    }
+    if (W.skipping) { /* play again: paced from here */
+        W.skipping = false;
+        W.clock_us = clock_us;
+        anchor();
     }
     for (;;) {
         if (W.going) /* L while waiting: from the next clock on; paused or not, it goes */
@@ -207,7 +254,7 @@ static void pace(uint64_t clock_us) {
                 char t[32];
                 if (speed == 1)
                     log_msg("watch: %.2f s behind at %s; going on from there", now - at,
-                            clip_format_time(tick_of(clock_us), t, sizeof t));
+                            clip_format_time(play_tick_of(clock_us), t, sizeof t));
                 W.clock_us = clock_us;
                 anchor();
             }
@@ -431,7 +478,8 @@ bool watch_open(char *err, size_t errlen) {
     W.in = W.have_in ? in : 0;
     const char *paused = getenv("LOONY_WATCH_PAUSED");
     W.paused = paused && strcmp(paused, "1") == 0;
-    W.going = W.from > 0;
+    uint64_t next_on;
+    W.going = W.from > 0 || !replay_in_play(0, &next_on); /* to the game's start */
     if (!clip_list_path(replay, W.list, sizeof W.list)) {
         snprintf(err, errlen, "LOONY_REPLAY is longer than %d characters", PATH_MAX - 16);
         return false;
@@ -441,7 +489,7 @@ bool watch_open(char *err, size_t errlen) {
 }
 
 static void log_at_exit(void) {
-    if (!W.paused && !W.going && !W.at_end) /* watch_hold logged it */
+    if (!W.paused && !W.going && !W.skipping && !W.at_end) /* logged already */
         log_run("the last stretch");
 }
 
@@ -476,9 +524,10 @@ void watch_hold(void) {
     const char *video = getenv("SDL_VIDEO_DRIVER");
     if (video && strcmp(video, "dummy") == 0) /* headless: nobody to close the window */
         return;
-    log_run("the last stretch");
+    if (!W.skipping) /* else logged as it began */
+        log_run("the last stretch");
     W.at_end = true;
-    W.going = false;
+    W.going = W.skipping = false;
     sound_monitor(false);
     char t[32];
     log_msg("watch: the end, at %s: close the window to quit", clip_format_time(now_tick(), t, sizeof t));

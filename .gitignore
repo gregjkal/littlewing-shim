@@ -6,3 +6,4 @@ build-*/
 /game/
 .DS_Store
 .claude/worktrees/
+.venv/

@@ -19,13 +19,24 @@
 #include "sound.h"
 #include "util.h"
 
+/* A stretch of the game's clock in a clip: the ticks [start, end), at ticks
+   into its clip's file. A clip is a piece of each span of play it covers
+   (replay_play_spans), so what isn't play is left out. */
+typedef struct {
+    uint32_t start, end, at;
+    size_t clip;
+} piece;
+
 static struct {
     bool on, finished;
-    clip_span *spans; /* the clips to make, in order */
-    size_t nspans, cur;
+    clip_span *spans; /* the clips to make, in order, in play time */
+    size_t nspans;
+    piece *pieces; /* and their pieces, in order */
+    size_t npieces, cur;
     bool numbered;       /* LOONY_CLIP=marks or clips: the files are numbered */
     char base[PATH_MAX]; /* the file, or what the numbered ones are named from */
-    uint32_t start, end; /* ticks: the clip being made is [start, end) */
+    size_t clip;         /* the clip being made */
+    uint32_t start, end, at; /* and the piece of it being made */
     char out[PATH_MAX];  /* and its file */
     bool wrote;          /* a clip was written */
     double quality; /* or 0 for kbps */
@@ -257,7 +268,8 @@ static void open_file(void) {
     else
         snprintf(size, sizeof size, "%dx%d (scaled from %dx%d)", vw, vh, C.w, C.h);
     log_msg("clip: reached %s after %.1f s; writing to %s, %s at %d fps, %s",
-            clip_format_time(C.start, a, sizeof a), since_launch(), C.out, size, CLIP_FPS, how);
+            clip_format_time(C.spans[C.clip].start, a, sizeof a), since_launch(), C.out, size, CLIP_FPS,
+            how);
     if (C.early_frames) /* a failure shows at the next frame */
         mp4_audio(C.mp4, C.early, (uint32_t)C.early_frames, (int64_t)C.early_at);
     free(C.early);
@@ -279,7 +291,8 @@ static bool finish(void) {
     struct stat st;
     double mb = stat(C.out, &st) == 0 ? (double)st.st_size / 1e6 : 0;
     log_msg("clip: wrote %s-%s to %s: %llu frames, %.1f MB, %.1f s after launch",
-            clip_format_time(C.start, a, sizeof a), clip_format_time(C.start + (uint32_t)C.frames, b, sizeof b),
+            clip_format_time(C.spans[C.clip].start, a, sizeof a),
+            clip_format_time(C.spans[C.clip].start + (uint32_t)C.frames, b, sizeof b),
             C.out, (unsigned long long)C.frames, mb, since_launch());
     C.wrote = true;
     return true;
@@ -297,15 +310,21 @@ static bool file_of(size_t i, char *out, size_t cap) {
     return (size_t)snprintf(out, cap, "%.*s-%zu%s", (int)(dot - C.base), C.base, i + 1, dot) < cap;
 }
 
-/* Makes clip i the one being made. */
-static void begin_span(size_t i) {
+/* Makes piece i the one being made, and its clip, if it starts one. */
+static void begin_piece(size_t i) {
+    const piece *p = &C.pieces[i];
+    bool first = i == 0 || C.pieces[i - 1].clip != p->clip;
     C.cur = i;
-    C.start = C.spans[i].start;
-    C.end = C.spans[i].end;
+    C.clip = p->clip;
+    C.start = p->start;
+    C.end = p->end;
+    C.at = p->at;
     C.next = C.start;
-    C.frames = 0;
-    C.changed = false;
-    file_of(i, C.out, sizeof C.out); /* clip_open checked it fits */
+    if (first) {
+        C.frames = 0;
+        C.changed = false;
+        file_of(p->clip, C.out, sizeof C.out); /* clip_open checked it fits */
+    }
 }
 
 /* The program exited before the clip's end: what there is is kept. The
@@ -324,7 +343,7 @@ static void finish_at_exit(void) {
         if (failed)
             return;
         log_msg("clip: the replay stopped before %s, where the clip starts: nothing written",
-                clip_format_time(C.start, a, sizeof a));
+                clip_format_time(C.spans[C.clip].start, a, sizeof a));
         if (!C.wrote && replay_reached_end()) {
             fflush(NULL);
             _exit(CLIP_NOTHING_STATUS);
@@ -332,7 +351,8 @@ static void finish_at_exit(void) {
         return;
     }
     log_msg("clip: the replay stopped at %s, before the clip's end at %s",
-            clip_format_time(C.next, a, sizeof a), clip_format_time(C.end, b, sizeof b));
+            clip_format_time(C.spans[C.clip].start + (uint32_t)C.frames, a, sizeof a),
+            clip_format_time(C.spans[C.clip].end, b, sizeof b));
     if (!finish() && !failed) {
         fflush(NULL);
         _exit(1);
@@ -382,7 +402,7 @@ static void add_frame(uint32_t tick, bool now) {
         rgba = screen_rgba();
         C.changed = false;
     }
-    if (!mp4_video(C.mp4, rgba, (int64_t)(tick - C.start)))
+    if (!mp4_video(C.mp4, rgba, (int64_t)(tick - C.start + C.at)))
         write_failed();
     C.frames++;
 }
@@ -408,13 +428,14 @@ void clip_present(bool dirty) {
     uint32_t t = game_tick();
     for (;;) {
         if (t < C.start) {
-            if (t / 3600 > C.logged) {
+            if (!C.mp4 && t / 3600 > C.logged) {
                 char a[32], b[32];
                 C.logged = t / 3600;
-                log_msg("clip: replaying, at %s of %s after %.1f s", clip_format_time(t, a, sizeof a),
-                        clip_format_time(C.start, b, sizeof b), since_launch());
+                log_msg("clip: replaying, at %s of %s on the game's clock after %.1f s",
+                        clip_format_time(t, a, sizeof a), clip_format_time(C.start, b, sizeof b),
+                        since_launch());
             }
-            return;
+            return; /* before the clip, or where it leaves out a pause */
         }
         if (!C.mp4)
             open_file();
@@ -424,12 +445,14 @@ void clip_present(bool dirty) {
             add_frame(C.next, C.next == t);
         if (t < C.end)
             return;
-        bool ok = finish();
-        if (!ok || C.cur + 1 == C.nspans) {
-            C.finished = true;
-            exit(ok ? 0 : 1);
+        if (C.cur + 1 == C.npieces || C.pieces[C.cur + 1].clip != C.clip) {
+            bool ok = finish();
+            if (!ok || C.cur + 1 == C.npieces) {
+                C.finished = true;
+                exit(ok ? 0 : 1);
+            }
         }
-        begin_span(C.cur + 1);
+        begin_piece(C.cur + 1);
     }
 }
 
@@ -440,20 +463,22 @@ void clip_sound(const int16_t *samples, uint32_t frames) {
     C.rendered = b;
     if (!C.on || C.finished)
         return;
-    for (size_t i = C.cur; i < C.nspans && i <= C.cur + (C.mp4 != NULL); i++) {
-        uint64_t lo = sound_frame_of(C.spans[i].start), hi = sound_frame_of(C.spans[i].end);
+    for (size_t i = C.cur; i < C.npieces && i <= C.cur + (C.mp4 != NULL); i++) {
+        const piece *p = &C.pieces[i];
+        uint64_t lo = sound_frame_of(p->start), hi = sound_frame_of(p->end);
         if (b <= lo || a >= hi)
             continue;
         uint64_t from = a > lo ? a : lo, to = b < hi ? b : hi;
         const int16_t *s = samples + 2 * (from - a);
         uint32_t n = (uint32_t)(to - from);
-        if (i == C.cur && C.mp4) {
-            if (!mp4_audio(C.mp4, s, n, (int64_t)(from - lo)))
+        uint64_t at = from - lo + sound_frame_of(p->at);
+        if (p->clip == C.clip && C.mp4) {
+            if (!mp4_audio(C.mp4, s, n, (int64_t)at))
                 write_failed();
             continue;
         }
         if (!C.early_frames)
-            C.early_at = from - lo;
+            C.early_at = at;
         if (C.early_frames + n > C.early_cap) {
             C.early_cap = (C.early_frames + n) * 2;
             if (!(C.early = realloc(C.early, C.early_cap * 4)))
@@ -576,14 +601,55 @@ static bool open_marks(const char *out, const char *replay, const char *before, 
         snprintf(err, errlen, "the replay %s has no marks (Cmd-S marks one while recording)", replay);
         return false;
     }
-    if (!(C.spans = malloc(n * sizeof *C.spans)))
+    uint32_t *played = malloc(n * sizeof *played); /* the marks in play time */
+    if (!played || !(C.spans = malloc(n * sizeof *C.spans)))
         fatal("out of memory");
-    C.nspans = clip_mark_spans(marks, n, b, a, C.spans);
+    for (size_t i = 0; i < n; i++)
+        played[i] = replay_play_ticks(marks[i]);
+    C.nspans = clip_mark_spans(played, n, b, a, C.spans);
     numbered_base(out, replay);
     char t[32];
     for (size_t i = 0; i < n; i++)
-        log_msg("clip: mark %zu at tick %u (%s)", i + 1, marks[i], clip_format_time(marks[i], t, sizeof t));
+        log_msg("clip: mark %zu at tick %u (%s)", i + 1, played[i], clip_format_time(played[i], t, sizeof t));
+    free(played);
     return true;
+}
+
+/* tick's start in us, rounded up so it converts back to the same tick. */
+static uint64_t us_of(uint32_t tick) { return ((uint64_t)tick * 1000000 + 59) / 60; }
+static uint32_t tick_of(uint64_t us) { return (uint32_t)(us * 60 / 1000000); }
+
+/* The clips' pieces: where each one's play time falls on the game's clock.
+   Play past the last span is the clock after it, so a clip there runs to
+   the end of the recording as it would without spans. */
+static void make_pieces(void) {
+    const replay_span *spans;
+    size_t nspans = replay_play_spans(&spans), cap = C.nspans * (nspans ? nspans : 1);
+    if (!(C.pieces = malloc(cap * sizeof *C.pieces)))
+        fatal("out of memory");
+    C.npieces = 0;
+    for (size_t i = 0; i < C.nspans; i++) {
+        const clip_span *c = &C.spans[i];
+        if (!nspans) {
+            C.pieces[C.npieces++] = (piece){c->start, c->end, 0, i};
+            continue;
+        }
+        uint64_t from = us_of(c->start), to = us_of(c->end), play = 0;
+        uint32_t at = 0;
+        for (size_t k = 0; k < nspans; k++) {
+            uint64_t on = spans[k].on_us;
+            uint64_t len = k + 1 == nspans ? UINT64_MAX - on : spans[k].off_us - on;
+            uint64_t lo = from > play ? from : play, hi = to < play + len ? to : play + len;
+            if (lo < hi) {
+                uint32_t start = tick_of(on + (lo - play)), end = tick_of(on + (hi - play));
+                if (end > start) {
+                    C.pieces[C.npieces++] = (piece){start, end, at, i};
+                    at += end - start;
+                }
+            }
+            play += len;
+        }
+    }
 }
 
 bool clip_open(char *err, size_t errlen) {
@@ -678,7 +744,8 @@ bool clip_open(char *err, size_t errlen) {
     const char *scale = getenv("LOONY_HD_SCALE");
     if (!scale || !*scale)
         setenv("LOONY_HD_SCALE", "2", 1);
-    begin_span(0);
+    make_pieces();
+    begin_piece(0);
     C.on = true;
     clock_gettime(CLOCK_MONOTONIC, &C.t0);
     sound_set_tap(clip_sound);
@@ -689,6 +756,11 @@ bool clip_open(char *err, size_t errlen) {
         file_of(i, path, sizeof path);
         clip_format_time(c->start, a, sizeof a);
         clip_format_time(c->end, b, sizeof b);
+        size_t pieces = 0;
+        for (size_t k = 0; k < C.npieces; k++)
+            pieces += C.pieces[k].clip == i;
+        if (pieces > 1)
+            log_msg("clip: %s-%s leaves out %zu stretches that aren't play", a, b, pieces - 1);
         if (!C.numbered)
             log_msg("clip: replaying to %s, then writing %s-%s to %s", a, a, b, path);
         else if (!c->first_mark)

@@ -44,3 +44,10 @@ void cpu_restore(cpu_context *ctx);
    cpu_init() clears it. */
 typedef void (*cpu_write_fn)(uint32_t addr, int size, uint64_t value);
 void cpu_watch_writes(uint32_t begin, uint32_t end, cpu_write_fn fn);
+
+/* Calls fn each time the guest is about to run the instruction at addr,
+   with the CPU's registers current. Only that instruction pays for it. At
+   most CPU_MAX_EXEC_HOOKS; cpu_init() clears them. */
+#define CPU_MAX_EXEC_HOOKS 4
+typedef void (*cpu_exec_fn)(void);
+void cpu_on_exec(uint32_t addr, cpu_exec_fn fn);

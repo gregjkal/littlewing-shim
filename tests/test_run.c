@@ -1,5 +1,6 @@
 #include "test.h"
 
+#include <dirent.h>
 #include <math.h>
 #include <stdlib.h>
 #include <time.h>
@@ -328,6 +329,102 @@ static int clip_recording(const char *span, const char *play_dir, const char *na
     int status = test_run_child(run_loony_clipping, NULL, out, cap);
     run_data[0] = '\0';
     return status;
+}
+
+/* Two games, the first thrown away with Esc, as the unregistered game does,
+   after the self-playing demo. */
+static const char two_games[] =
+    "1720 down esc\n1724 up esc\n1800 down esc\n1804 up esc\n1900 down return\n1906 up return\n"
+    "2100 down return\n2190 up return\n2400 down esc\n2404 up esc\n2600 down esc\n2604 up esc\n"
+    "2700 down return\n2706 up return\n2900 down return\n2990 up return\n3300 quit\n";
+
+static int count_of(const char *s, const char *what) {
+    int n = 0;
+    for (const char *p = s; (p = strstr(p, what)); p += strlen(what))
+        n++;
+    return n;
+}
+
+/* The shim tells where a game starts and ends from the game's own state
+   (play.h): the demo isn't a game, and Esc throws the first one away. */
+TEST(run_games_are_told_apart_from_the_demo_and_each_other) {
+    SKIP_UNLESS_GAME();
+    char out[32768];
+    int status = run_script(two_games, NULL, NULL, 0, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_EQ(count_of(out, "loony: play: a game starts"), 2);
+    CHECK_EQ(count_of(out, "loony: play: the game ends (thrown away)"), 1);
+}
+
+static void run_loony_recording_games(void *dir) {
+    setenv("LOONY_SCRIPT", script_path, 1);
+    unsetenv("LOONY_RECORD");
+    run_loony(dir);
+}
+
+/* Unless told otherwise, each game is recorded into a file of its own
+   (replay.h) that replays from launch exactly to the game's end; a clip of
+   the second game starts where it does, past the first. */
+TEST(run_each_game_is_recorded_into_a_file_of_its_own) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_SLOW();
+    char rec_dir[1024], play_dir[1024], recs[1100], names[2][256], out[4][32768];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    tmp_name(script_path, sizeof script_path, "script");
+    FILE *f = fopen(script_path, "w");
+    fputs(two_games, f);
+    fclose(f);
+    snprintf(run_data, sizeof run_data, "%s", rec_dir);
+    int rec_status = test_run_child(run_loony_recording_games, (void *)test_game_dir(), out[0], sizeof out[0]);
+    run_data[0] = '\0';
+    unlink(script_path);
+    snprintf(recs, sizeof recs, "%s/recordings", rec_dir);
+    int n = 0;
+    DIR *d = opendir(recs);
+    struct dirent *e;
+    while (d && (e = readdir(d)))
+        if (strncmp(e->d_name, "loony-labyrinth-", 16) == 0 && n < 2)
+            snprintf(names[n++], sizeof names[0], "%s", e->d_name);
+    if (d)
+        closedir(d);
+    if (n == 2 && strcmp(names[0], names[1]) > 0) { /* the first game first */
+        char t[256];
+        snprintf(t, sizeof t, "%s", names[0]);
+        snprintf(names[0], sizeof names[0], "%s", names[1]);
+        snprintf(names[1], sizeof names[1], "%s", t);
+    }
+    int status[3] = {-1, -1, -1};
+    for (int i = 0; i < n; i++) {
+        snprintf(replay_file, sizeof replay_file, "%s/%s", recs, names[i]);
+        tmp_name(replay_shot, sizeof replay_shot, "shot");
+        snprintf(run_data, sizeof run_data, "%s/data-%d", play_dir, i);
+        status[i] = test_run_child(run_loony_replaying, NULL, out[1 + i], sizeof out[1 + i]);
+        unlink(replay_shot);
+    }
+    run_data[0] = '\0';
+    if (n == 2)
+        status[2] = clip_recording("0:00-0:02", play_dir, "start.mp4", out[3], sizeof out[3]);
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_CONTAINS(out[0], "loony: replay: recording each game into");
+    CHECK_EQ(count_of(out[0], "loony: replay: recording the game to"), 2);
+    CHECK_EQ(n, 2);
+    for (int i = 0; i < 2; i++) {
+        CHECK_EQ(status[i], 0);
+        CHECK_CONTAINS(out[1 + i], "loony: replay: reached the end of the recording");
+        CHECK_CONTAINS(out[1 + i], "no desync");
+        CHECK_EQ(count_of(out[1 + i], "loony: replay: the game starts"), 1);
+    }
+    CHECK_CONTAINS(out[1], "loony: replay: the game ends"); /* thrown away */
+    CHECK(!strstr(out[2], "loony: replay: the game ends")); /* the quit ends it */
+    CHECK_EQ(status[2], 0);
+    const char *start = strstr(out[3], "loony: replay: the game starts");
+    const char *reached = strstr(out[3], "loony: clip: reached 0:00");
+    CHECK(start && reached && start < reached);
+    CHECK_CONTAINS(out[3], "loony: clip: wrote 0:00-0:02");
+    CHECK_CONTAINS(out[3], "120 frames");
 }
 
 /* A clip of a few seconds of a recording (clip.h): one frame a tick for
