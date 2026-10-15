@@ -17,6 +17,10 @@ void display_init(void);
    display_poll shows there). */
 void display_set_title(const char *title);
 
+/* The window comes to the front, with the app activated, when it opens
+   (watch.h: after a restart, it would otherwise open behind the others). */
+void display_raise_on_open(void);
+
 /* Shows msg after the title for DISPLAY_FLASH_MS, on an open window. */
 void display_flash(const char *msg);
 

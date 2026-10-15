@@ -23,6 +23,7 @@ static struct {
     display_input input;
     bool no_vsync;
     bool cursor_hidden;
+    bool raise; /* on opening */
     const char *title;
     char flash[256];      /* a message in the title, in place of the title */
     uint64_t flash_until; /* SDL_GetTicks when it goes, or 0 */
@@ -47,6 +48,8 @@ void display_set_title(const char *title) {
     if (D.window && !D.flash_until)
         SDL_SetWindowTitle(D.window, title);
 }
+
+void display_raise_on_open(void) { D.raise = true; }
 
 void display_flash(const char *msg) {
     if (!D.window)
@@ -132,6 +135,8 @@ static bool open_window(int w, int h) {
         return false;
     }
     SDL_SetRenderVSync(D.renderer, D.no_vsync ? 0 : 1);
+    if (D.raise)
+        SDL_RaiseWindow(D.window);
     return true;
 }
 

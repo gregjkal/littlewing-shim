@@ -454,6 +454,7 @@ void watch_start(const char *title, void (*restart)(void)) {
     W.started = true;
     replay_set_pace(pace);
     replay_set_end(held_at_end);
+    display_raise_on_open();
     sound_open_monitor();
     atexit(log_at_exit);
     char t[32], speed[32];
