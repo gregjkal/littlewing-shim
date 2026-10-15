@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include "game.h"
+#include "plist.h"
 #include "util.h"
 
 static void touch(const char *dir, const char *name) {
@@ -207,4 +208,35 @@ TEST(game_legacy_data_never_overwrites) {
 
 TEST(game_legacy_data_with_no_root_is_a_no_op) {
     CHECK_EQ(game_move_legacy_data("/nonexistent/littlewing-shim"), 0);
+}
+
+static time_t local_time(int y, int mo, int d, int h, int mi, int sec) {
+    struct tm tm = {.tm_year = y - 1900, .tm_mon = mo - 1, .tm_mday = d, .tm_hour = h,
+                    .tm_min = mi, .tm_sec = sec, .tm_isdst = -1};
+    return mktime(&tm);
+}
+
+/* The times of Loony Labyrinth's high scores, as its preferences hold them;
+   the score the game starts with has none. */
+TEST(game_high_score_times_come_from_the_preferences) {
+    char dir[1024], prefs[1100], err[256];
+    test_tmp_dir(dir, sizeof dir);
+    snprintf(prefs, sizeof prefs, "%s/prefs.plist", dir);
+    plist_entry e[] = {
+        {"highscore 1", true, 43074596, NULL},
+        {"highscore timestamp 1", false, 0, "2026-10-14 15:20:00"},
+        {"highscore timestamp 2", false, 0, ""},
+        {"highscore timestamp 3", false, 0, "2026-10-07 10:47:40"},
+        {"highscore name 1", false, 0, "GREG"},
+    };
+    CHECK(plist_write(prefs, e, 5, err, sizeof err));
+    time_t t[8];
+    size_t n = game_high_score_times(prefs, t, 8);
+    CHECK_EQ(n, 2);
+    time_t a = local_time(2026, 10, 14, 15, 20, 0), b = local_time(2026, 10, 7, 10, 47, 40);
+    CHECK((t[0] == a && t[1] == b) || (t[0] == b && t[1] == a)); /* in no set order */
+    CHECK_EQ(game_high_score_times(prefs, t, 1), 1);
+    snprintf(prefs, sizeof prefs, "%s/missing.plist", dir);
+    CHECK_EQ(game_high_score_times(prefs, t, 8), 0);
+    test_remove_tree(dir);
 }

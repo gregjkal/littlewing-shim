@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 #include <zlib.h>
@@ -438,9 +439,29 @@ static bool ends_with(const char *s, const char *end) {
     return n >= m && strcmp(s + n - m, end) == 0;
 }
 
-/* Deletes the game's recordings in dir but the newest keep, unless marked.
-   The names start with the date and time, so they sort oldest first. */
-static void prune(const char *dir, const char *game_id, size_t keep) {
+/* Whether the recording name in dir was running when one of the
+   high_scores was set: from the time in its name (after "<game_id>-") to its
+   last write. */
+static bool set_a_high_score(const char *dir, const char *name, size_t id_len,
+                             const time_t *high_scores, size_t n) {
+    struct tm tm = {.tm_isdst = -1};
+    char path[PATH_MAX];
+    struct stat st;
+    snprintf(path, sizeof path, "%s/%s", dir, name);
+    if (!strptime(name + id_len + 1, "%Y-%m-%d-%H%M%S", &tm) || stat(path, &st) != 0)
+        return false;
+    time_t from = mktime(&tm) - REPLAY_SCORE_SLACK, to = st.st_mtime + REPLAY_SCORE_SLACK;
+    for (size_t i = 0; i < n; i++)
+        if (high_scores[i] >= from && high_scores[i] <= to)
+            return true;
+    return false;
+}
+
+/* Deletes the game's recordings in dir but the newest keep, unless marked or
+   holding a high score. The names start with the date and time, so they
+   sort oldest first. */
+static void prune(const char *dir, const char *game_id, size_t keep, const time_t *high_scores,
+                  size_t nscores) {
     DIR *d = opendir(dir);
     if (!d)
         return;
@@ -459,7 +480,8 @@ static void prune(const char *dir, const char *game_id, size_t keep) {
     closedir(d);
     qsort(names, n, sizeof *names, by_name);
     for (size_t i = 0; i < n; i++) {
-        if (i + keep < n && !ends_with(names[i], "-marked.lwreplay")) {
+        if (i + keep < n && !ends_with(names[i], "-marked.lwreplay") &&
+            !set_a_high_score(dir, names[i], id_len, high_scores, nscores)) {
             char path[PATH_MAX];
             snprintf(path, sizeof path, "%s/%s", dir, names[i]);
             if (unlink(path) == 0)
@@ -472,7 +494,7 @@ static void prune(const char *dir, const char *game_id, size_t keep) {
     free(names);
 }
 
-void replay_record_into(const char *dir, const char *game_id) {
+void replay_record_into(const char *dir, const char *game_id, const time_t *high_scores, size_t n) {
     const char *rec = getenv("LOONY_RECORD"), *fixed = getenv("LOONY_FIXED_CLOCK");
     if ((rec && *rec) || R.loaded || (fixed && strcmp(fixed, "1") == 0))
         return;
@@ -480,7 +502,7 @@ void replay_record_into(const char *dir, const char *game_id) {
         log_msg("replay: can't create %s: this game isn't recorded", dir);
         return;
     }
-    prune(dir, game_id, REPLAY_KEEP_GAMES - 1);
+    prune(dir, game_id, REPLAY_KEEP_GAMES - 1, high_scores, n);
     char stamp[32];
     time_t now = time(NULL);
     struct tm lt;

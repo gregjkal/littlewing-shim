@@ -307,7 +307,11 @@ a few KB a minute, in `~/Library/Application Support/littlewing-shim/recordings`
 (`recordings` in `LOONY_DATA_DIR` when that is set). Files are named
 `loony-labyrinth-<date>-<time>.lwreplay`. The last three games are kept, and
 so is every game where you pressed Cmd-S (renamed `...-marked.lwreplay` at
-the first press); older ones are deleted when a game starts.
+the first press) and every game that set a high score still in the table: a
+game whose score is pushed off the table goes with it. A game is matched to
+a score by time: the score's timestamp falls between the start in the
+recording's name and its last write. Older ones are deleted when a game
+starts.
 `LOONY_RECORD=game.lwreplay` records to a file of your choosing instead, and
 `LOONY_RECORD=0` records nothing. The date a replay sees is the recording's:
 a high score keeps its timestamp. `LOONY_REPLAY` plays a recording back

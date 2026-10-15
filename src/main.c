@@ -290,8 +290,15 @@ int main(int argc, char **argv) {
             snprintf(rec_dir, sizeof rec_dir, "%s/recordings", data_dir);
         else
             rec_dir[0] = '\0';
+        time_t scores[16];
+        size_t nscores = 0;
+        if (have_data) {
+            char prefs[PATH_MAX + 16];
+            snprintf(prefs, sizeof prefs, "%s/prefs.plist", data_dir);
+            nscores = game_high_score_times(prefs, scores, 16);
+        }
         if (rec_dir[0])
-            replay_record_into(rec_dir, game->id);
+            replay_record_into(rec_dir, game->id, scores, nscores);
     }
     if (!replay_start(game->id, buf, len, have_data ? data_dir : NULL, err, sizeof err))
         return startup_error("%s", err);

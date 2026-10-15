@@ -2,6 +2,7 @@
 
 #include <CommonCrypto/CommonDigest.h>
 #include <dirent.h>
+#include <sys/time.h>
 #include <SDL3/SDL_scancode.h>
 #include <stdlib.h>
 #include <time.h>
@@ -297,7 +298,7 @@ TEST(replay_records_every_game_keeping_the_last_three_and_the_marked) {
     unsetenv("LOONY_FIXED_CLOCK");
     unsetenv("LOONY_REPLAY");
     replay_reset();
-    replay_record_into(rec_dir, "loony-labyrinth");
+    replay_record_into(rec_dir, "loony-labyrinth", NULL, 0);
     CHECK(!exists_in(rec_dir, old[0]));
     CHECK(exists_in(rec_dir, old[1])); /* marked */
     CHECK(!exists_in(rec_dir, old[2]));
@@ -337,6 +338,58 @@ TEST(replay_records_every_game_keeping_the_last_three_and_the_marked) {
     CHECK_EQ(replay_marks(&ticks), 2);
 }
 
+static time_t local_time(int day, int h, int mi, int sec) {
+    struct tm tm = {.tm_year = 2026 - 1900, .tm_mon = 0, .tm_mday = day, .tm_hour = h,
+                    .tm_min = mi, .tm_sec = sec, .tm_isdst = -1};
+    return mktime(&tm);
+}
+
+/* A recording of its own name that ended (was last written) at end. */
+static void recording_ending(const char *folder, const char *name, time_t end) {
+    char path[1400];
+    touch(folder, name);
+    snprintf(path, sizeof path, "%s/%s", folder, name);
+    struct timeval tv[2] = {{end, 0}, {end, 0}};
+    utimes(path, tv);
+}
+
+/* An older game is kept while a high score it set is in the table (it was
+   recording when the score's time came), and goes once the score is gone. */
+TEST(replay_keeps_the_games_whose_high_scores_are_in_the_table) {
+    BEGIN_TEST();
+    char rec_dir[1300];
+    snprintf(rec_dir, sizeof rec_dir, "%s/recordings", dir);
+    CHECK(make_dirs(rec_dir));
+    static const char *const old[] = {
+        "loony-labyrinth-2026-01-01-120000.lwreplay", /* its score is in the table */
+        "loony-labyrinth-2026-01-02-120000.lwreplay", /* its score was evicted */
+        "loony-labyrinth-2026-01-03-120000.lwreplay", /* a score a second after its end */
+        "loony-labyrinth-2026-01-04-120000.lwreplay", /* a score long after its end */
+        "loony-labyrinth-2026-01-05-120000.lwreplay",
+        "loony-labyrinth-2026-01-06-120000.lwreplay",
+    };
+    for (int i = 0; i < 6; i++)
+        recording_ending(rec_dir, old[i], local_time(i + 1, 12, 10, 0));
+    time_t scores[] = {local_time(1, 12, 5, 0), local_time(3, 12, 10, 1), local_time(4, 13, 0, 0)};
+    unsetenv("LOONY_RECORD");
+    unsetenv("LOONY_FIXED_CLOCK");
+    unsetenv("LOONY_REPLAY");
+    replay_reset();
+    replay_record_into(rec_dir, "loony-labyrinth", scores, 3);
+    CHECK(exists_in(rec_dir, old[0]));
+    CHECK(!exists_in(rec_dir, old[1]));
+    CHECK(exists_in(rec_dir, old[2]));
+    CHECK(!exists_in(rec_dir, old[3]));
+    CHECK(exists_in(rec_dir, old[4])); /* the last two, with this game three */
+    CHECK(exists_in(rec_dir, old[5]));
+
+    /* The first game's score leaves the table: next time, so does the game. */
+    replay_reset();
+    replay_record_into(rec_dir, "loony-labyrinth", &scores[1], 1);
+    CHECK(!exists_in(rec_dir, old[0]));
+    CHECK(exists_in(rec_dir, old[2]));
+}
+
 /* LOONY_RECORD=0 turns it off; LOONY_RECORD names the file instead; a
    fixed clock or a replay never records. */
 TEST(replay_records_every_game_unless_told_otherwise) {
@@ -347,7 +400,7 @@ TEST(replay_records_every_game_unless_told_otherwise) {
     unsetenv("LOONY_FIXED_CLOCK");
     setenv("LOONY_RECORD", "0", 1);
     replay_reset();
-    replay_record_into(rec_dir, "loony-labyrinth");
+    replay_record_into(rec_dir, "loony-labyrinth", NULL, 0);
     CHECK(replay_start("loony-labyrinth", exe, sizeof exe, NULL, err, sizeof err));
     CHECK(!replay_recording());
     CHECK(access(rec_dir, F_OK) != 0);
@@ -355,14 +408,14 @@ TEST(replay_records_every_game_unless_told_otherwise) {
     unsetenv("LOONY_RECORD");
     setenv("LOONY_FIXED_CLOCK", "1", 1);
     replay_reset();
-    replay_record_into(rec_dir, "loony-labyrinth");
+    replay_record_into(rec_dir, "loony-labyrinth", NULL, 0);
     CHECK(replay_start("loony-labyrinth", exe, sizeof exe, NULL, err, sizeof err));
     CHECK(!replay_recording());
 
     unsetenv("LOONY_FIXED_CLOCK");
     setenv("LOONY_RECORD", file, 1);
     replay_reset();
-    replay_record_into(rec_dir, "loony-labyrinth");
+    replay_record_into(rec_dir, "loony-labyrinth", NULL, 0);
     CHECK(replay_start("loony-labyrinth", exe, sizeof exe, NULL, err, sizeof err));
     CHECK(replay_recording());
     CHECK_EQ(replay_mark(), 1);

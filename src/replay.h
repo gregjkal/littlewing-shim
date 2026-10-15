@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <time.h>
 
 /* Replays (a prototype, tested with Loony Labyrinth): LOONY_RECORD=file logs
    everything from outside the emulator that reaches the game while it is
@@ -77,8 +78,9 @@ bool replay_open(char *err, size_t errlen);
 bool replay_start(const char *game_id, const uint8_t *exe, size_t exe_len, const char *data_dir,
                   char *err, size_t errlen);
 
-/* The app records every game by itself (Loony Labyrinth only, for now):
-   the last REPLAY_KEEP_GAMES games of each, and every game with a mark. */
+/* The app records every game by itself (Loony Labyrinth only, for now),
+   and keeps the last REPLAY_KEEP_GAMES games of each, every game with a
+   mark, and every game that set a high score still in the table. */
 #define REPLAY_KEEP_GAMES 3
 
 /* Before replay_start: unless LOONY_RECORD is set (LOONY_RECORD=0 turns
@@ -86,8 +88,13 @@ bool replay_start(const char *game_id, const uint8_t *exe, size_t exe_len, const
    recorded into dir as <game_id>-<date>-<time>.lwreplay, renamed
    <...>-marked.lwreplay at its first mark. The game's recordings there
    beyond the last REPLAY_KEEP_GAMES (counting this one) are deleted first,
-   except the marked ones. */
-void replay_record_into(const char *dir, const char *game_id);
+   except the marked ones and those that were recording when one of the
+   high_scores (n times, from game_high_score_times) was set: from the time
+   in a recording's name to its last write, give or take
+   REPLAY_SCORE_SLACK seconds. So a recording goes once its score has left
+   the table. */
+#define REPLAY_SCORE_SLACK 2
+void replay_record_into(const char *dir, const char *game_id, const time_t *high_scores, size_t n);
 
 /* Ends a recording (the REPLAY_END record) and closes the file; at exit, a
    replay logs whether it reached the end of its file. Runs at exit; call it
