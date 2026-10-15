@@ -16,6 +16,5 @@ void menu_install(void);
    a copy without the license (replay_share) and offers it to the share
    sheet (AirDrop, Mail, Messages), and Save Replay... writes that copy
    where the player chooses. A score with no recording, or no date, says
-   so. title
-   names the copy ("Loony Labyrinth 43,074,596 GREG.lwreplay"). */
+   so. title names the copy ("Loony Labyrinth 43,074,596 GREG.lwreplay"). */
 void menu_add_high_scores(const char *game_id, const char *title, const char *rec_dir);
