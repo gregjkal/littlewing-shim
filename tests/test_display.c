@@ -58,6 +58,11 @@ static void on_mouse(int x, int y, bool down) {
     mouse_y = y;
 }
 static void on_paste(const char *t) { snprintf(pasted, sizeof pasted, "%s", t); }
+static int marks, mark_number;
+static int on_mark(void) {
+    marks++;
+    return mark_number;
+}
 
 static void push_key(SDL_Scancode sc, bool down, SDL_Keymod mod) {
     SDL_Event e;
@@ -74,7 +79,7 @@ TEST(display_poll_forwards_keys_but_keeps_cmd_q_and_cmd_f) {
     mm_init();
     qd_init(64, 48, 16);
     display_present(); /* opens the (dummy) window */
-    static const display_input in = {on_key, on_focus, on_quit, on_mouse, on_paste};
+    static const display_input in = {on_key, on_focus, on_quit, on_mouse, on_paste, on_mark};
     display_set_input(&in);
     keys = quits = 0;
     push_key(SDL_SCANCODE_Z, true, SDL_KMOD_NONE);
@@ -97,6 +102,45 @@ TEST(display_poll_forwards_keys_but_keeps_cmd_q_and_cmd_f) {
     CHECK_EQ(quits, 2);
 }
 
+static const char *window_title(void) {
+    int n = 0;
+    SDL_Window **w = SDL_GetWindows(&n);
+    const char *title = w && n > 0 ? SDL_GetWindowTitle(w[0]) : "";
+    SDL_free(w);
+    return title;
+}
+
+/* Cmd-S marks a clip once per press, never reaches the game, and says so in
+   the window's title. */
+TEST(display_poll_marks_a_clip_on_cmd_s) {
+    gm_init();
+    mm_init();
+    qd_init(64, 48, 16);
+    display_present();
+    static const display_input in = {on_key, on_focus, on_quit, on_mouse, on_paste, on_mark};
+    display_set_input(&in);
+    display_set_title("Loony");
+    keys = marks = 0;
+    mark_number = 2;
+    push_key(SDL_SCANCODE_S, true, SDL_KMOD_LGUI);
+    push_key(SDL_SCANCODE_S, false, SDL_KMOD_LGUI);
+    display_poll();
+    CHECK_EQ(keys, 0);
+    CHECK_EQ(marks, 1);
+    CHECK_STR(window_title(), "Loony: clip 2 marked");
+    display_set_title("Loony"); /* the message stays for its time */
+    CHECK_STR(window_title(), "Loony: clip 2 marked");
+    mark_number = 0;
+    push_key(SDL_SCANCODE_S, true, SDL_KMOD_RGUI);
+    display_poll();
+    CHECK_EQ(marks, 2);
+    CHECK_STR(window_title(), "Loony: not recording, nothing marked");
+    push_key(SDL_SCANCODE_S, true, SDL_KMOD_NONE); /* S alone is the game's */
+    display_poll();
+    CHECK_EQ(marks, 2);
+    CHECK_EQ(keys, 1);
+}
+
 static void push_click(float x, float y, bool down, Uint8 button) {
     SDL_Event e;
     memset(&e, 0, sizeof e);
@@ -113,7 +157,7 @@ TEST(display_poll_maps_clicks_to_the_screen_and_pastes) {
     mm_init();
     qd_init(64, 48, 16);
     display_present();
-    static const display_input in = {on_key, on_focus, on_quit, on_mouse, on_paste};
+    static const display_input in = {on_key, on_focus, on_quit, on_mouse, on_paste, on_mark};
     display_set_input(&in);
     /* Whichever test opened the window chose its size; its center is the
        screen's center either way. */

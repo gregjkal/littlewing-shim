@@ -1,11 +1,13 @@
 #include "replay.h"
 
 #include <CommonCrypto/CommonDigest.h>
+#include <dirent.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 #include <zlib.h>
@@ -14,8 +16,9 @@
 
 #define MAGIC "LWREPLAY"
 /* Format 1 had no start time or time zone: its replays see the host's
-   calendar, which only the dates the game saves depend on, never its frames. */
-#define FORMAT_VERSION 2
+   calendar, which only the dates the game saves depend on, never its frames.
+   Format 3 added marks, which format 2's reader would take for the end. */
+#define FORMAT_VERSION 3
 #define OLDEST_FORMAT 1
 #define FLAG_AUTO_ALERTS 1u
 #define FLAG_DST 2u /* daylight saving time was on when the recording started */
@@ -24,11 +27,11 @@ enum { OFF, RECORDING, PLAYING };
 
 static const char *const kind_names[REPLAY_KINDS] = {
     "end", "clock", "key", "mouse", "text", "focus", "quit",
-    "sound callback", "sound busy", "sound queue full", "frame",
+    "sound callback", "sound busy", "sound queue full", "frame", "mark",
 };
 
 /* Values per record of each kind. */
-static const int kind_values[REPLAY_KINDS] = {0, 1, 3, 3, 0, 1, 0, 3, 0, 0, 1};
+static const int kind_values[REPLAY_KINDS] = {0, 1, 3, 3, 0, 1, 0, 3, 0, 0, 1, 0};
 
 typedef struct {
     uint64_t step;
@@ -42,8 +45,11 @@ static struct {
     uint64_t step;
     uint64_t clock_ms; /* the clock as the game last saw it */
     unsigned presents, frames_checked;
+    int marks; /* marks logged, or taken */
     bool at_exit;
     /* recording */
+    char auto_path[PATH_MAX]; /* replay_record_into's file, or "" */
+    char path[PATH_MAX];      /* the file being written */
     gzFile out;
     uint64_t last_step;
     bool write_failed;
@@ -63,6 +69,8 @@ static struct {
     const uint8_t *prefs;
     size_t prefs_len;
     record next;
+    uint32_t *mark_ticks; /* every mark in the file */
+    size_t nmark_ticks;
 } R;
 
 bool replay_recording(void) { return R.mode == RECORDING; }
@@ -81,6 +89,7 @@ void replay_reset(void) {
     if (R.out)
         gzclose(R.out);
     free(R.data);
+    free(R.mark_ticks);
     memset(&R, 0, sizeof R);
 }
 
@@ -124,6 +133,14 @@ static void put_varint(uint64_t v) {
     put(b, (size_t)n);
 }
 
+/* What is written so far reaches the file. */
+static void flush(void) {
+    if (gzflush(R.out, Z_SYNC_FLUSH) != Z_OK && !R.write_failed) {
+        log_msg("replay: can't write the recording");
+        R.write_failed = true;
+    }
+}
+
 static bool get_varint(uint64_t *out) {
     uint64_t v = 0;
     for (int shift = 0; shift < 64; shift += 7) {
@@ -147,34 +164,62 @@ static bool get_bytes(const uint8_t **out, size_t n) {
     return true;
 }
 
-/* Reads the next record into R.next. A file that stops early (a recording
-   that crashed before writing its end) ends as if it had an end record. */
-static void read_next(void) {
-    record *r = &R.next;
+/* Reads the record at R.pos into r, which holds the one before it. False
+   where the file stops early (a recording that crashed before writing its
+   end). */
+static bool parse_record(record *r) {
     uint64_t delta, kind, v;
     const uint8_t *s;
     if (!get_varint(&delta) || !get_varint(&kind) || kind >= REPLAY_KINDS)
-        goto cut_off;
+        return false;
     r->kind = (replay_kind)kind;
     for (int i = 0; i < kind_values[kind]; i++) {
         if (!get_varint(&v))
-            goto cut_off;
+            return false;
         r->v[i] = (uint32_t)v;
     }
     r->text[0] = '\0';
     if (kind == REPLAY_TEXT) {
         if (!get_varint(&v) || v >= sizeof r->text || !get_bytes(&s, (size_t)v))
-            goto cut_off;
+            return false;
         memcpy(r->text, s, (size_t)v);
         r->text[v] = '\0';
     }
     r->step += delta;
-    return;
-cut_off:
+    return true;
+}
+
+/* Reads the next record into R.next. A file that stops early ends as if it
+   had an end record. */
+static void read_next(void) {
+    if (parse_record(&R.next))
+        return;
     log_msg("replay: the file ends without an end record (after step %llu)",
-            (unsigned long long)r->step);
-    r->kind = REPLAY_END;
+            (unsigned long long)R.next.step);
+    R.next.kind = REPLAY_END;
     R.cut_short = true;
+}
+
+/* Finds the ticks of the marks ahead of the replay, so a clip can start
+   before them: the clock records say what the clock was at each. */
+static void scan_marks(void) {
+    static record r;
+    size_t pos = R.pos, cap = 0;
+    uint64_t clock_ms = 0;
+    memset(&r, 0, sizeof r);
+    while (parse_record(&r) && r.kind != REPLAY_END) {
+        if (r.kind == REPLAY_CLOCK) {
+            clock_ms += r.v[0];
+        } else if (r.kind == REPLAY_MARK) {
+            if (R.nmark_ticks == cap) {
+                cap = cap ? cap * 2 : 16;
+                if (!(R.mark_ticks = realloc(R.mark_ticks, cap * sizeof *R.mark_ticks)))
+                    fatal("out of memory");
+            }
+            R.mark_ticks[R.nmark_ticks++] = (uint32_t)(clock_ms * 60 / 1000);
+        }
+    }
+    R.pos = pos;
 }
 
 static uint8_t *gunzip_file(const char *path, size_t *len) {
@@ -245,12 +290,17 @@ bad:
     return false;
 }
 
+/* LOONY_RECORD, or NULL when it is unset, empty or 0 (off). */
+static const char *record_env(void) {
+    const char *rec = getenv("LOONY_RECORD");
+    return rec && *rec && strcmp(rec, "0") != 0 ? rec : NULL;
+}
+
 bool replay_open(char *err, size_t errlen) {
     const char *path = getenv("LOONY_REPLAY");
     if (!path || !*path)
         return true;
-    const char *rec = getenv("LOONY_RECORD");
-    if (rec && *rec) {
+    if (record_env()) {
         snprintf(err, errlen, "LOONY_RECORD and LOONY_REPLAY can't be used together");
         return false;
     }
@@ -262,6 +312,7 @@ bool replay_open(char *err, size_t errlen) {
     }
     if (!parse_header(err, errlen))
         return false;
+    scan_marks();
     R.loaded = true;
     const char *game = getenv("LOONY_GAME");
     if (!game || !*game)
@@ -344,6 +395,7 @@ static bool start_recording(const char *path, const char *game_id, const uint8_t
         prefs_path(p, sizeof p, data_dir);
         prefs = read_file(p, &prefs_len);
     }
+    snprintf(R.path, sizeof R.path, "%s", path);
     R.out = gzopen(path, "wb6");
     if (!R.out) {
         free(prefs);
@@ -378,10 +430,103 @@ static bool start_recording(const char *path, const char *game_id, const uint8_t
 
 static void finish_at_exit(void) { replay_finish(); }
 
+static int by_name(const void *a, const void *b) {
+    return strcmp(*(char *const *)a, *(char *const *)b);
+}
+
+static bool ends_with(const char *s, const char *end) {
+    size_t n = strlen(s), m = strlen(end);
+    return n >= m && strcmp(s + n - m, end) == 0;
+}
+
+/* Whether the recording name in dir was running when one of the
+   high_scores was set: from the time in its name (after "<game_id>-") to its
+   last write. */
+static bool set_a_high_score(const char *dir, const char *name, size_t id_len,
+                             const time_t *high_scores, size_t n) {
+    struct tm tm = {.tm_isdst = -1};
+    char path[PATH_MAX];
+    struct stat st;
+    snprintf(path, sizeof path, "%s/%s", dir, name);
+    if (!strptime(name + id_len + 1, "%Y-%m-%d-%H%M%S", &tm) || stat(path, &st) != 0)
+        return false;
+    time_t from = mktime(&tm) - REPLAY_SCORE_SLACK, to = st.st_mtime + REPLAY_SCORE_SLACK;
+    for (size_t i = 0; i < n; i++)
+        if (high_scores[i] >= from && high_scores[i] <= to)
+            return true;
+    return false;
+}
+
+/* Deletes the game's recordings in dir but the newest keep, unless marked or
+   holding a high score. The names start with the date and time, so they
+   sort oldest first. */
+static void prune(const char *dir, const char *game_id, size_t keep, const time_t *high_scores,
+                  size_t nscores) {
+    DIR *d = opendir(dir);
+    if (!d)
+        return;
+    char **names = NULL;
+    size_t n = 0, cap = 0, id_len = strlen(game_id);
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (strncmp(e->d_name, game_id, id_len) != 0 || e->d_name[id_len] != '-' ||
+            !ends_with(e->d_name, ".lwreplay"))
+            continue;
+        if (n == cap && !(names = realloc(names, (cap = cap ? cap * 2 : 16) * sizeof *names)))
+            fatal("out of memory");
+        if (!(names[n++] = strdup(e->d_name)))
+            fatal("out of memory");
+    }
+    closedir(d);
+    qsort(names, n, sizeof *names, by_name);
+    for (size_t i = 0; i < n; i++) {
+        if (i + keep < n && !ends_with(names[i], "-marked.lwreplay") &&
+            !set_a_high_score(dir, names[i], id_len, high_scores, nscores)) {
+            char path[PATH_MAX];
+            snprintf(path, sizeof path, "%s/%s", dir, names[i]);
+            if (unlink(path) == 0)
+                log_msg("replay: deleted the old recording %s", path);
+            else
+                log_msg("replay: can't delete the old recording %s", path);
+        }
+        free(names[i]);
+    }
+    free(names);
+}
+
+void replay_record_into(const char *dir, const char *game_id, const time_t *high_scores, size_t n) {
+    const char *rec = getenv("LOONY_RECORD"), *fixed = getenv("LOONY_FIXED_CLOCK");
+    if ((rec && *rec) || R.loaded || (fixed && strcmp(fixed, "1") == 0))
+        return;
+    if (!make_dirs(dir)) {
+        log_msg("replay: can't create %s: this game isn't recorded", dir);
+        return;
+    }
+    prune(dir, game_id, REPLAY_KEEP_GAMES - 1, high_scores, n);
+    char stamp[32];
+    time_t now = time(NULL);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    strftime(stamp, sizeof stamp, "%Y-%m-%d-%H%M%S", &lt);
+    for (int i = 1;; i++) { /* two games in one second */
+        char base[PATH_MAX], marked[PATH_MAX + 16];
+        if (i == 1)
+            snprintf(base, sizeof base, "%s/%s-%s", dir, game_id, stamp);
+        else
+            snprintf(base, sizeof base, "%s/%s-%s-%d", dir, game_id, stamp, i);
+        snprintf(R.auto_path, sizeof R.auto_path, "%s.lwreplay", base);
+        snprintf(marked, sizeof marked, "%s-marked.lwreplay", base);
+        if (access(R.auto_path, F_OK) != 0 && access(marked, F_OK) != 0)
+            return;
+    }
+}
+
 bool replay_start(const char *game_id, const uint8_t *exe, size_t exe_len, const char *data_dir,
                   char *err, size_t errlen) {
-    const char *rec = getenv("LOONY_RECORD");
-    if (!R.loaded && !(rec && *rec))
+    const char *rec = record_env();
+    if (!rec && R.auto_path[0])
+        rec = R.auto_path;
+    if (!R.loaded && !rec)
         return true;
     uint8_t sha[CC_SHA256_DIGEST_LENGTH];
     CC_SHA256(exe, (CC_LONG)exe_len, sha);
@@ -480,6 +625,40 @@ const char *replay_log_text(const char *utf8) {
     return utf8;
 }
 
+int replay_mark(void) {
+    if (R.mode != RECORDING)
+        return 0;
+    replay_log(REPLAY_MARK, NULL);
+    R.marks++;
+    flush(); /* kept even if the game crashes before the next frame check */
+    log_msg("replay: mark %d at tick %u", R.marks, tick());
+    if (R.marks == 1 && R.auto_path[0] && strcmp(R.path, R.auto_path) == 0) {
+        /* Marked: kept for good. The open file follows the rename. */
+        char marked[PATH_MAX + 16];
+        snprintf(marked, sizeof marked, "%.*s-marked.lwreplay",
+                 (int)(strlen(R.path) - strlen(".lwreplay")), R.path);
+        if (rename(R.path, marked) == 0) {
+            log_msg("replay: kept as %s", marked);
+            snprintf(R.path, sizeof R.path, "%s", marked);
+        } else {
+            log_msg("replay: can't rename %s to %s", R.path, marked);
+        }
+    }
+    return R.marks;
+}
+
+bool replay_take_mark(void) {
+    if (!replay_take(REPLAY_MARK, NULL))
+        return false;
+    log_msg("replay: mark %d at tick %u", ++R.marks, tick());
+    return true;
+}
+
+size_t replay_marks(const uint32_t **ticks) {
+    *ticks = R.mark_ticks;
+    return R.nmark_ticks;
+}
+
 bool replay_take(replay_kind kind, uint32_t *values) {
     if (R.mode != PLAYING || R.next.kind != kind || R.next.step != R.step)
         return false;
@@ -504,11 +683,7 @@ bool replay_frame_due(void) {
 void replay_frame(uint32_t hash) {
     if (R.mode == RECORDING) {
         replay_log(REPLAY_FRAME, &hash);
-        /* At each frame check, so a recording that crashes replays to here. */
-        if (gzflush(R.out, Z_SYNC_FLUSH) != Z_OK && !R.write_failed) {
-            log_msg("replay: can't write the recording");
-            R.write_failed = true;
-        }
+        flush(); /* at each frame check, so a recording that crashes replays to here */
         return;
     }
     if (R.mode != PLAYING)

@@ -79,6 +79,8 @@ static bool parse(const char *text, char *err, size_t errlen) {
             a->kind = SCRIPT_BLUR;
         } else if (strcmp(verb, "focus") == 0) {
             a->kind = SCRIPT_FOCUS;
+        } else if (strcmp(verb, "mark") == 0) {
+            a->kind = SCRIPT_MARK;
         } else if (strcmp(verb, "click") == 0) {
             a->kind = SCRIPT_CLICK;
             if (sscanf(s, "%*u %*s %d %d", &a->x, &a->y) != 2) {

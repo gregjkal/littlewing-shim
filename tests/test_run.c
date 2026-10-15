@@ -276,29 +276,34 @@ TEST(run_a_recorded_game_replays_exactly) {
     CHECK(same_prefs);
 }
 
-static char clip_path[1100];
-static const char *clip_span;
+static char clip_path[1100]; /* LOONY_CLIP_OUT, unless empty */
+static const char *clip_spec, *clip_before, *clip_after; /* LOONY_CLIP, _BEFORE, _AFTER */
 
 static void run_loony_clipping(void *unused) {
     (void)unused;
     unsetenv("LOONY_AUTO_ALERTS");
     setenv("LOONY_REPLAY", replay_file, 1);
     setenv("LOONY_DATA_DIR", run_data, 1);
-    setenv("LOONY_CLIP", clip_span, 1);
-    setenv("LOONY_CLIP_OUT", clip_path, 1);
+    setenv("LOONY_CLIP", clip_spec, 1);
+    if (clip_path[0])
+        setenv("LOONY_CLIP_OUT", clip_path, 1);
+    if (clip_before)
+        setenv("LOONY_CLIP_BEFORE", clip_before, 1);
+    if (clip_after)
+        setenv("LOONY_CLIP_AFTER", clip_after, 1);
     setenv("LOONY_HD", LOONY_SRC_DIR "/hd-art/loony-labyrinth", 1);
     execl(LOONY_BIN, "loony", (char *)NULL);
     _exit(127);
 }
 
-/* Records the opening, quitting at tick 330 (5.5 s), into rec_dir: the
-   recording's status. */
-static int record_for_clips(const char *rec_dir, char *out, size_t cap) {
+/* Records the opening with this script (quitting at tick 330, 5.5 s, in
+   the tests) into rec_dir/game.lwreplay: the recording's status. */
+static int record_for_clips(const char *rec_dir, const char *script, char *out, size_t cap) {
     snprintf(replay_file, sizeof replay_file, "%s/game.lwreplay", rec_dir);
     tmp_name(script_path, sizeof script_path, "script");
     tmp_name(replay_shot, sizeof replay_shot, "shot");
     FILE *f = fopen(script_path, "w");
-    fputs("330 quit\n", f);
+    fputs(script, f);
     fclose(f);
     snprintf(run_data, sizeof run_data, "%s", rec_dir);
     int status = test_run_child(run_loony_recording, (void *)test_game_dir(), out, cap);
@@ -308,12 +313,16 @@ static int record_for_clips(const char *rec_dir, char *out, size_t cap) {
     return status;
 }
 
-/* Clips span of that recording to <play_dir>/<name>, replaying in a data
-   folder there of its own: the clip's status. */
+/* Clips span of that recording to <play_dir>/<name> (with no name, where
+   the clips go by default), replaying in a data folder there of its own:
+   the clip's status. */
 static int clip_recording(const char *span, const char *play_dir, const char *name, char *out, size_t cap) {
-    clip_span = span;
-    snprintf(clip_path, sizeof clip_path, "%s/%s", play_dir, name);
-    snprintf(run_data, sizeof run_data, "%s/data-%s", play_dir, name);
+    clip_spec = span;
+    if (name)
+        snprintf(clip_path, sizeof clip_path, "%s/%s", play_dir, name);
+    else
+        clip_path[0] = '\0';
+    snprintf(run_data, sizeof run_data, "%s/data-%s", play_dir, name ? name : "default");
     int status = test_run_child(run_loony_clipping, NULL, out, cap);
     run_data[0] = '\0';
     return status;
@@ -328,7 +337,7 @@ TEST(run_a_clip_of_a_recording_is_written) {
     test_tmp_dir(rec_dir, sizeof rec_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
     char out[2][32768];
-    int rec_status = record_for_clips(rec_dir, out[0], sizeof out[0]);
+    int rec_status = record_for_clips(rec_dir, "330 quit\n", out[0], sizeof out[0]);
     int clip_status = clip_recording("0:01-0:04", play_dir, "clip.mp4", out[1], sizeof out[1]);
     mp4_info info;
     char err[256] = "";
@@ -364,7 +373,7 @@ TEST(run_a_clip_past_the_end_of_a_recording_keeps_what_there_is) {
     test_tmp_dir(rec_dir, sizeof rec_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
     char out[4][32768];
-    int rec_status = record_for_clips(rec_dir, out[0], sizeof out[0]);
+    int rec_status = record_for_clips(rec_dir, "330 quit\n", out[0], sizeof out[0]);
     int past_status = clip_recording("0:03-0:20", play_dir, "past.mp4", out[1], sizeof out[1]);
     mp4_info info;
     char err[256] = "";
@@ -394,6 +403,62 @@ TEST(run_a_clip_past_the_end_of_a_recording_keeps_what_there_is) {
     CHECK(none_written);
     CHECK_EQ(bad_status, 1);
     CHECK_CONTAINS(out[3], "can't load the script");
+}
+
+/* The tick of mark n (from 1) where a run logged "<who>: mark <n> at tick",
+   or 0. */
+static unsigned mark_tick(const char *out, const char *who, int n) {
+    char what[64];
+    snprintf(what, sizeof what, "%s: mark %d at tick ", who, n);
+    const char *at = strstr(out, what);
+    unsigned tick = 0;
+    return at && sscanf(at + strlen(what), "%u", &tick) == 1 ? tick : 0;
+}
+
+/* Marks made while recording (Cmd-S; here the script's) become clips: the
+   export finds each at the tick it was made, before the replay reaches it,
+   and writes one clip per mark, named after the replay, from a second before
+   the mark to half a second after it. */
+TEST(run_marks_in_a_recording_become_clips) {
+    SKIP_UNLESS_GAME();
+    char rec_dir[1024], play_dir[1024], files[2][1100], err[256] = "";
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    char out[2][32768];
+    int rec_status = record_for_clips(rec_dir, "100 mark\n280 mark\n330 quit\n", out[0], sizeof out[0]);
+    clip_before = "1";
+    clip_after = "0.5";
+    int clip_status = clip_recording("marks", play_dir, NULL, out[1], sizeof out[1]);
+    clip_before = clip_after = NULL;
+    mp4_info info[2];
+    bool read[2], third = false;
+    for (int i = 0; i < 3; i++) {
+        char name[1100];
+        snprintf(name, sizeof name, "%s/game-clip-%d.mp4", rec_dir, i + 1);
+        if (i == 2)
+            third = access(name, F_OK) == 0;
+        else if (!(read[i] = mp4_read_info(name, &info[i], err, sizeof err)))
+            fprintf(stderr, "%s: %s\n", name, err);
+        if (i < 2)
+            snprintf(files[i], sizeof files[i], "%s", name);
+    }
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(clip_status, 0);
+    unsigned ticks[2] = {mark_tick(out[0], "replay", 1), mark_tick(out[0], "replay", 2)};
+    CHECK(ticks[0] >= 100 && ticks[0] < 110);
+    CHECK(ticks[1] >= 280 && ticks[1] < 290);
+    for (int i = 0; i < 2; i++) {
+        CHECK_EQ(mark_tick(out[1], "clip", i + 1), ticks[i]);   /* found ahead */
+        CHECK_EQ(mark_tick(out[1], "replay", i + 1), ticks[i]); /* and reached */
+        CHECK_CONTAINS(out[1], files[i]);
+        CHECK(read[i]);
+        CHECK_EQ(info[i].video_frames, 90);
+        CHECK(fabs(info[i].audio_seconds - 1.5) < 0.03);
+    }
+    CHECK(!third);
+    CHECK(!strstr(out[1], "desync"));
 }
 
 static uint32_t le32_at(const uint8_t *p) {

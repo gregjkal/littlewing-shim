@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <time.h>
 
 /* Replays (a prototype, tested with Loony Labyrinth): LOONY_RECORD=file logs
    everything from outside the emulator that reaches the game while it is
@@ -21,9 +22,11 @@
    id and the SHA-256 of its program, whether LOONY_AUTO_ALERTS was on, the
    wall clock and time zone at the start, and the preferences file the run
    started from), then the records. Format 1 had no wall clock or time zone:
-   its replays see the host's dates, which no frame depends on. A replay
-   starts from those preferences in a folder of its own (LOONY_DATA_DIR, or a
-   new temporary folder), and refuses another game or another program.
+   its replays see the host's dates, which no frame depends on. Format 3
+   added marks (an older program would take one for the end of the file). A
+   replay starts from those preferences in a folder of its own
+   (LOONY_DATA_DIR, or a new temporary folder), and refuses another game or
+   another program.
 
    Every REPLAY_FRAME_EVERY presents, a hash of the screen is logged; a
    replay compares them and exits with status 3 at the first difference (a
@@ -44,6 +47,7 @@ typedef enum {
     REPLAY_SOUND_BUSY,     /* a channel's status was busy */
     REPLAY_SOUND_FULL,     /* a channel's queue was full */
     REPLAY_FRAME,          /* the screen's hash */
+    REPLAY_MARK,           /* the player marked a moment to clip (format 3) */
     REPLAY_KINDS
 } replay_kind;
 
@@ -74,6 +78,24 @@ bool replay_open(char *err, size_t errlen);
 bool replay_start(const char *game_id, const uint8_t *exe, size_t exe_len, const char *data_dir,
                   char *err, size_t errlen);
 
+/* The app records every game by itself (Loony Labyrinth only, for now),
+   and keeps the last REPLAY_KEEP_GAMES games of each, every game with a
+   mark, and every game that set a high score still in the table. */
+#define REPLAY_KEEP_GAMES 3
+
+/* Before replay_start: unless LOONY_RECORD is set (LOONY_RECORD=0 turns
+   recording off), a replay is playing or LOONY_FIXED_CLOCK=1, the game is
+   recorded into dir as <game_id>-<date>-<time>.lwreplay, renamed
+   <...>-marked.lwreplay at its first mark. The game's recordings there
+   beyond the last REPLAY_KEEP_GAMES (counting this one) are deleted first,
+   except the marked ones and those that were recording when one of the
+   high_scores (n times, from game_high_score_times) was set: from the time
+   in a recording's name to its last write, give or take
+   REPLAY_SCORE_SLACK seconds. So a recording goes once its score has left
+   the table. */
+#define REPLAY_SCORE_SLACK 2
+void replay_record_into(const char *dir, const char *game_id, const time_t *high_scores, size_t n);
+
 /* Ends a recording (the REPLAY_END record) and closes the file; at exit, a
    replay logs whether it reached the end of its file. Runs at exit; call it
    before exec. */
@@ -95,6 +117,18 @@ void replay_log(replay_kind kind, const uint32_t *values);
    REPLAY_MAX_TEXT bytes. Returns the text to post (utf8, or the cut text),
    so the game gets what a replay will give it. */
 const char *replay_log_text(const char *utf8);
+
+/* Marks: while recording, Cmd-S marks the moment for a clip (clip.h). A
+   replay only logs them. Recording: logs a mark at this step and returns its
+   number, from 1; 0 when nothing is recorded (a replay too). */
+int replay_mark(void);
+
+/* Replay: takes a mark at this step and logs it. */
+bool replay_take_mark(void);
+
+/* After replay_open: the ticks of the replay's marks, in order, from a scan
+   of the whole file. */
+size_t replay_marks(const uint32_t **ticks);
 
 /* Replay: takes the next record if it is of this kind and at this step. A
    record left behind at an earlier step is a desync. */

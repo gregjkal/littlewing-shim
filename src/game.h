@@ -1,5 +1,6 @@
 #pragma once
 #include <stddef.h>
+#include <time.h>
 
 /* The LittleWing games the shim can play. The two classic games share one
    engine and make the same 132 calls, so they differ only in names.
@@ -39,6 +40,12 @@ const game_info *game_in_folder(const char *dir);
 /* Writes the games installed in their folders, in table order, to out (at
    most cap) and returns how many there are. */
 int game_installed(const game_info **out, int cap);
+
+/* When the high scores in Loony Labyrinth's preferences file were set:
+   its "highscore timestamp <n>" values, local time, at most cap of them.
+   Scores without one (those the game starts with) are left out. 0 when the
+   file is missing or unreadable. */
+size_t game_high_score_times(const char *prefs, time_t *out, size_t cap);
 
 /* The app's own file in the save root (files_data_root): settings.c's, the
    last game picked and the volume. Named for the picker, which came first. */
