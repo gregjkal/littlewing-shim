@@ -206,6 +206,105 @@ static void add_scores_menu(void) {
     log_msg("menu: High Scores added");
 }
 
+/* Sparkle (Contents/Frameworks/Sparkle.framework, which a release bundles)
+   is loaded when the app runs rather than linked, so builds without it need
+   nothing. These are the parts of its API used here. */
+@protocol LoonySparkleController
+- (instancetype)initWithStartingUpdater:(BOOL)startUpdater
+                        updaterDelegate:(id)updaterDelegate
+                     userDriverDelegate:(id)userDriverDelegate;
+- (void)checkForUpdates:(id)sender;
+@end
+
+@protocol LoonySparkleAppcastItem
+@property(nonatomic, copy, readonly) NSString *displayVersionString;
+@end
+
+#define CHECK_FOR_UPDATES @"Check for Updates…"
+
+/* Sparkle's user driver delegate. Sparkle shows an update its daily check
+   finds at once only near launch or after the Mac has sat idle; found
+   while the player plays, it would interrupt, so the Check for Updates item
+   says there is one instead (Sparkle's gentle reminders), until the player
+   looks at it. */
+@interface LoonyUpdates : NSObject
+@property(nonatomic, strong) id<LoonySparkleController> sparkle;
+@property(nonatomic, strong) NSMenuItem *item;
+@end
+
+@implementation LoonyUpdates
+- (BOOL)supportsGentleScheduledUpdateReminders {
+    return YES;
+}
+
+- (BOOL)standardUserDriverShouldHandleShowingScheduledUpdate:(id)update
+                                         andInImmediateFocus:(BOOL)immediateFocus {
+    (void)update;
+    return immediateFocus;
+}
+
+- (void)standardUserDriverWillHandleShowingUpdate:(BOOL)handleShowingUpdate
+                                        forUpdate:(id<LoonySparkleAppcastItem>)update
+                                            state:(id)state {
+    (void)state;
+    if (handleShowingUpdate)
+        return;
+    self.item.title = [NSString stringWithFormat:@"Update to LittleWing %@…", update.displayVersionString];
+    log_msg("updates: LittleWing %s is available", update.displayVersionString.UTF8String);
+}
+
+- (void)standardUserDriverDidReceiveUserAttentionForUpdate:(id)update {
+    (void)update;
+    self.item.title = CHECK_FOR_UPDATES;
+}
+
+- (void)standardUserDriverWillFinishUpdateSession {
+    self.item.title = CHECK_FOR_UPDATES;
+}
+@end
+
+static LoonyUpdates *updates; /* Sparkle's controller and its delegate, once started */
+
+/* Starts Sparkle, which checks for updates once a day, and puts Check for
+   Updates... after About in the app menu. Only an app whose Info.plist names
+   a feed (SUFeedURL, which a release's has) and that bundles Sparkle. */
+static void add_updates(NSMenu *bar) {
+    NSBundle *app = NSBundle.mainBundle;
+    if (![app objectForInfoDictionaryKey:@"SUFeedURL"])
+        return;
+    NSString *path = [app.privateFrameworksPath stringByAppendingPathComponent:@"Sparkle.framework"];
+    NSBundle *sparkle = [NSBundle bundleWithPath:path];
+    NSError *err = nil;
+    if (!sparkle || ![sparkle loadAndReturnError:&err]) {
+        log_msg("updates: can't load %s: %s", path.UTF8String,
+                err ? err.localizedDescription.UTF8String : "it isn't there");
+        return;
+    }
+    Class controller_class = NSClassFromString(@"SPUStandardUpdaterController");
+    if (!controller_class) {
+        log_msg("updates: Sparkle has no SPUStandardUpdaterController");
+        return;
+    }
+    updates = [[LoonyUpdates alloc] init];
+    updates.sparkle = [(id<LoonySparkleController>)[controller_class alloc] initWithStartingUpdater:YES
+                                                                                   updaterDelegate:nil
+                                                                                userDriverDelegate:updates];
+    NSMenu *app_menu = bar.numberOfItems ? [bar itemAtIndex:0].submenu : nil;
+    if (!app_menu)
+        return;
+    NSInteger at = 0;
+    for (NSInteger i = 0; i < app_menu.numberOfItems; i++)
+        if ([app_menu itemAtIndex:i].action == @selector(orderFrontStandardAboutPanel:))
+            at = i + 1;
+    NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:CHECK_FOR_UPDATES
+                                                  action:@selector(checkForUpdates:)
+                                           keyEquivalent:@""];
+    item.target = updates.sparkle; /* which disables it while it's busy */
+    updates.item = item;
+    [app_menu insertItem:item atIndex:at];
+    log_msg("menu: Check for Updates added");
+}
+
 static NSImageView *icon(NSString *symbol, NSRect frame) {
     NSImageView *v = [[NSImageView alloc] initWithFrame:frame];
     v.image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];
@@ -251,6 +350,7 @@ void menu_install(void) {
         if (at < 0)
             at = bar.numberOfItems;
         [bar insertItem:top atIndex:at];
+        add_updates(bar);
         if (scores_config.on)
             add_scores_menu();
     }
