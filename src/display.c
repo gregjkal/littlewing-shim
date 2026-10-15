@@ -340,7 +340,7 @@ void display_poll(void) {
                     if (n)
                         snprintf(msg, sizeof msg, "clip %d marked", n);
                     else
-                        snprintf(msg, sizeof msg, "not recording, nothing marked");
+                        snprintf(msg, sizeof msg, "no game is being recorded, nothing marked");
                     display_flash(msg);
                 }
                 break;

@@ -134,7 +134,7 @@ TEST(display_poll_marks_a_clip_on_cmd_s) {
     push_key(SDL_SCANCODE_S, true, SDL_KMOD_RGUI);
     display_poll();
     CHECK_EQ(marks, 2);
-    CHECK_STR(window_title(), "Loony: not recording, nothing marked");
+    CHECK_STR(window_title(), "Loony: no game is being recorded, nothing marked");
     push_key(SDL_SCANCODE_S, true, SDL_KMOD_NONE); /* S alone is the game's */
     display_poll();
     CHECK_EQ(marks, 2);

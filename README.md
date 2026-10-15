@@ -218,6 +218,21 @@ LOONY_AUTO_ALERTS=1 ./build/loony     # answer alerts with their default button,
 LOONY_DATA_DIR=/tmp/fresh ./build/loony   # use another folder for preferences and saved files
 ```
 
+To read a game's own code, `tools/disasm.py` disassembles its PowerPC
+functions by name. The Classic games keep a traceback table after each
+function with its C++ name and length, so it can list them and label calls.
+It needs Capstone, a development dependency only (the app doesn't use it):
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r tools/requirements-dev.txt
+.venv/bin/python tools/disasm.py "/Applications/Loony Labyrinth/LOONY LABYRINTH 3.0.1" --list Event_
+.venv/bin/python tools/disasm.py "/Applications/Loony Labyrinth/LOONY LABYRINTH 3.0.1" Event_StartGame
+```
+
+Offsets are code offsets, as the shim prints them (`code+0x154f0`); an
+offset in place of a name shows the function holding it. Mach-O games
+(MONSTER FAIR) aren't read yet.
+
 At exit (and before going back to the picker) the log has a line on what
 showing frames cost: `display: <n> presents, <bytes> bytes uploaded per present
 on average; upload <ms> average, <ms> max; upload and present <ms> average,
@@ -300,20 +315,32 @@ Design: `docs/superpowers/specs/2026-09-30-loony-shim-design.md`
 
 ### Replays (prototype, Loony Labyrinth)
 
-Every game of Loony Labyrinth is recorded: what reached the game from
-outside while you played (the clock and date, keys and focus, when sound
-callbacks came, and the preferences it started from) goes into a small file,
-a few KB a minute, in `~/Library/Application Support/littlewing-shim/recordings`
-(`recordings` in `LOONY_DATA_DIR` when that is set). Files are named
-`loony-labyrinth-<date>-<time>.lwreplay`. The last three games are kept, and
-so is every game where you pressed Cmd-S (renamed `...-marked.lwreplay` at
-the first press) and every game that set a high score still in the table: a
-game whose score is pushed off the table goes with it. A game is matched to
-a score by time: the score's timestamp falls between the start in the
-recording's name and its last write. Older ones are deleted when a game
-starts.
-`LOONY_RECORD=game.lwreplay` records to a file of your choosing instead, and
-`LOONY_RECORD=0` records nothing. The date a replay sees is the recording's:
+Every game of Loony Labyrinth is recorded into a file of its own: what
+reached the game from outside while you played (the clock and date, keys and
+focus, when sound callbacks came, and the preferences it started from), a
+few KB a minute, in `~/Library/Application Support/littlewing-shim/recordings`
+(`recordings` in `LOONY_DATA_DIR` when that is set). A file is named for the
+game's start, `loony-labyrinth-<date>-<time>.lwreplay`, and ends at game
+over (after a high score's initials), when the game is thrown away from the
+pause menu, when another starts, or at quit. Nothing is written outside a
+game: the menus and the self-playing demo aren't recorded, and Cmd-S there
+says "no game is being recorded".
+
+A replay can only start at launch, so a game's file also carries what came
+before the game in that launch: the opening, the menus and any earlier
+games, without their marks. Watching replays that part first (below).
+
+At launch, the last three games are kept, and so is every game where you
+pressed Cmd-S (renamed `...-marked.lwreplay` at the first press), every
+game with clips (below) and every game that set a high score still in the
+table: a game whose score is pushed off the table goes with it. A game is
+matched to a score by time: the score's timestamp falls between the start
+in the file's name and its last write. The others are deleted then, so the
+games of a session stay until the next launch.
+`LOONY_RECORD=game.lwreplay` records the whole session into a file of your
+choosing instead, and `LOONY_RECORD=0` records nothing. Only format 5, the
+one with a file per game, plays: recordings from the prototype's earlier
+builds are refused. The date a replay sees is the recording's:
 a high score keeps its timestamp. `LOONY_REPLAY` plays a recording back
 headless, frame for frame and faster than real time, from those preferences
 in a folder of its own:
@@ -345,8 +372,8 @@ Up to the clip's start the replay runs at full speed and draws nothing; from
 there each tick of the game's clock is a frame (60 fps), handed with the
 sound straight to AVFoundation's H.264 and AAC encoders, so no frame is
 written to disk and no ffmpeg is needed. It exits once the clip is written;
-no window opens. Times are `m:ss` or `h:mm:ss` from launch (`1:02:03.5`), or
-ticks. In HD mode the clip is the HD picture at 2x, scaled down to 1280x960;
+no window opens. Times are play time (below), `m:ss` or `h:mm:ss` from the
+game's start (`1:02:03.5`), or ticks. In HD mode the clip is the HD picture at 2x, scaled down to 1280x960;
 `LOONY_CLIP_WIDTH` sets another width (1600 for the whole 2x picture; a
 clip is never scaled up). Without HD it is 800x600. `LOONY_CLIP_OUT` is
 `clip.mp4` by default (`.mov` makes a QuickTime movie). The video's quality
@@ -357,8 +384,7 @@ comes to 3.1 MB in HD, or 16 seconds and 2.1 MB at 800x600. A clip
 that runs past the end of the recording keeps what it has; one that starts
 past it writes nothing and exits with status 4. A file already at
 `LOONY_CLIP_OUT` is replaced, but the replay itself is refused, as is a
-folder that can't be written, before the seek. Recordings in the
-first format (before dates were recorded) replay too, with the host's dates.
+folder that can't be written, before the seek.
 
 While you play, Cmd-S marks the moment, the way a console saves the last
 30 seconds. The window's title says "clip 1 marked" for a couple of seconds,
@@ -377,9 +403,8 @@ those, in seconds. The clips go next to the replay as `game-clip-1.mp4`,
 and so on), and the other `LOONY_CLIP_` settings apply to each. Marks whose
 clips overlap, or come within a second of each other, share one clip. A
 replay with no marks is refused. When nothing is being recorded
-(`LOONY_RECORD=0`, or with `LOONY_FIXED_CLOCK=1`), Cmd-S marks nothing and
-the title says so. Recordings are now in format 3 (the one with marks), which
-older builds refuse.
+(outside a game, with `LOONY_RECORD=0`, or with `LOONY_FIXED_CLOCK=1`),
+Cmd-S marks nothing and the title says so.
 
 To find a moment you didn't mark, watch the replay in a window, at the speed
 it was played and with its sound:
@@ -396,8 +421,21 @@ LOONY_REPLAY=game.lwreplay LOONY_CLIP=clips ./build-release/loony
 | I, O | Where a clip starts, and where it ends (O saves it) |
 | J, L | Back or ahead 10 seconds (with Shift, a minute) |
 
-The window's title shows the game's time and the speed, and a clip's start
-once I has marked it. Only 1x has sound. Each clip goes into `game.clips`
+Watching starts where the game does. First it replays what came before the
+game, undrawn, silent and as fast as it can, about 70 times real time; the
+title counts through it ("replaying what came before the game, 0:40 of
+2:10"). Starting from a saved state instead would skip that wait
+([#46](https://github.com/gregjkal/littlewing-shim/issues/46)). The same goes
+for what isn't play inside the game, the pause menu and time the window
+was in the background: it is skipped, and every time is play time, which
+counts only play from the game's start. That holds for the title, J and L,
+I and O, the `.clips` file, `LOONY_CLIP` and marks. A clip that runs
+across a pause goes straight from before it to after it.
+
+The window's title shows the play time and the speed, and a clip's start
+once I has marked it. Only 1x has sound. Cut scenes draw up to twice as many
+frames as play, more than the window can show; when watching falls behind,
+it skips frames to keep time, and shows the latest once it has caught up. Each clip goes into `game.clips`
 next to `game.lwreplay`, one `<start>-<end>` a line in `LOONY_CLIP`'s
 format, so the file can be edited by hand too; `LOONY_CLIP=clips` then
 renders each into `game-clip-1.mp4` and so on, in one pass, as
@@ -406,8 +444,8 @@ renders each into `game-clip-1.mp4` and so on, in one pass, as
 
 Going ahead replays without pacing to the time. A replay only runs
 forward, so going back restarts the program, which replays from the start
-to the time wanted: at about 8 times real time, going back from minute 14 of
-a game takes about a minute and a half (more in HD). The speed, a pause
+to the time wanted: the further into the game, the longer it takes (longer
+still in HD). The speed, a pause
 and a clip's start carry over. At the end of the replay, or when the game
 quits, the last frame stays up until you close the window. At 1x each
 minute of play logs how long it took on the wall clock: within a few
@@ -429,8 +467,9 @@ games has none, and neither does a score without a date, and its submenu
 says so. The game starts with undated scores, and it loses dates too: when
 a new score pushes the others down, their names move with them but their
 dates stay in place, so a lower score can show another's date, or none. A
-recording holds the whole launch, so the replay starts at the opening, and
-any games played before the high score in that launch come with it.
+score recorded by the prototype's earlier builds can't be shared, since
+this version can't play its recording. The replay holds the one game that
+set the score, and watching it starts at that game (above).
 
 The shared file leaves your registration out. The app writes a copy with
 the e-mail address and key code emptied, and the original recording stays
@@ -453,11 +492,14 @@ frames still match the recording. Without one, the app says so and doesn't
 play it. The replay also needs the same version of LittleWing, or it may
 desync. From a terminal, `LOONY_REPLAY_LICENSE` names the preferences to
 take the registration from; by default they're your own copy's, in
-`littlewing-shim/loony-labyrinth/prefs.plist`. Shared files are format 4,
-which older builds refuse; recordings are still format 3.
+`littlewing-shim/loony-labyrinth/prefs.plist`. Shared files are format 5,
+like recordings, with a flag that says the registration is out.
 
-While recording, the game's clock moves in whole milliseconds, and when the
-game spins on `TickCount` waiting for the next tick, it sleeps instead. The
+While recording, the game's clock moves in whole milliseconds. When the
+game spins on `TickCount` waiting for the next tick, it sleeps instead, and
+when it spins on `Microseconds` and `Delay(0)` (Loony Labyrinth's menus do,
+the pause menu among them), it sleeps until the next millisecond after three
+polls in the same one. The
 file holds none of the game itself, but its preferences hold the
 registration (e-mail address and key code) and the high-score names, and the
 keys record anything typed. Share a recording through the High Scores menu,

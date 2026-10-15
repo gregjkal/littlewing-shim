@@ -21,12 +21,12 @@
    The file is gzip-compressed: a header (magic, format version, the game's
    id and the SHA-256 of its program, whether LOONY_AUTO_ALERTS was on, the
    wall clock and time zone at the start, and the preferences file the run
-   started from), then the records. Format 1 had no wall clock or time zone:
-   its replays see the host's dates, which no frame depends on. Format 3
-   added marks (an older program would take one for the end of the file).
-   Format 4 is a copy made to share (replay_share). A replay starts from
-   those preferences in a folder of its own (LOONY_DATA_DIR, or a new
-   temporary folder), and refuses another game or another program.
+   started from), then the records. Only format 5 is read, which logs
+   where a game starts and ends and where it is played (play.h); a shared
+   copy is format 5 with a flag. The prototype's formats 1 to 4 are refused.
+   A replay starts from those preferences in a folder of its own
+   (LOONY_DATA_DIR, or a new temporary folder), and refuses another game or
+   another program.
 
    Every REPLAY_FRAME_EVERY presents, a hash of the screen is logged; a
    replay compares them and exits with status 3 at the first difference (a
@@ -47,7 +47,9 @@ typedef enum {
     REPLAY_SOUND_BUSY,     /* a channel's status was busy */
     REPLAY_SOUND_FULL,     /* a channel's queue was full */
     REPLAY_FRAME,          /* the screen's hash */
-    REPLAY_MARK,           /* the player marked a moment to clip (format 3) */
+    REPLAY_MARK,           /* the player marked a moment to clip */
+    REPLAY_GAME,           /* started: a game starts (1) or ends (0) (play.h) */
+    REPLAY_PLAY,           /* on: the game is played from here (1), or not (0) */
     REPLAY_KINDS
 } replay_kind;
 
@@ -60,8 +62,7 @@ bool replay_playing(void);
 /* On a recording or a replay: the wall clock (Unix seconds) and the time
    zone (seconds east of UTC, daylight saving on or off) when the recording
    started. The calendar the game sees is that plus its own clock, so dates
-   replay too. False otherwise, and on a replay of format 1, which has no
-   wall clock (it sees the host's). */
+   replay too. False otherwise. */
 bool replay_calendar(int64_t *start_unix, int32_t *gmtoff, bool *dst);
 
 /* Before anything reads the environment: with LOONY_REPLAY set, loads the
@@ -84,16 +85,20 @@ bool replay_start(const char *game_id, const uint8_t *exe, size_t exe_len, const
 #define REPLAY_KEEP_GAMES 3
 
 /* Before replay_start: unless LOONY_RECORD is set (LOONY_RECORD=0 turns
-   recording off), a replay is playing or LOONY_FIXED_CLOCK=1, the game is
-   recorded into dir as <game_id>-<date>-<time>.lwreplay, renamed
-   <...>-marked.lwreplay at its first mark. The game's recordings there
-   beyond the last REPLAY_KEEP_GAMES (counting this one) are deleted first,
-   except the marked ones, those with a list of clips (<...>.clips, from
-   watching them; watch.h) and those that were recording when one of the
-   high_scores (n times, from game_high_score_times) was set: from the time
-   in a recording's name to its last write, give or take
-   REPLAY_SCORE_SLACK seconds. So a recording goes once its score has left
-   the table. */
+   recording off), a replay is playing or LOONY_FIXED_CLOCK=1, each game
+   played (replay_game) is recorded into dir as
+   <game_id>-<date>-<time>.lwreplay, named for when it starts and renamed
+   <...>-marked.lwreplay at its first mark. A replay can only start at
+   launch, so the file holds what a replay needs of the time before the game
+   (but not the marks, games and play there), then the game until it ends.
+   Nothing is written outside a game. The game's recordings there beyond the
+   last REPLAY_KEEP_GAMES are deleted first, except the marked ones, those
+   with a list of clips (<...>.clips, from watching them; watch.h) and those
+   that were recording when one of the high_scores (n times, from
+   game_high_score_times) was set: from the time in a recording's name to
+   its last write, give or take REPLAY_SCORE_SLACK seconds. So a recording
+   goes once its score has left the table; the games of this run stay until
+   the next. */
 #define REPLAY_SCORE_SLACK 2
 void replay_record_into(const char *dir, const char *game_id, const time_t *high_scores, size_t n);
 
@@ -105,7 +110,7 @@ bool replay_find_recording(const char *dir, const char *game_id, time_t when, ch
 
 /* Writes a copy of the recording src to dst (replacing it) that can be
    given away: the license (e-mail address and key code) is emptied in its
-   preferences, and the copy is marked shared (format 4). A replay of a
+   preferences, and the copy is marked shared. A replay of a
    shared copy puts in the license from LOONY_REPLAY_LICENSE's preferences:
    by default, where the viewer's own copy of the game saves them (set by
    replay_open, so a restart keeps it); without a license there it refuses.
@@ -114,7 +119,7 @@ bool replay_find_recording(const char *dir, const char *game_id, time_t when, ch
    and anything typed while playing. A recording still being written copies
    to its last frame check. False, with err, if src can't be read, was
    played unregistered (with the viewer's license its replay would start
-   differently), is format 1, or dst can't be written. */
+   differently), or dst can't be written. */
 bool replay_share(const char *src, const char *dst, char *err, size_t errlen);
 
 /* Before the app restarts to watch path, so a file it can't play doesn't
@@ -157,15 +162,49 @@ const char *replay_log_text(const char *utf8);
 
 /* Marks: while recording, Cmd-S marks the moment for a clip (clip.h). A
    replay only logs them. Recording: logs a mark at this step and returns its
-   number, from 1; 0 when nothing is recorded (a replay too). */
+   number in the file, from 1; 0 when nothing is recorded (outside a game
+   when each game has a file, and on a replay). */
 int replay_mark(void);
+
+/* Recording: a game starts (true) or ends, and play goes on or off (play.h
+   says when). */
+void replay_game(bool started);
+void replay_play(bool on);
 
 /* Replay: takes a mark at this step and logs it. */
 bool replay_take_mark(void);
 
+/* Replay: takes a game or play record at this step (a replay only logs a
+   game starting or ending; it knows where play is from replay_play_spans). */
+bool replay_take_play(void);
+
 /* After replay_open: the ticks of the replay's marks, in order, from a scan
    of the whole file. */
 size_t replay_marks(const uint32_t **ticks);
+
+/* After replay_open, from the same scan: where the game is played, as
+   spans of the clock in us, from where play goes on to where it goes off
+   (UINT64_MAX when the recording stops in play). None in a recording where
+   no game was played: all of it is play then. */
+typedef struct {
+    uint64_t on_us, off_us;
+} replay_span;
+size_t replay_play_spans(const replay_span **spans);
+
+/* Play time: the clock less what isn't play, from the start of the first
+   span. replay_play_us gives it at clock_us; replay_clock_us is the clock
+   where play time reaches play_us (where the recording's play ends, past
+   it). With no spans, both are the clock. */
+uint64_t replay_play_us(uint64_t clock_us);
+uint64_t replay_clock_us(uint64_t play_us);
+
+/* Whether clock_us is in play. If not, *next_on_us gets where play goes on
+   next, or UINT64_MAX. */
+bool replay_in_play(uint64_t clock_us, uint64_t *next_on_us);
+
+/* The same in ticks (1/60 s), as clips and the viewer count. */
+uint32_t replay_play_ticks(uint32_t clock_ticks);
+uint32_t replay_clock_ticks(uint32_t play_ticks);
 
 /* Replay: takes the next record if it is of this kind and at this step. A
    record left behind at an earlier step is a desync. */

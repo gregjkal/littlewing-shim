@@ -28,6 +28,7 @@
 #include "misc.h"
 #include "patch.h"
 #include "picker.h"
+#include "play.h"
 #include "qd.h"
 #include "replay.h"
 #include "rsrc.h"
@@ -461,6 +462,7 @@ int main(int argc, char **argv) {
 
     if (img.init_tvector)
         guest_call(img.init_tvector, 0, NULL);
+    play_init(game->id, img.code_base, gm_r32(img.main_tvector + 4));
     guest_call(img.main_tvector, 0, NULL);
     back_to_picker();
     log_msg("main returned");

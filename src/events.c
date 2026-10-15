@@ -9,6 +9,7 @@
 #include "keymap.h"
 #include "memmgr.h"
 #include "misc.h"
+#include "play.h"
 #include "replay.h"
 #include "script.h"
 #include "sound.h"
@@ -293,7 +294,7 @@ static void replay_input(void) {
             events_post_activation(v[0]);
         else if (replay_take(REPLAY_QUIT, v))
             events_request_quit();
-        else if (!replay_take_mark()) /* a mark is only logged */
+        else if (!replay_take_mark() && !replay_take_play()) /* only logged */
             return;
     }
 }
@@ -483,6 +484,7 @@ void events_pump(void) {
     if (E.poll)
         E.poll();
     replay_input();
+    play_pump(E.app_active);
     run_script(now);
     sound_pump();
     if (E.loop_depth > 0)
