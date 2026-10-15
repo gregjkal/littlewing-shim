@@ -116,7 +116,7 @@ static NSMenuItem *disabled_item(NSString *title) {
             [sub addItem:[NSMenuItem sectionHeaderWithTitle:[df stringFromDate:when]]];
         }
         if (!hs[i].when) {
-            [sub addItem:disabled_item(@"One of the game's own scores")];
+            [sub addItem:disabled_item(@"No date for this score, so no replay")];
         } else if (!replay_find_recording(scores_config.rec_dir, scores_config.game_id, hs[i].when,
                                           path, sizeof path)) {
             [sub addItem:disabled_item(@"No replay was kept of this game")];
