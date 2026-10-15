@@ -88,13 +88,22 @@ bool replay_start(const char *game_id, const uint8_t *exe, size_t exe_len, const
    recorded into dir as <game_id>-<date>-<time>.lwreplay, renamed
    <...>-marked.lwreplay at its first mark. The game's recordings there
    beyond the last REPLAY_KEEP_GAMES (counting this one) are deleted first,
-   except the marked ones and those that were recording when one of the
+   except the marked ones, those with a list of clips (<...>.clips, from
+   watching them; watch.h) and those that were recording when one of the
    high_scores (n times, from game_high_score_times) was set: from the time
    in a recording's name to its last write, give or take
    REPLAY_SCORE_SLACK seconds. So a recording goes once its score has left
    the table. */
 #define REPLAY_SCORE_SLACK 2
 void replay_record_into(const char *dir, const char *game_id, const time_t *high_scores, size_t n);
+
+/* Replay: fn is called with the clock, in us, each time it is about to move,
+   before the game sees it (watch.h paces the replay there). */
+void replay_set_pace(void (*fn)(uint64_t clock_us));
+
+/* Replay: fn is called where the recording stopped, before the program
+   exits there. */
+void replay_set_end(void (*fn)(void));
 
 /* Ends a recording (the REPLAY_END record) and closes the file; at exit, a
    replay logs whether it reached the end of its file. Runs at exit; call it

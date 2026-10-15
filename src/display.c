@@ -48,8 +48,9 @@ void display_set_title(const char *title) {
         SDL_SetWindowTitle(D.window, title);
 }
 
-/* Shows msg after the title for DISPLAY_FLASH_MS. */
-static void flash_title(const char *msg) {
+void display_flash(const char *msg) {
+    if (!D.window)
+        return;
     snprintf(D.flash, sizeof D.flash, "%s: %s", D.title ? D.title : "LittleWing", msg);
     SDL_SetWindowTitle(D.window, D.flash);
     D.flash_until = SDL_GetTicks() + DISPLAY_FLASH_MS;
@@ -315,7 +316,7 @@ void display_poll(void) {
                         snprintf(msg, sizeof msg, "clip %d marked", n);
                     else
                         snprintf(msg, sizeof msg, "not recording, nothing marked");
-                    flash_title(msg);
+                    display_flash(msg);
                 }
                 break;
             }

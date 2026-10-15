@@ -27,6 +27,8 @@ static struct {
     } ch[MIX_CHANNELS];
     bool warned[256], warned_encoding[256];
     SDL_AudioStream *stream; /* NULL: clock-driven */
+    SDL_AudioStream *monitor; /* clock-driven, and played too (sound_open_monitor) */
+    bool monitor_on;
     uint64_t rendered;       /* clock-driven: frames rendered since sound_init */
     wav_file wav;
     bool recording;
@@ -45,6 +47,16 @@ static void unlock(void) {
         SDL_UnlockAudioStream(SND.stream);
 }
 
+/* Plays n frames on the monitor. When it has run dry (at first, or the
+   replay stalled), silence first keeps it SOUND_MONITOR_LEAD_MS ahead of the
+   device, so the next frames come before these have played. */
+static void monitor(const int16_t *buf, uint32_t n) {
+    static const int16_t silence[2 * MIX_RATE * SOUND_MONITOR_LEAD_MS / 1000];
+    if (SDL_GetAudioStreamQueued(SND.monitor) == 0)
+        SDL_PutAudioStreamData(SND.monitor, silence, (int)sizeof silence);
+    SDL_PutAudioStreamData(SND.monitor, buf, (int)(n * 4));
+}
+
 static void render(uint32_t frames) {
     int16_t buf[2 * RENDER_FRAMES];
     while (frames > 0) {
@@ -52,6 +64,8 @@ static void render(uint32_t frames) {
         mix_render(buf, n);
         if (SND.stream)
             SDL_PutAudioStreamData(SND.stream, buf, (int)(n * 4));
+        if (SND.monitor_on)
+            monitor(buf, n);
         if (SND.recording)
             wav_write(&SND.wav, buf, n);
         if (SND.tap)
@@ -91,6 +105,11 @@ void sound_init(void) {
 }
 
 static void shutdown_output(void) {
+    if (SND.monitor) {
+        SDL_DestroyAudioStream(SND.monitor);
+        SND.monitor = NULL;
+        SND.monitor_on = false;
+    }
     if (SND.stream) {
         SDL_DestroyAudioStream(SND.stream);
         SND.stream = NULL;
@@ -133,6 +152,32 @@ void sound_start_output(void) {
     SDL_ResumeAudioStreamDevice(s);
 }
 
+void sound_open_monitor(void) {
+    if (SND.stream || SND.monitor)
+        return;
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
+    if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+        log_msg("sound: no audio output: %s (continuing silently)", SDL_GetError());
+        return;
+    }
+    const SDL_AudioSpec spec = {SDL_AUDIO_S16, 2, MIX_RATE};
+    SND.monitor = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
+    if (!SND.monitor) {
+        log_msg("sound: no audio output: %s (continuing silently)", SDL_GetError());
+        return;
+    }
+    SDL_SetAudioStreamGain(SND.monitor, sound_gain(SND.volume));
+    SDL_ResumeAudioStreamDevice(SND.monitor);
+}
+
+void sound_monitor(bool on) {
+    if (!SND.monitor || on == SND.monitor_on)
+        return;
+    SND.monitor_on = on;
+    if (!on)
+        SDL_ClearAudioStream(SND.monitor);
+}
+
 float sound_gain(int percent) {
     float v = (float)percent / 100.0f;
     return v * v * v;
@@ -142,6 +187,8 @@ void sound_set_volume(int percent) {
     SND.volume = percent < 0 ? 0 : percent > 100 ? 100 : percent;
     if (SND.stream)
         SDL_SetAudioStreamGain(SND.stream, sound_gain(SND.volume));
+    if (SND.monitor)
+        SDL_SetAudioStreamGain(SND.monitor, sound_gain(SND.volume));
 }
 
 int sound_volume(void) { return SND.volume; }

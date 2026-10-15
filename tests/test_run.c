@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <stdlib.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "cgimage.h"
@@ -9,6 +10,7 @@
 #include "mp4.h"
 #include "plist.h"
 #include "util.h"
+#include "watch.h"
 
 /* LOONY_DATA_DIR for the runs that follow: each scripted run gets a fresh
    one unless a test set this, so preferences saved by one run never change
@@ -459,6 +461,135 @@ TEST(run_marks_in_a_recording_become_clips) {
     }
     CHECK(!third);
     CHECK(!strstr(out[1], "desync"));
+}
+
+static void run_loony_watching(void *unused) {
+    (void)unused;
+    unsetenv("LOONY_AUTO_ALERTS");
+    setenv("LOONY_REPLAY", replay_file, 1);
+    setenv("LOONY_DATA_DIR", run_data, 1);
+    setenv("LOONY_WATCH", "1", 1);
+    setenv("LOONY_SCRIPT", script_path, 1);
+    execl(LOONY_BIN, "loony", (char *)NULL);
+    _exit(127);
+}
+
+/* Watches the recording (watch.h) with keys, a script, in a data folder of
+   its own in play_dir: its status, and in *seconds how long it took. */
+static int watch_recording(const char *keys, const char *play_dir, char *out, size_t cap,
+                           double *seconds) {
+    tmp_name(script_path, sizeof script_path, "script");
+    FILE *f = fopen(script_path, "w");
+    fputs(keys, f);
+    fclose(f);
+    snprintf(run_data, sizeof run_data, "%s/data-watch", play_dir);
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    int status = test_run_child(run_loony_watching, NULL, out, cap);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    *seconds = (double)(t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) / 1e9;
+    run_data[0] = '\0';
+    unlink(script_path);
+    return status;
+}
+
+/* Watching a recording at 1x keeps to the wall clock: never ahead of it,
+   and never so far behind that it starts again from where it is. I and O
+   save clips next to the replay, which LOONY_CLIP=clips then renders, each
+   as long as it was marked. */
+TEST(run_a_watched_replay_keeps_time_and_its_clips_render) {
+    SKIP_UNLESS_GAME();
+    char rec_dir[1024], play_dir[1024], list[1100], err[256] = "";
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    char out[3][32768];
+    double seconds;
+    int rec_status = record_for_clips(rec_dir, "330 quit\n", out[0], sizeof out[0]);
+    int watch_status = watch_recording("60 down i\n64 up i\n180 down o\n184 up o\n"
+                                       "240 down i\n244 up i\n300 down o\n304 up o\n",
+                                       play_dir, out[1], sizeof out[1], &seconds);
+    snprintf(list, sizeof list, "%s/game.clips", rec_dir);
+    size_t len;
+    char *text = (char *)read_file(list, &len);
+    clip_span *spans = NULL;
+    size_t n = 0;
+    bool parsed = text && clip_parse_list(text, &spans, &n, err, sizeof err);
+    free(text);
+    int clip_status = clip_recording("clips", play_dir, NULL, out[2], sizeof out[2]);
+    mp4_info info[2];
+    bool read[2] = {false, false};
+    for (int i = 0; i < 2; i++) {
+        char name[1100];
+        snprintf(name, sizeof name, "%s/game-clip-%d.mp4", rec_dir, i + 1);
+        if (!(read[i] = mp4_read_info(name, &info[i], err, sizeof err)))
+            fprintf(stderr, "%s: %s\n", name, err);
+    }
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(watch_status, 0);
+    CHECK(seconds > 5.0); /* the recording is 5.5 s, from launch to the quit */
+    const char *last = strstr(out[1], "watch: the last stretch, 0:00-");
+    double took = 0, ms = 1e9;
+    CHECK(last && sscanf(last, "watch: the last stretch, 0:00-%*s at 1x, took %lf s on the wall clock (%lf ms)",
+                         &took, &ms) == 2);
+    CHECK(took > 5.0);
+    CHECK(ms > -1.0 && ms < WATCH_MAX_LAG * 1000);
+    CHECK_CONTAINS(out[1], "watch: clip 1, 0:01");
+    CHECK_CONTAINS(out[1], "watch: clip 2, 0:04");
+    CHECK_CONTAINS(out[1], "loony: replay: reached the end of the recording");
+    CHECK(!strstr(out[1], "replay: desync"));
+    CHECK(parsed);
+    CHECK_EQ(n, 2);
+    uint32_t want[2][2] = {{60, 180}, {240, 300}};
+    for (size_t i = 0; i < n && i < 2; i++) { /* a key can come a tick late */
+        CHECK(spans[i].start >= want[i][0] && spans[i].start <= want[i][0] + 2);
+        CHECK(spans[i].end >= want[i][1] && spans[i].end <= want[i][1] + 2);
+    }
+    CHECK_EQ(clip_status, 0);
+    CHECK_CONTAINS(out[2], "loony: clip: 2 listed in");
+    for (size_t i = 0; i < n && i < 2; i++) {
+        CHECK(read[i]);
+        CHECK_EQ(info[i].video_frames, spans[i].end - spans[i].start);
+    }
+    free(spans);
+}
+
+/* L goes ahead without pacing; J goes back by restarting the program,
+   which keeps the speed, and plays on from there to the end without a
+   desync. */
+TEST(run_a_watched_replay_goes_ahead_and_back) {
+    SKIP_UNLESS_GAME();
+    char rec_dir[1024], play_dir[1024];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    char out[3][32768];
+    double ahead_seconds, back_seconds;
+    int rec_status = record_for_clips(rec_dir, "330 quit\n", out[0], sizeof out[0]);
+    int ahead_status = watch_recording("60 down l\n64 up l\n", play_dir, out[1], sizeof out[1],
+                                       &ahead_seconds);
+    test_remove_tree(play_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    int back_status = watch_recording("30 down right\n34 up right\n150 down j\n154 up j\n", play_dir,
+                                      out[2], sizeof out[2], &back_seconds);
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(ahead_status, 0);
+    CHECK_CONTAINS(out[1], "watch: going to 0:11");
+    CHECK_CONTAINS(out[1], "loony: replay: reached the end of the recording");
+    CHECK(ahead_seconds < 5.0); /* not paced past 0:01 */
+    CHECK_EQ(back_status, 0);
+    CHECK_CONTAINS(out[2], "watch: 2x");
+    CHECK_CONTAINS(out[2], "watch: back to 0:00: restarting");
+    const char *restarted = strstr(out[2], "loony: watch: restarting the replay");
+    CHECK(restarted);
+    if (restarted) {
+        CHECK_CONTAINS(restarted, "watch: at 2x;");
+        CHECK_CONTAINS(restarted, "loony: replay: reached the end of the recording");
+        CHECK(!strstr(restarted, "back to 0:00")); /* the script's J doesn't come again */
+    }
+    CHECK(!strstr(out[2], "replay: desync"));
 }
 
 static uint32_t le32_at(const uint8_t *p) {

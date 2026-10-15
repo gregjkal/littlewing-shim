@@ -81,6 +81,7 @@ static struct {
     long exit_after; /* ticks, or 0 */
     double quit_deadline; /* wall-clock seconds, or 0 */
     uint32_t ae_descs; /* guest memory for the quit AppleEvent and its reply */
+    void (*replay_key)(int scancode, bool down, bool repeat);
     bool warned_full;
 } E;
 
@@ -236,9 +237,14 @@ bool events_quit_requested(void) { return E.quit_deadline > 0; }
 
 /* ---- host input, recorded and replayed ---- */
 
+void events_set_replay_key(void (*fn)(int scancode, bool down, bool repeat)) { E.replay_key = fn; }
+
 void events_host_key(int scancode, bool down, bool repeat) {
-    if (replay_playing())
+    if (replay_playing()) {
+        if (E.replay_key)
+            E.replay_key(scancode, down, repeat);
         return;
+    }
     replay_log(REPLAY_KEY, (uint32_t[3]){(uint32_t)scancode, down, repeat});
     events_post_key(scancode, down, repeat);
 }

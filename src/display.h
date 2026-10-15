@@ -17,6 +17,9 @@ void display_init(void);
    display_poll shows there). */
 void display_set_title(const char *title);
 
+/* Shows msg after the title for DISPLAY_FLASH_MS, on an open window. */
+void display_flash(const char *msg);
+
 /* Draws the current screen. */
 void display_present(void);
 
