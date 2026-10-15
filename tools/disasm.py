@@ -53,11 +53,15 @@ def functions(code):
         t += 8
         if fixedparms or f5 >> 1:
             t += 4  # parminfo
+        if t + 4 > len(code):
+            continue
         tb_offset = struct.unpack(">I", code[t : t + 4])[0]
         t += 4
         if f2 & 0x80:
             t += 4  # hand_mask
         if f1 & 0x08:  # ctl_info
+            if t + 4 > len(code):
+                continue
             t += 4 + 4 * struct.unpack(">I", code[t : t + 4])[0]
         if t + 2 > len(code):
             continue

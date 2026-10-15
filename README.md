@@ -322,9 +322,9 @@ few KB a minute, in `~/Library/Application Support/littlewing-shim/recordings`
 (`recordings` in `LOONY_DATA_DIR` when that is set). A file is named for the
 game's start, `loony-labyrinth-<date>-<time>.lwreplay`, and ends at game
 over (after a high score's initials), when the game is thrown away from the
-pause menu, when another starts, or at quit. Nothing is written outside a
-game: the menus and the self-playing demo aren't recorded, and Cmd-S there
-says "no game is being recorded".
+pause menu, when another starts, or at quit. No file is written outside a
+game, and Cmd-S in the menus or the self-playing demo says "no game is being
+recorded".
 
 A replay can only start at launch, so a game's file also carries what came
 before the game in that launch: the opening, the menus and any earlier
@@ -403,8 +403,8 @@ those, in seconds. The clips go next to the replay as `game-clip-1.mp4`,
 and so on), and the other `LOONY_CLIP_` settings apply to each. Marks whose
 clips overlap, or come within a second of each other, share one clip. A
 replay with no marks is refused. When nothing is being recorded
-(outside a game, with `LOONY_RECORD=0`, or with `LOONY_FIXED_CLOCK=1`),
-Cmd-S marks nothing and the title says so.
+(outside a game when each game gets a file, with `LOONY_RECORD=0`, or with
+`LOONY_FIXED_CLOCK=1`), Cmd-S marks nothing and the title says so.
 
 To find a moment you didn't mark, watch the replay in a window, at the speed
 it was played and with its sound:

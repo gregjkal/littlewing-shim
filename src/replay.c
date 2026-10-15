@@ -1136,6 +1136,16 @@ void replay_game(bool started) {
 
 void replay_play(bool on) { replay_log(REPLAY_PLAY, (uint32_t[1]){on}); }
 
+void replay_no_games(void) {
+    if (R.mode != RECORDING || !R.auto_dir[0])
+        return;
+    log_msg("replay: games can't be told apart, so none is recorded");
+    free(R.session.p);
+    memset(&R.session, 0, sizeof R.session);
+    R.auto_dir[0] = '\0';
+    R.mode = OFF;
+}
+
 bool replay_take_play(void) {
     uint32_t v;
     if (replay_take(REPLAY_GAME, &v)) {

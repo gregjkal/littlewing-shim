@@ -870,6 +870,44 @@ TEST(replay_play_time_leaves_out_what_isnt_play) {
     CHECK(replay_in_play(0, &next));
 }
 
+/* LOONY_CLIP=<arg> of the replay, in a child: clip_open's err is the output. */
+static void child_clip_span(void *span) {
+    char err[256], play_data[1300], out[1300];
+    snprintf(play_data, sizeof play_data, "%s/play", dir);
+    snprintf(out, sizeof out, "%s/clip.mp4", dir);
+    replay_reset();
+    unsetenv("LOONY_RECORD");
+    setenv("LOONY_REPLAY", file, 1);
+    setenv("LOONY_DATA_DIR", play_data, 1);
+    setenv("LOONY_CLIP", span, 1);
+    setenv("LOONY_CLIP_OUT", out, 1);
+    if (!replay_open(err, sizeof err) || !clip_open(err, sizeof err)) {
+        fprintf(stderr, "%s\n", err);
+        _exit(1);
+    }
+    _exit(0);
+}
+
+/* A clip whose play is too short to fill a tick on the game's clock is
+   refused, not made of nothing. */
+TEST(replay_a_clip_with_no_whole_tick_of_play_is_refused) {
+    BEGIN_TEST();
+    CHECK(record(NULL));
+    replay_clock(1000000);
+    replay_game(true);
+    replay_play(true);
+    replay_clock(1005000); /* 5 ms of play, inside tick 60 */
+    replay_play(false);
+    replay_clock(2000000);
+    replay_play(true); /* then the play time's first tick ends 11.7 ms on, inside tick 120 */
+    replay_clock(3000000);
+    replay_finish();
+    char out[8192];
+    CHECK_EQ(test_run_child(child_clip_span, "0-1", out, sizeof out), 1);
+    CHECK_CONTAINS(out, "the clip 0:00-0:00.01 holds less than a tick of play");
+    CHECK_EQ(test_run_child(child_clip_span, "0-2", out, sizeof out), 0);
+}
+
 /* The date is the recording's start plus the game's clock (Loony Labyrinth
    stamps a high score with it), so a replay a second later sees the same. */
 TEST(replay_dates_come_back) {
