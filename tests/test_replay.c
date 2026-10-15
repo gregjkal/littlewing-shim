@@ -19,6 +19,7 @@
 #include "replay.h"
 #include "sound.h"
 #include "util.h"
+#include "watch.h"
 
 static const char *const names[] = {
     "TickCount", "Microseconds", "Delay", "GetDateTime", "NewSndCallBackUPP", "SndNewChannel",
@@ -868,6 +869,128 @@ TEST(replay_play_time_leaves_out_what_isnt_play) {
     CHECK_EQ(replay_play_us(500000), 500000);
     CHECK_EQ(replay_clock_us(500000), 500000);
     CHECK(replay_in_play(0, &next));
+}
+
+/* LOONY_CLIP=<arg> of the replay, in a child: clip_open's err is the output. */
+static void child_clip_span(void *span) {
+    char err[256], play_data[1300], out[1300];
+    snprintf(play_data, sizeof play_data, "%s/play", dir);
+    snprintf(out, sizeof out, "%s/clip.mp4", dir);
+    replay_reset();
+    unsetenv("LOONY_RECORD");
+    setenv("LOONY_REPLAY", file, 1);
+    setenv("LOONY_DATA_DIR", play_data, 1);
+    setenv("LOONY_CLIP", span, 1);
+    setenv("LOONY_CLIP_OUT", out, 1);
+    if (!replay_open(err, sizeof err) || !clip_open(err, sizeof err)) {
+        fprintf(stderr, "%s\n", err);
+        _exit(1);
+    }
+    _exit(0);
+}
+
+/* A clip whose play is too short to fill a tick on the game's clock is
+   refused, not made of nothing. */
+TEST(replay_a_clip_with_no_whole_tick_of_play_is_refused) {
+    BEGIN_TEST();
+    CHECK(record(NULL));
+    replay_clock(1000000);
+    replay_game(true);
+    replay_play(true);
+    replay_clock(1005000); /* 5 ms of play, inside tick 60 */
+    replay_play(false);
+    replay_clock(2000000);
+    replay_play(true); /* then the play time's first tick ends 11.7 ms on, inside tick 120 */
+    replay_clock(3000000);
+    replay_finish();
+    char out[8192];
+    CHECK_EQ(test_run_child(child_clip_span, "0-1", out, sizeof out), 1);
+    CHECK_CONTAINS(out, "the clip 0:00-0:00.01 holds less than a tick of play");
+    CHECK_EQ(test_run_child(child_clip_span, "0-2", out, sizeof out), 0);
+}
+
+/* Games that start in the same second are kept in the order they started:
+   "-2" after the second's first, "-10" after "-2". */
+TEST(replay_keeps_the_last_games_of_a_second_in_order) {
+    BEGIN_TEST();
+    char rec_dir[1300];
+    snprintf(rec_dir, sizeof rec_dir, "%s/recordings", dir);
+    CHECK(make_dirs(rec_dir));
+    static const char *const old[] = {
+        "loony-labyrinth-2026-01-01-100000.lwreplay",
+        "loony-labyrinth-2026-01-01-100000-2.lwreplay",
+        "loony-labyrinth-2026-01-01-100000-10.lwreplay",
+        "loony-labyrinth-2026-01-01-100001.lwreplay",
+        "loony-labyrinth-2026-01-01-100002.lwreplay",
+    };
+    for (int i = 0; i < 5; i++)
+        touch(rec_dir, old[i]);
+    unsetenv("LOONY_RECORD");
+    unsetenv("LOONY_FIXED_CLOCK");
+    unsetenv("LOONY_REPLAY");
+    replay_reset();
+    replay_record_into(rec_dir, "loony-labyrinth", NULL, 0);
+    CHECK(!exists_in(rec_dir, old[0]));
+    CHECK(!exists_in(rec_dir, old[1]));
+    for (int i = 2; i < 5; i++)
+        CHECK(exists_in(rec_dir, old[i]));
+}
+
+/* Watching at 1x, headless, to the recording's end. */
+static void child_watch(void *unused) {
+    (void)unused;
+    char err[256], play_data[1300];
+    snprintf(play_data, sizeof play_data, "%s/play", dir);
+    replay_reset();
+    unsetenv("LOONY_RECORD");
+    setenv("LOONY_REPLAY", file, 1);
+    setenv("LOONY_WATCH", "1", 1);
+    setenv("SDL_VIDEO_DRIVER", "dummy", 1);
+    setenv("SDL_AUDIO_DRIVER", "dummy", 1);
+    if (!replay_open(err, sizeof err) || !watch_open(err, sizeof err) ||
+        !replay_start("loony-labyrinth", exe, sizeof exe, play_data, err, sizeof err)) {
+        fprintf(stderr, "%s\n", err);
+        _exit(1);
+    }
+    watch_start("Game", NULL);
+    for (;;) { /* exits at the recording's end */
+        replay_clock(0);
+        while (replay_take_play())
+            ;
+    }
+}
+
+/* Watching goes to the game's start unpaced, plays at 1x, and leaves out a
+   minute's pause: 0.6 s of play takes about 0.6 s. The clock moves a ms at
+   a time in play, as a game's does. */
+TEST(replay_watching_leaves_out_what_isnt_play) {
+    BEGIN_TEST();
+    CHECK(record(NULL));
+    replay_clock(1000000); /* a second before the game */
+    replay_game(true);
+    replay_play(true);
+    for (uint64_t us = 1001000; us <= 1300000; us += 1000)
+        replay_clock(us);
+    replay_play(false);
+    for (uint64_t us = 2300000; us <= 61300000; us += 1000000) /* a minute's pause */
+        replay_clock(us);
+    replay_play(true);
+    for (uint64_t us = 61301000; us <= 61600000; us += 1000)
+        replay_clock(us);
+    replay_finish();
+    char out[16384];
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    CHECK_EQ(test_run_child(child_watch, NULL, out, sizeof out), 0);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    double took = (double)(t1.tv_sec - t0.tv_sec) + (double)(t1.tv_nsec - t0.tv_nsec) / 1e9;
+    CHECK(took >= 0.55 && took < 10);
+    CHECK_CONTAINS(out, "watch: reached 0:00");
+    /* Where a stretch starts moves if the test stalls past WATCH_MAX_LAG;
+       where it ends doesn't. */
+    CHECK_CONTAINS(out, "watch: leaving out what isn't play from 0:00.2"); /* its last ms isn't paced */
+    CHECK_CONTAINS(out, "-0:00.60 at 1x");
+    CHECK_CONTAINS(out, "reached the end of the recording at step 661"); /* each clock */
 }
 
 /* The date is the recording's start plus the game's clock (Loony Labyrinth

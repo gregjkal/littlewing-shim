@@ -68,3 +68,8 @@ void watch_hold(void);
 
 /* For tests: forget everything. */
 void watch_reset(void);
+
+/* For tests: whether watch_present draws a changed screen, since seconds
+   after the last draw, lag seconds behind the wall clock (0 when paused),
+   at speed (1 to 8, 0 as fast as it can), going to a time or not. */
+bool watch_draws(double since, double lag, int speed, bool going);

@@ -28,8 +28,10 @@ static const int speeds[] = {1, 2, 4, 8, 0};
 /* More than this behind the wall clock, a frame isn't drawn: a cut scene
    presents up to twice a frame, more than a window can show, and drawing
    each would leave the replay further behind. The latest is drawn once it
-   has caught up. */
+   has caught up, or after BEHIND_DRAW_GAP without one: a game that runs
+   slower than the speed asked (HD at 8x) never catches up. */
 #define BEHIND_DRAW_LAG (1.0 / 60)
+#define BEHIND_DRAW_GAP GOING_DRAW_GAP
 /* While waiting (paused, held at the end, or a wait longer than this): how
    often the window is polled, in seconds. */
 #define IDLE_GAP 0.01
@@ -133,6 +135,12 @@ static void draw(void) {
     W.drawn = wall();
 }
 
+bool watch_draws(double since, double lag, int speed, bool going) {
+    double gap = going ? GOING_DRAW_GAP : speed == 1 || speed == 2 ? 0 : FAST_DRAW_GAP;
+    bool behind = !going && speed && lag > BEHIND_DRAW_LAG;
+    return since >= gap && (!behind || since >= BEHIND_DRAW_GAP);
+}
+
 void watch_present(bool dirty) {
     if (!W.started)
         return;
@@ -140,12 +148,11 @@ void watch_present(bool dirty) {
     if (!W.pending)
         return;
     int speed = speeds[W.speed];
-    double gap = W.going ? GOING_DRAW_GAP : speed == 1 || speed == 2 ? 0 : FAST_DRAW_GAP;
     double now = wall();
-    bool behind = !W.going && !W.paused && speed &&
-                  now - (W.anchor_wall + (double)(W.clock_us - W.anchor_us) / 1e6 / speed) >
-                      BEHIND_DRAW_LAG;
-    if (!W.skipping && !behind && now - W.drawn >= gap) {
+    double lag = W.paused || !speed
+                     ? 0
+                     : now - (W.anchor_wall + (double)(W.clock_us - W.anchor_us) / 1e6 / speed);
+    if (!W.skipping && watch_draws(now - W.drawn, lag, speed, W.going)) {
         draw();
     } else if (dirty && hd_scale()) { /* the HD copy kept in step, as when every frame is drawn */
         qd_pixels px;

@@ -58,6 +58,7 @@ bool play_init(const char *game_id, uint32_t code_base, uint32_t toc) {
     for (size_t i = 0; i < sizeof expected / sizeof expected[0]; i++) {
         if (gm_r32(code_base + expected[i].offset) != expected[i].word) {
             log_msg("play: this isn't Loony Labyrinth 3.0.1's code: games aren't told apart");
+            replay_no_games();
             return false;
         }
     }
