@@ -223,9 +223,10 @@ static void add_scores_menu(void) {
 #define CHECK_FOR_UPDATES @"Check for Updates…"
 
 /* Sparkle's user driver delegate. Sparkle shows an update its daily check
-   finds at once only near launch; found later, mid-game, it would
-   interrupt, so the Check for Updates item says there is one instead
-   (Sparkle's gentle reminders), until the player looks at it. */
+   finds at once only near launch or after the Mac has sat idle; found
+   while the player plays, it would interrupt, so the Check for Updates item
+   says there is one instead (Sparkle's gentle reminders), until the player
+   looks at it. */
 @interface LoonyUpdates : NSObject
 @property(nonatomic, strong) id<LoonySparkleController> sparkle;
 @property(nonatomic, strong) NSMenuItem *item;

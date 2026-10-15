@@ -55,11 +55,11 @@ back to the picker; Cmd-Q or closing the window quits. The app carries its own
 copies of Unicorn and SDL3, so Homebrew upgrades don't affect it. A release is
 notarized and opens without a warning, and updates itself: it checks for a new
 release once a day, and LittleWing → Check for Updates… checks now. A new
-version found at launch is offered in a window; one found mid-game only
-retitles that menu item ("Update to LittleWing 0.5.0…"), so play isn't
-interrupted. Installing replaces the app where it is and reopens it. Built as above, it is signed ad hoc,
-which is enough
-on the Mac that built it. On another Mac, Gatekeeper blocks the first launch;
+version found at launch, or after the Mac has sat idle, is offered in a
+window; one found while you play only retitles that menu item ("Update to
+LittleWing 0.5.0…"), so play isn't interrupted. Installing replaces the app
+where it is and reopens it. Built as above, it is signed ad hoc, which is
+enough on the Mac that built it. On another Mac, Gatekeeper blocks the first launch;
 open System Settings, then Privacy & Security, and click Open Anyway near the
 bottom. (On macOS 15 and later, right-click and Open no longer gets past it.) To give
 the app to someone without that step, sign and notarize it (below). When the app can't
@@ -214,10 +214,11 @@ its public half, in `tools/sparkle_public_key.txt`. Make it once:
 
 ```bash
 tools/sparkle.sh /tmp/sparkle
-/tmp/sparkle/bin/generate_keys --account littlewing-shim   # prints the public key
+/tmp/sparkle/bin/generate_keys --account littlewing-shim
+/tmp/sparkle/bin/generate_keys --account littlewing-shim -p >tools/sparkle_public_key.txt
 ```
 
-Put the public key in `tools/sparkle_public_key.txt` and merge it to `main`.
+Merge `tools/sparkle_public_key.txt` to `main`.
 Back up the private key (`generate_keys --account littlewing-shim -x <file>`)
 somewhere safe: without it, released apps can't be updated, since they accept
 only updates signed with it. On another Mac, import it with

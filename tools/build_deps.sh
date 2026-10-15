@@ -43,4 +43,4 @@ cp "$src/SDL3-3.4.16/LICENSE.txt" "$prefix/sdl3/"
 
 "$(dirname "$0")/sparkle.sh" "$prefix/sparkle"
 
-echo "built Unicorn 2.1.4 and SDL 3.4.16 for macOS $MACOSX_DEPLOYMENT_TARGET in $prefix"
+echo "built Unicorn 2.1.4 and SDL 3.4.16 for macOS $MACOSX_DEPLOYMENT_TARGET, with Sparkle, in $prefix"

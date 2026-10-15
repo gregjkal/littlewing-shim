@@ -9,6 +9,11 @@ set -eu
 [ $# -eq 1 ] || { echo "usage: tools/sparkle.sh <dir>" >&2; exit 1; }
 version=2.10.0
 sha256=c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c
+# <dir> is replaced, so it must be new, empty, or an earlier download.
+if [ -d "$1" ] && [ -n "$(ls -A "$1")" ] && [ ! -d "$1/Sparkle.framework" ]; then
+    echo "sparkle.sh: $1 has other files in it; name a new folder" >&2
+    exit 1
+fi
 rm -rf "$1"
 mkdir -p "$1"
 archive="$1/Sparkle-$version.tar.xz"

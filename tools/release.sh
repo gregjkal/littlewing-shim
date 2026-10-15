@@ -3,14 +3,14 @@
 # GitHub, it builds Unicorn and SDL3 (tools/build_deps.sh) and a fresh Release
 # build against them in build-dist, all for macOS 14 and later, runs the
 # tests, builds the app signed with LOONY_SIGN_ID, checks it runs on macOS 14,
-# notarizes it, tags the commit vx.y.z, pushes the tag and makes a draft
-# GitHub release with the zip. The notes are tools/release_notes.md with its
-# @VERSION@, @MACOS@, @UNICORN@, @SDL@ and @SPARKLE@ filled in, followed by
-# GitHub's list of the pull requests since the last release. The app updates
-# itself with Sparkle (tools/make_app.sh), so the release also carries
-# appcast.xml, the update feed, which offers the zip, signed with the Sparkle
-# key in the keychain, with GitHub's list as its notes. Apps find it as the
-# latest release's, so they see the update once the release is published.
+# notarizes it, and makes appcast.xml, the update feed, which offers the zip,
+# signed with the Sparkle key in the keychain. Only then does it tag the
+# commit vx.y.z, push the tag and make a draft GitHub release with the zip and
+# the feed. The notes are tools/release_notes.md with its @VERSION@, @MACOS@,
+# @UNICORN@, @SDL@ and @SPARKLE@ filled in, followed by GitHub's list of the
+# pull requests since the last release, which is also the feed's notes. The
+# app updates itself with Sparkle (tools/make_app.sh) and reads the latest
+# release's feed, so apps see the update once the release is published.
 # Check the draft on GitHub, then publish it.
 # The profile is notarize.sh's (default loony-notary).
 #   LOONY_SIGN_ID=<identity> tools/release.sh <x.y.z> [keychain profile]
@@ -62,25 +62,29 @@ mv "$build/LittleWing.zip" "$zip"
 unicorn=$(pkg-config --modversion unicorn)
 sdl=$(pkg-config --modversion sdl3)
 sparkle_version=$(plutil -extract CFBundleShortVersionString raw "$sparkle/Sparkle.framework/Resources/Info.plist")
-notes=$(mktemp)
-sed -e "s/@VERSION@/$version/g" -e "s/@MACOS@/$macos/g" -e "s/@UNICORN@/$unicorn/g" -e "s/@SDL@/$sdl/g" \
-    -e "s/@SPARKLE@/$sparkle_version/g" tools/release_notes.md >"$notes"
-git tag -a "$tag" -m "LittleWing $version"
-git push origin "$tag"
-gh release create "$tag" "$zip" --verify-tag --draft --title "LittleWing $version" --generate-notes --notes "$(cat "$notes")"
-rm -f "$notes"
+# GitHub's list of the pull requests since the last release, made before the
+# tag exists, so nothing is pushed until the update feed is signed.
+generated=$(gh api repos/gregjkal/littlewing-shim/releases/generate-notes \
+    -f tag_name="$tag" -f target_commitish="$(git rev-parse HEAD)" -q .body)
+[ -n "$generated" ] || die "GitHub made no notes for $tag"
 
-# The update feed. Its notes are GitHub's list of what changed (the release's
-# notes from "## What's Changed" on), or all of the notes without one.
+# The update feed, with GitHub's list as its notes.
 updates="$build/updates"
 mkdir "$updates"
 cp "$zip" "$updates/"
-body=$(gh release view "$tag" --json body -q .body)
-printf '%s\n' "$body" | sed -n "/^## What's Changed/,\$p" >"$updates/LittleWing-$version.md"
-[ -s "$updates/LittleWing-$version.md" ] || printf '%s\n' "$body" >"$updates/LittleWing-$version.md"
+printf '%s\n' "$generated" >"$updates/LittleWing-$version.md"
 "$sparkle/bin/generate_appcast" --account "$key_account" --maximum-deltas 0 --embed-release-notes \
     --download-url-prefix "https://github.com/gregjkal/littlewing-shim/releases/download/$tag/" \
     --link https://github.com/gregjkal/littlewing-shim -o "$updates/appcast.xml" "$updates"
 grep -q "sparkle:edSignature" "$updates/appcast.xml" || die "$updates/appcast.xml has no signature"
-gh release upload "$tag" "$updates/appcast.xml"
+
+notes=$(mktemp)
+sed -e "s/@VERSION@/$version/g" -e "s/@MACOS@/$macos/g" -e "s/@UNICORN@/$unicorn/g" -e "s/@SDL@/$sdl/g" \
+    -e "s/@SPARKLE@/$sparkle_version/g" tools/release_notes.md >"$notes"
+printf '\n%s\n' "$generated" >>"$notes"
+git tag -a "$tag" -m "LittleWing $version"
+git push origin "$tag"
+gh release create "$tag" "$zip" "$updates/appcast.xml" --verify-tag --draft --title "LittleWing $version" \
+    --notes-file "$notes"
+rm -f "$notes"
 echo "made a draft release of $tag: check it on GitHub, then publish it"
