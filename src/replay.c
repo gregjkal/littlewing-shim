@@ -1,6 +1,7 @@
 #include "replay.h"
 
 #include <CommonCrypto/CommonDigest.h>
+#include <dirent.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -46,6 +47,8 @@ static struct {
     int marks; /* marks logged, or taken */
     bool at_exit;
     /* recording */
+    char auto_path[PATH_MAX]; /* replay_record_into's file, or "" */
+    char path[PATH_MAX];      /* the file being written */
     gzFile out;
     uint64_t last_step;
     bool write_failed;
@@ -286,12 +289,17 @@ bad:
     return false;
 }
 
+/* LOONY_RECORD, or NULL when it is unset, empty or 0 (off). */
+static const char *record_env(void) {
+    const char *rec = getenv("LOONY_RECORD");
+    return rec && *rec && strcmp(rec, "0") != 0 ? rec : NULL;
+}
+
 bool replay_open(char *err, size_t errlen) {
     const char *path = getenv("LOONY_REPLAY");
     if (!path || !*path)
         return true;
-    const char *rec = getenv("LOONY_RECORD");
-    if (rec && *rec) {
+    if (record_env()) {
         snprintf(err, errlen, "LOONY_RECORD and LOONY_REPLAY can't be used together");
         return false;
     }
@@ -386,6 +394,7 @@ static bool start_recording(const char *path, const char *game_id, const uint8_t
         prefs_path(p, sizeof p, data_dir);
         prefs = read_file(p, &prefs_len);
     }
+    snprintf(R.path, sizeof R.path, "%s", path);
     R.out = gzopen(path, "wb6");
     if (!R.out) {
         free(prefs);
@@ -420,10 +429,82 @@ static bool start_recording(const char *path, const char *game_id, const uint8_t
 
 static void finish_at_exit(void) { replay_finish(); }
 
+static int by_name(const void *a, const void *b) {
+    return strcmp(*(char *const *)a, *(char *const *)b);
+}
+
+static bool ends_with(const char *s, const char *end) {
+    size_t n = strlen(s), m = strlen(end);
+    return n >= m && strcmp(s + n - m, end) == 0;
+}
+
+/* Deletes the game's recordings in dir but the newest keep, unless marked.
+   The names start with the date and time, so they sort oldest first. */
+static void prune(const char *dir, const char *game_id, size_t keep) {
+    DIR *d = opendir(dir);
+    if (!d)
+        return;
+    char **names = NULL;
+    size_t n = 0, cap = 0, id_len = strlen(game_id);
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (strncmp(e->d_name, game_id, id_len) != 0 || e->d_name[id_len] != '-' ||
+            !ends_with(e->d_name, ".lwreplay"))
+            continue;
+        if (n == cap && !(names = realloc(names, (cap = cap ? cap * 2 : 16) * sizeof *names)))
+            fatal("out of memory");
+        if (!(names[n++] = strdup(e->d_name)))
+            fatal("out of memory");
+    }
+    closedir(d);
+    qsort(names, n, sizeof *names, by_name);
+    for (size_t i = 0; i < n; i++) {
+        if (i + keep < n && !ends_with(names[i], "-marked.lwreplay")) {
+            char path[PATH_MAX];
+            snprintf(path, sizeof path, "%s/%s", dir, names[i]);
+            if (unlink(path) == 0)
+                log_msg("replay: deleted the old recording %s", path);
+            else
+                log_msg("replay: can't delete the old recording %s", path);
+        }
+        free(names[i]);
+    }
+    free(names);
+}
+
+void replay_record_into(const char *dir, const char *game_id) {
+    const char *rec = getenv("LOONY_RECORD"), *fixed = getenv("LOONY_FIXED_CLOCK");
+    if ((rec && *rec) || R.loaded || (fixed && strcmp(fixed, "1") == 0))
+        return;
+    if (!make_dirs(dir)) {
+        log_msg("replay: can't create %s: this game isn't recorded", dir);
+        return;
+    }
+    prune(dir, game_id, REPLAY_KEEP_GAMES - 1);
+    char stamp[32];
+    time_t now = time(NULL);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    strftime(stamp, sizeof stamp, "%Y-%m-%d-%H%M%S", &lt);
+    for (int i = 1;; i++) { /* two games in one second */
+        char base[PATH_MAX], marked[PATH_MAX + 16];
+        if (i == 1)
+            snprintf(base, sizeof base, "%s/%s-%s", dir, game_id, stamp);
+        else
+            snprintf(base, sizeof base, "%s/%s-%s-%d", dir, game_id, stamp, i);
+        snprintf(R.auto_path, sizeof R.auto_path, "%s.lwreplay", base);
+        snprintf(marked, sizeof marked, "%s-marked.lwreplay", base);
+        if (access(R.auto_path, F_OK) != 0 && access(marked, F_OK) != 0)
+            return;
+    }
+}
+
 bool replay_start(const char *game_id, const uint8_t *exe, size_t exe_len, const char *data_dir,
                   char *err, size_t errlen) {
-    const char *rec = getenv("LOONY_RECORD");
-    if (!R.loaded && !(rec && *rec))
+    const char *rec = record_env();
+    if (!rec && R.auto_path[0])
+        rec = R.auto_path;
+    if (!R.loaded && !rec)
         return true;
     uint8_t sha[CC_SHA256_DIGEST_LENGTH];
     CC_SHA256(exe, (CC_LONG)exe_len, sha);
@@ -529,6 +610,18 @@ int replay_mark(void) {
     R.marks++;
     flush(); /* kept even if the game crashes before the next frame check */
     log_msg("replay: mark %d at tick %u", R.marks, tick());
+    if (R.marks == 1 && R.auto_path[0] && strcmp(R.path, R.auto_path) == 0) {
+        /* Marked: kept for good. The open file follows the rename. */
+        char marked[PATH_MAX + 16];
+        snprintf(marked, sizeof marked, "%.*s-marked.lwreplay",
+                 (int)(strlen(R.path) - strlen(".lwreplay")), R.path);
+        if (rename(R.path, marked) == 0) {
+            log_msg("replay: kept as %s", marked);
+            snprintf(R.path, sizeof R.path, "%s", marked);
+        } else {
+            log_msg("replay: can't rename %s to %s", R.path, marked);
+        }
+    }
     return R.marks;
 }
 

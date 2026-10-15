@@ -1,6 +1,7 @@
 #include "test.h"
 
 #include <CommonCrypto/CommonDigest.h>
+#include <dirent.h>
 #include <SDL3/SDL_scancode.h>
 #include <stdlib.h>
 #include <time.h>
@@ -257,6 +258,117 @@ TEST(replay_marks_become_clips_named_after_the_replay) {
     replay_finish();
     CHECK_EQ(test_run_child(child_clip_marks, NULL, out, sizeof out), 1);
     CHECK_CONTAINS(out, "has no marks (Cmd-S marks one while recording)");
+}
+
+static void touch(const char *folder, const char *name) {
+    char path[1400];
+    snprintf(path, sizeof path, "%s/%s", folder, name);
+    FILE *f = fopen(path, "w");
+    if (f)
+        fclose(f);
+}
+
+static bool exists_in(const char *folder, const char *name) {
+    char path[1400];
+    snprintf(path, sizeof path, "%s/%s", folder, name);
+    return access(path, F_OK) == 0;
+}
+
+/* The app records every game by itself: before it starts, the game's
+   recordings beyond the last REPLAY_KEEP_GAMES (this one counted) go, but
+   not a marked one or another game's. The first mark renames the file. */
+TEST(replay_records_every_game_keeping_the_last_three_and_the_marked) {
+    BEGIN_TEST();
+    char rec_dir[1300];
+    snprintf(rec_dir, sizeof rec_dir, "%s/recordings", dir);
+    CHECK(make_dirs(rec_dir));
+    static const char *const old[] = {
+        "loony-labyrinth-2026-01-01-120000.lwreplay",
+        "loony-labyrinth-2026-01-02-120000-marked.lwreplay",
+        "loony-labyrinth-2026-01-03-120000.lwreplay",
+        "loony-labyrinth-2026-01-04-120000.lwreplay",
+        "loony-labyrinth-2026-01-05-120000.lwreplay",
+        "crystal-caliburn-2026-01-01-120000.lwreplay",
+        "notes.txt",
+    };
+    for (size_t i = 0; i < sizeof old / sizeof old[0]; i++)
+        touch(rec_dir, old[i]);
+    unsetenv("LOONY_RECORD");
+    unsetenv("LOONY_FIXED_CLOCK");
+    unsetenv("LOONY_REPLAY");
+    replay_reset();
+    replay_record_into(rec_dir, "loony-labyrinth");
+    CHECK(!exists_in(rec_dir, old[0]));
+    CHECK(exists_in(rec_dir, old[1])); /* marked */
+    CHECK(!exists_in(rec_dir, old[2]));
+    CHECK(exists_in(rec_dir, old[3]));
+    CHECK(exists_in(rec_dir, old[4]));
+    CHECK(exists_in(rec_dir, old[5])); /* another game's */
+    CHECK(exists_in(rec_dir, old[6]));
+
+    char err[256];
+    CHECK(replay_start("loony-labyrinth", exe, sizeof exe, NULL, err, sizeof err));
+    CHECK(replay_recording());
+    DIR *d = opendir(rec_dir);
+    char name[256] = "";
+    struct dirent *e;
+    while (d && (e = readdir(d)))
+        if (strncmp(e->d_name, "loony-labyrinth-2026-01", 23) != 0 &&
+            strncmp(e->d_name, "loony-labyrinth-", 16) == 0)
+            snprintf(name, sizeof name, "%s", e->d_name);
+    if (d)
+        closedir(d);
+    CHECK(strlen(name) == strlen("loony-labyrinth-2026-10-15-101500.lwreplay"));
+    CHECK(strstr(name, ".lwreplay") != NULL);
+    replay_step();
+    CHECK_EQ(replay_mark(), 1);
+    char marked[300];
+    snprintf(marked, sizeof marked, "%.*s-marked.lwreplay", (int)(strlen(name) - 9), name);
+    CHECK(!exists_in(rec_dir, name));
+    CHECK(exists_in(rec_dir, marked));
+    CHECK_EQ(replay_mark(), 2); /* renamed once */
+    replay_finish();
+    CHECK(exists_in(rec_dir, marked));
+
+    /* The kept recording replays, marks and all. */
+    snprintf(file, sizeof file, "%s/%s", rec_dir, marked);
+    CHECK(play_back());
+    const uint32_t *ticks;
+    CHECK_EQ(replay_marks(&ticks), 2);
+}
+
+/* LOONY_RECORD=0 turns it off; LOONY_RECORD names the file instead; a
+   fixed clock or a replay never records. */
+TEST(replay_records_every_game_unless_told_otherwise) {
+    BEGIN_TEST();
+    char rec_dir[1300], err[256];
+    snprintf(rec_dir, sizeof rec_dir, "%s/recordings", dir);
+    unsetenv("LOONY_REPLAY");
+    unsetenv("LOONY_FIXED_CLOCK");
+    setenv("LOONY_RECORD", "0", 1);
+    replay_reset();
+    replay_record_into(rec_dir, "loony-labyrinth");
+    CHECK(replay_start("loony-labyrinth", exe, sizeof exe, NULL, err, sizeof err));
+    CHECK(!replay_recording());
+    CHECK(access(rec_dir, F_OK) != 0);
+
+    unsetenv("LOONY_RECORD");
+    setenv("LOONY_FIXED_CLOCK", "1", 1);
+    replay_reset();
+    replay_record_into(rec_dir, "loony-labyrinth");
+    CHECK(replay_start("loony-labyrinth", exe, sizeof exe, NULL, err, sizeof err));
+    CHECK(!replay_recording());
+
+    unsetenv("LOONY_FIXED_CLOCK");
+    setenv("LOONY_RECORD", file, 1);
+    replay_reset();
+    replay_record_into(rec_dir, "loony-labyrinth");
+    CHECK(replay_start("loony-labyrinth", exe, sizeof exe, NULL, err, sizeof err));
+    CHECK(replay_recording());
+    CHECK_EQ(replay_mark(), 1);
+    replay_finish();
+    CHECK(access(file, F_OK) == 0); /* a name given is kept as it is */
+    CHECK(access(rec_dir, F_OK) != 0);
 }
 
 TEST(replay_refuses_another_game_or_program) {

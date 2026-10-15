@@ -77,6 +77,18 @@ bool replay_open(char *err, size_t errlen);
 bool replay_start(const char *game_id, const uint8_t *exe, size_t exe_len, const char *data_dir,
                   char *err, size_t errlen);
 
+/* The app records every game by itself (Loony Labyrinth only, for now):
+   the last REPLAY_KEEP_GAMES games of each, and every game with a mark. */
+#define REPLAY_KEEP_GAMES 3
+
+/* Before replay_start: unless LOONY_RECORD is set (LOONY_RECORD=0 turns
+   recording off), a replay is playing or LOONY_FIXED_CLOCK=1, the game is
+   recorded into dir as <game_id>-<date>-<time>.lwreplay, renamed
+   <...>-marked.lwreplay at its first mark. The game's recordings there
+   beyond the last REPLAY_KEEP_GAMES (counting this one) are deleted first,
+   except the marked ones. */
+void replay_record_into(const char *dir, const char *game_id);
+
 /* Ends a recording (the REPLAY_END record) and closes the file; at exit, a
    replay logs whether it reached the end of its file. Runs at exit; call it
    before exec. */
