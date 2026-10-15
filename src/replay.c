@@ -1161,6 +1161,8 @@ void replay_no_games(void) {
     log_msg("replay: games can't be told apart, so none is recorded");
     free(R.session.p);
     memset(&R.session, 0, sizeof R.session);
+    free(R.header.p);
+    memset(&R.header, 0, sizeof R.header);
     R.auto_dir[0] = '\0';
     R.mode = OFF;
 }

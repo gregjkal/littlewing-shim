@@ -403,8 +403,9 @@ those, in seconds. The clips go next to the replay as `game-clip-1.mp4`,
 and so on), and the other `LOONY_CLIP_` settings apply to each. Marks whose
 clips overlap, or come within a second of each other, share one clip. A
 replay with no marks is refused. When nothing is being recorded
-(outside a game when each game gets a file, with `LOONY_RECORD=0`, or with
-`LOONY_FIXED_CLOCK=1`), Cmd-S marks nothing and the title says so.
+(outside a game when each game gets a file, with `LOONY_RECORD=0`, with
+`LOONY_FIXED_CLOCK=1`, or in a Loony Labyrinth other than 3.0.1, whose games
+can't be told apart), Cmd-S marks nothing and the title says so.
 
 To find a moment you didn't mark, watch the replay in a window, at the speed
 it was played and with its sound:

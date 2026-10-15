@@ -921,8 +921,9 @@ TEST(replay_keeps_the_last_games_of_a_second_in_order) {
         "loony-labyrinth-2026-01-01-100000-2.lwreplay",
         "loony-labyrinth-2026-01-01-100000-10.lwreplay",
         "loony-labyrinth-2026-01-01-100001.lwreplay",
+        "loony-labyrinth-2026-01-01-100002.lwreplay",
     };
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < 5; i++)
         touch(rec_dir, old[i]);
     unsetenv("LOONY_RECORD");
     unsetenv("LOONY_FIXED_CLOCK");
@@ -930,7 +931,8 @@ TEST(replay_keeps_the_last_games_of_a_second_in_order) {
     replay_reset();
     replay_record_into(rec_dir, "loony-labyrinth", NULL, 0);
     CHECK(!exists_in(rec_dir, old[0]));
-    for (int i = 1; i < 4; i++)
+    CHECK(!exists_in(rec_dir, old[1]));
+    for (int i = 2; i < 5; i++)
         CHECK(exists_in(rec_dir, old[i]));
 }
 
