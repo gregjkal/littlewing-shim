@@ -91,4 +91,4 @@ git push origin "$tag"
 gh release create "$tag" "$zip" "$updates/appcast.xml" --verify-tag --draft --title "LittleWing $version" \
     --notes-file "$notes" ||
     die "$tag is pushed but its release wasn't made; finish with: gh release create $tag $zip $updates/appcast.xml --verify-tag --draft --title 'LittleWing $version' --notes-file $notes"
-echo "made a draft release of $tag: check it on GitHub, then publish it"
+echo "made a draft release of $tag: check it on GitHub, then publish it with: gh release edit $tag --draft=false --latest"
