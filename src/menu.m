@@ -14,6 +14,7 @@
 #include "settings.h"
 #include "sound.h"
 #include "util.h"
+#include "watch.h"
 
 @interface LoonySoundMenu : NSObject <NSMenuDelegate>
 @property(nonatomic) int saved; /* the volume as last saved, or as loaded */
@@ -206,6 +207,85 @@ static void add_scores_menu(void) {
     log_msg("menu: High Scores added");
 }
 
+/* The Replay menu's items' target: they act as the viewer's keys do. */
+@interface LoonyReplayMenu : NSObject <NSMenuItemValidation>
+@end
+
+@implementation LoonyReplayMenu
+- (void)exportClips:(NSMenuItem *)item {
+    (void)item;
+    watch_export(false);
+}
+
+- (void)exportMarks:(NSMenuItem *)item {
+    (void)item;
+    watch_export(true);
+}
+
+- (void)cancelExport:(NSMenuItem *)item {
+    (void)item;
+    watch_cancel_export();
+}
+
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action == @selector(cancelExport:))
+        return watch_exporting();
+    return !watch_exporting();
+}
+@end
+
+static bool replay_wanted;          /* menu_add_replay was called */
+static LoonyReplayMenu *replay_menu; /* its items' target, once added */
+
+/* The Replay menu, after the Sound menu. */
+static void add_replay_menu(void) {
+    NSMenu *bar = NSApp.mainMenu;
+    if (replay_menu || !sound_item || !bar)
+        return;
+    replay_menu = [[LoonyReplayMenu alloc] init];
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Replay"];
+    struct {
+        NSString *title;
+        SEL action;
+    } items[] = {{@"Export Clips", @selector(exportClips:)},
+                 {@"Export Marks", @selector(exportMarks:)},
+                 {@"Cancel Export", @selector(cancelExport:)}};
+    for (size_t i = 0; i < sizeof items / sizeof items[0]; i++) {
+        if (i == 2)
+            [menu addItem:[NSMenuItem separatorItem]];
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:items[i].title
+                                                      action:items[i].action
+                                               keyEquivalent:@""];
+        item.target = replay_menu;
+        [menu addItem:item];
+    }
+    NSMenuItem *entry = [[NSMenuItem alloc] initWithTitle:@"Replay" action:nil keyEquivalent:@""];
+    entry.submenu = menu;
+    [bar insertItem:entry atIndex:[bar indexOfItem:sound_item] + 1];
+    log_msg("menu: Replay added");
+}
+
+void menu_add_replay(void) {
+    replay_wanted = true;
+    @autoreleasepool {
+        add_replay_menu();
+    }
+}
+
+void menu_reveal(const char *const *paths, size_t n) {
+    const char *driver = SDL_GetCurrentVideoDriver();
+    if (!n || !driver || strcmp(driver, "cocoa") != 0)
+        return;
+    @autoreleasepool {
+        NSMutableArray<NSURL *> *urls = [NSMutableArray arrayWithCapacity:n];
+        for (size_t i = 0; i < n; i++)
+            [urls addObject:[NSURL fileURLWithFileSystemRepresentation:paths[i]
+                                                           isDirectory:NO
+                                                         relativeToURL:nil]];
+        [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:urls];
+    }
+}
+
 /* Sparkle (Contents/Frameworks/Sparkle.framework, which a release bundles)
    is loaded when the app runs rather than linked, so builds without it need
    nothing. These are the parts of its API used here. */
@@ -353,5 +433,7 @@ void menu_install(void) {
         add_updates(bar);
         if (scores_config.on)
             add_scores_menu();
+        if (replay_wanted)
+            add_replay_menu();
     }
 }
