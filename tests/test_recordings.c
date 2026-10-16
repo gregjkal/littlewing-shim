@@ -337,6 +337,22 @@ TEST(recordings_labels_say_when_how_long_and_what_is_in_it) {
     CHECK_STR(recordings_mark_label(0, buf, sizeof buf), "Play from 0:00");
 }
 
+/* A mark gets an item unless it would repeat the one above it: the
+   recording's own in the first second, the mark before's in its second. */
+TEST(recordings_mark_shown_skips_items_that_repeat_the_one_above) {
+    uint32_t marks[] = {30, 90, 100, 119, 120, 3600};
+    recording r;
+    memset(&r, 0, sizeof r);
+    r.marks = marks;
+    r.nmarks = sizeof marks / sizeof marks[0];
+    CHECK(!recordings_mark_shown(&r, 0)); /* 0:00, like the recording's item */
+    CHECK(recordings_mark_shown(&r, 1));  /* 0:01 */
+    CHECK(!recordings_mark_shown(&r, 2)); /* 0:01 again */
+    CHECK(!recordings_mark_shown(&r, 3));
+    CHECK(recordings_mark_shown(&r, 4)); /* 0:02 */
+    CHECK(recordings_mark_shown(&r, 5)); /* 1:00 */
+}
+
 TEST(recordings_watch_env_starts_the_viewer_at_a_mark) {
     BEGIN_TEST();
     setenv("LOONY_GAME", "loony-labyrinth", 1);

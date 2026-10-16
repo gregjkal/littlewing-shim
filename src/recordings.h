@@ -52,6 +52,11 @@ const char *recordings_label(const recording *r, bool with_game, char *buf, size
    Returns buf. */
 const char *recordings_mark_label(uint32_t ticks, char *buf, size_t cap);
 
+/* Whether r's mark m gets a menu item of its own: not one in the first
+   second, which the recording's own item already plays from, nor one in
+   the same second as the mark before it, whose item it would repeat. */
+bool recordings_mark_shown(const recording *r, size_t m);
+
 /* Sets up the environment for this program to watch the recording at path
    (watch.h) from from_ticks of play when it restarts: LOONY_REPLAY and
    LOONY_WATCH, LOONY_WATCH_FROM unless it is 0, and none of what the

@@ -321,8 +321,8 @@ static NSMenuItem *open_item(NSString *title, const char *path, uint32_t from, i
         NSString *title = @(recordings_label(&list[i], games, label, sizeof label));
         [menu addItem:open_item(title, list[i].path, 0, self)];
         for (size_t m = 0; m < list[i].nmarks; m++) {
-            if (m && list[i].marks[m] / 60 == list[i].marks[m - 1] / 60)
-                continue; /* the same second: an item just like the last */
+            if (!recordings_mark_shown(&list[i], m))
+                continue;
             title = @(recordings_mark_label(list[i].marks[m], label, sizeof label));
             NSMenuItem *at = open_item(title, list[i].path, list[i].marks[m], self);
             at.indentationLevel = 1;

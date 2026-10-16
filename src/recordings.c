@@ -191,6 +191,11 @@ const char *recordings_mark_label(uint32_t ticks, char *buf, size_t cap) {
     return buf;
 }
 
+bool recordings_mark_shown(const recording *r, size_t m) {
+    uint32_t s = r->marks[m] / 60;
+    return s > 0 && (m == 0 || s != r->marks[m - 1] / 60);
+}
+
 void recordings_watch_env(const char *path, uint32_t from_ticks) {
     setenv("LOONY_REPLAY", path, 1);
     setenv("LOONY_WATCH", "1", 1);

@@ -530,9 +530,9 @@ has clips, as in "Oct 15, 8:15 PM, 14:32, 2 marks, clips". Choosing one
 watches it from 0:00, as opening the file does (below). Under a recording
 with marks, an indented **Play from 3:12** for each mark watches it from that
 mark, and J goes back from there. **Show Recordings in Finder**, at the
-bottom, opens the folder. The menu is there in the picker, while Loony
-Labyrinth plays and while watching; not in the other games, which aren't
-recorded yet. A file in the folder that isn't a replay this version plays
+bottom, opens the folder. The menu, like File > Open Recent (below), is
+there in the picker, while Loony Labyrinth plays and while watching; not in
+the other games, which aren't recorded yet. A file in the folder that isn't a replay this version plays
 is left out.
 
 #### Sharing a high score
