@@ -19,13 +19,19 @@
    seconds before the mark (CLIP_MARK_BEFORE by default) to LOONY_CLIP_AFTER
    seconds after it (CLIP_MARK_AFTER), since the key is pressed after the
    moment. Marks whose clips overlap, or come within CLIP_MERGE_GAP of each
-   other, share one clip. The files are numbered from 1 before the
-   extension: <replay>-clip-1.mp4 and so on next to the replay, or
-   LOONY_CLIP_OUT-1.mp4 when it names one.
+   other, share one clip. Each file is named for its span (clip_span_name)
+   before the extension: <replay>-2m58-3m20.mp4 and so on next to the
+   replay (without the replay's -marked), or LOONY_CLIP_OUT-2m58-3m20.mp4
+   when it names one. A clip whose file is there already is skipped, so
+   exporting again renders only the new ones, and editing the list never
+   renames a file; with none left to render, clip_open exits.
 
    LOONY_CLIP=clips makes a clip of each span in the replay's list of clips
    (clip_list_path; watching a replay saves them there, watch.h), named as
    for marks. Spans that overlap or touch share one clip.
+
+   A clip is written to a hidden file beside its own (.<name>) and renamed
+   when it is finished, so one cut short never passes for a whole one.
 
    The picture is the window's: in HD mode (hd.h) the HD frame, at 2x unless
    LOONY_HD_SCALE says otherwise, scaled down to CLIP_HD_WIDTH pixels wide;
@@ -67,6 +73,12 @@ bool clip_parse_span(const char *s, uint32_t *start, uint32_t *end);
 /* ticks as m:ss (h:mm:ss past an hour), with hundredths when not whole, as
    clip_parse_span reads them back. Returns buf. */
 const char *clip_format_time(uint32_t ticks, char *buf, size_t cap);
+
+/* A span as a clip's file names it: m and s for the colons of
+   clip_format_time, h past an hour, with hundredths when not whole
+   (2m58-3m20, 0m05.65-0m07.15, 1h00m01.01-1h00m05). Two spans never get
+   the same name. Returns buf. */
+const char *clip_span_name(uint32_t start, uint32_t end, char *buf, size_t cap);
 
 /* The list of clips beside the replay: its path with .clips in place of
    .lwreplay (or after it, for another name). False if that is too long. */

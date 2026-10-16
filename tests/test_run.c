@@ -514,10 +514,26 @@ static unsigned mark_tick(const char *out, const char *who, int n) {
     return at && sscanf(at + strlen(what), "%u", &tick) == 1 ? tick : 0;
 }
 
+/* The files in dir ending in suffix: those starting with a dot (a clip
+   not yet finished) if hidden, else the others. */
+static int files_in(const char *dir, const char *suffix, bool hidden) {
+    DIR *d = opendir(dir);
+    int n = 0;
+    struct dirent *e;
+    while (d && (e = readdir(d))) {
+        size_t len = strlen(e->d_name), k = strlen(suffix);
+        if (len > k && strcmp(e->d_name + len - k, suffix) == 0 && (e->d_name[0] == '.') == hidden)
+            n++;
+    }
+    if (d)
+        closedir(d);
+    return n;
+}
+
 /* Marks made while recording (Cmd-S; here the script's) become clips: the
    export finds each at the tick it was made, before the replay reaches it,
-   and writes one clip per mark, named after the replay, from a second before
-   the mark to half a second after it. */
+   and writes one clip per mark, named after the replay and its span, from
+   a second before the mark to half a second after it. */
 TEST(run_marks_in_a_recording_become_clips) {
     SKIP_UNLESS_GAME();
     char rec_dir[1024], play_dir[1024], files[2][1100], err[256] = "";
@@ -529,23 +545,21 @@ TEST(run_marks_in_a_recording_become_clips) {
     clip_after = "0.5";
     int clip_status = clip_recording("marks", play_dir, NULL, out[1], sizeof out[1]);
     clip_before = clip_after = NULL;
+    unsigned ticks[2] = {mark_tick(out[0], "replay", 1), mark_tick(out[0], "replay", 2)};
     mp4_info info[2];
-    bool read[2], third = false;
-    for (int i = 0; i < 3; i++) {
-        char name[1100];
-        snprintf(name, sizeof name, "%s/game-clip-%d.mp4", rec_dir, i + 1);
-        if (i == 2)
-            third = access(name, F_OK) == 0;
-        else if (!(read[i] = mp4_read_info(name, &info[i], err, sizeof err)))
-            fprintf(stderr, "%s: %s\n", name, err);
-        if (i < 2)
-            snprintf(files[i], sizeof files[i], "%s", name);
+    bool read[2] = {false, false};
+    for (int i = 0; i < 2; i++) {
+        char span[64];
+        clip_span_name(ticks[i] - 60, ticks[i] + 30, span, sizeof span);
+        snprintf(files[i], sizeof files[i], "%s/game-%s.mp4", rec_dir, span);
+        if (!(read[i] = mp4_read_info(files[i], &info[i], err, sizeof err)))
+            fprintf(stderr, "%s: %s\n", files[i], err);
     }
+    int clips = files_in(rec_dir, ".mp4", false), unfinished = files_in(rec_dir, ".mp4", true);
     test_remove_tree(rec_dir);
     test_remove_tree(play_dir);
     CHECK_EQ(rec_status, 0);
     CHECK_EQ(clip_status, 0);
-    unsigned ticks[2] = {mark_tick(out[0], "replay", 1), mark_tick(out[0], "replay", 2)};
     CHECK(ticks[0] >= 100 && ticks[0] < 110);
     CHECK(ticks[1] >= 280 && ticks[1] < 290);
     for (int i = 0; i < 2; i++) {
@@ -556,7 +570,8 @@ TEST(run_marks_in_a_recording_become_clips) {
         CHECK_EQ(info[i].video_frames, 90);
         CHECK(fabs(info[i].audio_seconds - 1.5) < 0.03);
     }
-    CHECK(!third);
+    CHECK_EQ(clips, 2);
+    CHECK_EQ(unfinished, 0);
     CHECK(!strstr(out[1], "desync"));
 }
 
@@ -615,12 +630,17 @@ TEST(run_a_watched_replay_keeps_time_and_its_clips_render) {
     int clip_status = clip_recording("clips", play_dir, NULL, out[2], sizeof out[2]);
     mp4_info info[2];
     bool read[2] = {false, false};
-    for (int i = 0; i < 2; i++) {
-        char name[1100];
-        snprintf(name, sizeof name, "%s/game-clip-%d.mp4", rec_dir, i + 1);
+    for (size_t i = 0; i < n && i < 2; i++) {
+        char name[1100], span[64];
+        clip_span_name(spans[i].start, spans[i].end, span, sizeof span);
+        snprintf(name, sizeof name, "%s/game-%s.mp4", rec_dir, span);
         if (!(read[i] = mp4_read_info(name, &info[i], err, sizeof err)))
             fprintf(stderr, "%s: %s\n", name, err);
     }
+    /* Again, with every clip written: nothing to render. */
+    char again[4096];
+    int again_status = clip_recording("clips", play_dir, NULL, again, sizeof again);
+    int unfinished = files_in(rec_dir, ".mp4", true);
     test_remove_tree(rec_dir);
     test_remove_tree(play_dir);
     CHECK_EQ(rec_status, 0);
@@ -651,6 +671,9 @@ TEST(run_a_watched_replay_keeps_time_and_its_clips_render) {
         CHECK(read[i]);
         CHECK_EQ(info[i].video_frames, spans[i].end - spans[i].start);
     }
+    CHECK_EQ(unfinished, 0);
+    CHECK_EQ(again_status, 0);
+    CHECK_CONTAINS(again, "loony: clip: all 2 clips are written already");
     free(spans);
 }
 
