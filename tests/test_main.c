@@ -8,7 +8,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define MAX_TESTS 512
+#define MAX_TESTS 1024
 
 static struct {
     const char *name;

@@ -763,6 +763,26 @@ TEST(replay_refuses_another_game_or_program) {
     CHECK_CONTAINS(err, "can't read the replay /nonexistent/run.lwreplay");
 }
 
+/* A replay that finishes where the recording did (the game quits there on
+   its own, as it did when recorded) has reached the end, so a clip running
+   past it keeps what there is; one that finishes a step short hasn't. */
+TEST(replay_finishing_where_the_recording_did_is_its_end) {
+    BEGIN_TEST();
+    CHECK(record(NULL));
+    replay_step();
+    replay_step();
+    replay_finish();
+    CHECK(play_back());
+    replay_step();
+    replay_finish();
+    CHECK(!replay_reached_end());
+    CHECK(play_back());
+    replay_step();
+    replay_step();
+    replay_finish();
+    CHECK(replay_reached_end());
+}
+
 /* The clock moves in whole ms while recording, and a run of TickCount polls
    on one tick sleeps until the next; a replay returns the same values. */
 TEST(replay_clock_values_come_back) {

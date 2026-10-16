@@ -226,7 +226,8 @@ void replay_frame(uint32_t hash);
    exits with REPLAY_DESYNC_STATUS. */
 _Noreturn void replay_desync(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 /* For what runs at exit: true once replay_desync has run, and true once the
-   replay has exited where the recording stopped. */
+   replay has exited where the recording stopped (run past its end, or
+   finished at it, as when the game quits there on its own). */
 bool replay_desynced(void);
 bool replay_reached_end(void);
 

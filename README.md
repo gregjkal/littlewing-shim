@@ -405,7 +405,8 @@ is `LOONY_CLIP_QUALITY`, above 0 and at most 1 (0.65 by default, which matched x
 comes to 3.1 MB in HD, or 16 seconds and 2.1 MB at 800x600. A clip
 that runs past the end of the recording keeps what it has; one that starts
 past it writes nothing and exits with status 4. A clip cut short any other
-way (a desync, an error, `LOONY_EXIT_AFTER`) is thrown away, with status 1. A file already at
+way (a desync, an error, `LOONY_EXIT_AFTER`) is thrown away, with the
+desync's or the error's status, or else 1. A file already at
 `LOONY_CLIP_OUT` is replaced, but the replay itself is refused, as is a
 folder that can't be written, before the seek.
 
