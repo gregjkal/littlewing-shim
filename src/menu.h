@@ -28,8 +28,9 @@ void menu_add_high_scores(const char *game_id, const char *title, const char *re
 /* Adds a Replay menu after the Sound menu, for watching a replay (watch.h):
    at once if menu_install has run, else when it does. Export Clips and
    Export Marks export the watched recording's clips or marks
-   (watch_export), and Cancel Export cancels (watch_cancel_export); each is
-   disabled when it can't be chosen. The items have no key equivalents: E
+   (watch_export), and Cancel Export cancels (watch_cancel_export); the
+   export items are disabled while an export runs, and Cancel Export while
+   none does. The items have no key equivalents: E
    and Esc are the viewer's own keys, which AppKit would take first. */
 void menu_add_replay(void);
 

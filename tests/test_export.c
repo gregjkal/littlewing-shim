@@ -213,6 +213,45 @@ TEST(export_cancel_stops_it) {
     test_remove_tree(dir);
 }
 
+/* A line read only in part when the viewer restarts is ended by the read
+   after it, in the restarted viewer. */
+TEST(export_ends_a_half_read_line_after_a_restart) {
+    char dir[1024], path[1100], err[256] = "";
+    fake_export("echo 'seek 1 10'; printf 'wrote /d'; sleep 1; echo '.mp4'; exec sleep 30", dir,
+                sizeof dir, path, sizeof path);
+    export_reset();
+    CHECK(export_start(path, EXPORT_CLIPS, "/r/game.lwreplay", err, sizeof err));
+    int status = -1;
+    struct timespec gap = {0, 10 * 1000000};
+    for (int i = 0; i < 500 && !export_now()->partial_len; i++) {
+        export_poll(&status);
+        nanosleep(&gap, NULL);
+    }
+    CHECK_EQ(export_now()->partial_len, 8);
+    export_pass_on();
+    const char *said = getenv("LOONY_WATCH_EXPORT_SAID");
+    CHECK(said && strlen(said) >= 8 && !strcmp(said + strlen(said) - 8, "wrote /d"));
+    const char *v = getenv("LOONY_WATCH_EXPORT");
+    int pid = 0, fd = -1, kind = -1, cancelled = -1;
+    CHECK(v && sscanf(v, "%d %d %d %d", &pid, &fd, &kind, &cancelled) == 4);
+    int saved = dup(fd);
+    export_reset();
+    dup2(saved, fd);
+    close(saved);
+    CHECK(export_take_up(err, sizeof err));
+    for (int i = 0; i < 500 && !export_now()->nwrote; i++) {
+        export_poll(&status);
+        nanosleep(&gap, NULL);
+    }
+    CHECK_EQ(export_now()->nwrote, 1);
+    if (export_now()->nwrote)
+        CHECK_STR(export_now()->wrote[0], "/d.mp4");
+    export_cancel();
+    CHECK_EQ(wait_for_export(), 128 + SIGTERM);
+    export_reset();
+    test_remove_tree(dir);
+}
+
 /* What the viewer passes on through its restart, it takes up again: the
    same process, its pipe, and what it said. */
 TEST(export_goes_on_through_a_restart) {

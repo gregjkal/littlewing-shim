@@ -105,8 +105,8 @@ static const char *fmt_seconds(uint32_t ticks, char *buf, size_t cap) {
 
 static void tend_export(void);
 
-static void update_title(void) {
-    tend_export();
+/* Sets the title to what it says now. */
+static void set_title(void) {
     char text[sizeof W.text], t[32], u[32], in[48] = "";
     const char *title = W.title ? W.title : "LittleWing";
     fmt_seconds(now_tick(), t, sizeof t);
@@ -138,6 +138,11 @@ static void update_title(void) {
         snprintf(W.text, sizeof W.text, "%s", text);
         display_set_title(W.text);
     }
+}
+
+static void update_title(void) {
+    tend_export();
+    set_title();
 }
 
 static void flash(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -423,6 +428,7 @@ static void reveal(char *const *files, size_t n) {
 /* The export ended with status: says how, and shows what it wrote. */
 static void export_ended(int status) {
     const export_progress *p = export_now();
+    set_title(); /* without the progress, which the flash would repeat */
     if (export_cancelled() && status == 128 + SIGTERM) {
         log_msg("watch: export cancelled");
         flash("export cancelled");
@@ -587,6 +593,17 @@ static bool env_number(const char *name, uint32_t max, uint32_t dflt, uint32_t *
     return true;
 }
 
+/* Quitting: nothing outlives the viewer. */
+static void stop_export_at_exit(void) { watch_stop_export(); }
+
+/* From now on, an exit stops the export: once is enough. */
+static void stop_export_on_exit(void) {
+    static bool set;
+    if (!set)
+        atexit(stop_export_at_exit);
+    set = true;
+}
+
 bool watch_open(char *err, size_t errlen) {
     watch_reset();
     const char *on = getenv("LOONY_WATCH"), *replay = getenv("LOONY_REPLAY");
@@ -633,8 +650,10 @@ bool watch_open(char *err, size_t errlen) {
     char why[512];
     if (!export_take_up(why, sizeof why))
         log_msg("watch: %s", why);
-    else if (export_running())
+    else if (export_running()) {
         log_msg("watch: the export of the %s goes on", export_what(export_running_kind()));
+        stop_export_on_exit(); /* even if the restart fails before watch_start */
+    }
     W.on = true;
     return true;
 }
@@ -645,9 +664,6 @@ static void log_at_exit(void) {
 }
 
 static void held_at_end(void) { watch_hold(); }
-
-/* Quitting: nothing outlives the viewer. */
-static void stop_export_at_exit(void) { watch_stop_export(); }
 
 void watch_start(const char *title, void (*restart)(void)) {
     if (!W.on)
@@ -660,7 +676,7 @@ void watch_start(const char *title, void (*restart)(void)) {
     display_raise_on_open();
     sound_open_monitor();
     atexit(log_at_exit);
-    atexit(stop_export_at_exit);
+    stop_export_on_exit();
     char t[32], speed[32];
     if (speeds[W.speed])
         snprintf(speed, sizeof speed, "at %dx", speeds[W.speed]);

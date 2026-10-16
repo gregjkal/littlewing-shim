@@ -327,7 +327,7 @@ bool export_stop(double seconds, int *status) {
 /* What has been said, as the lines that say it again. */
 static char *said_lines(void) {
     const export_progress *p = &X.said;
-    size_t cap = 256 + strlen(p->error);
+    size_t cap = 256 + strlen(p->error) + p->partial_len;
     for (size_t i = 0; i < p->nwrote; i++)
         cap += strlen(p->wrote[i]) + 8;
     for (size_t i = 0; i < p->nskipped; i++)
@@ -347,7 +347,11 @@ static char *said_lines(void) {
         len += (size_t)snprintf(s + len, cap - len, "clip %zu %zu %llu %llu\n", p->k, p->n,
                                 (unsigned long long)p->frame, (unsigned long long)p->frames);
     if (p->phase == EXPORT_SEEKING)
-        snprintf(s + len, cap - len, "seek %u %u\n", p->tick, p->target);
+        len += (size_t)snprintf(s + len, cap - len, "seek %u %u\n", p->tick, p->target);
+    /* A line read only in part (one longer than PIPE_BUF can come in two
+       writes): its start, unended, so the next read ends it. */
+    memcpy(s + len, p->partial, p->partial_len);
+    s[len + p->partial_len] = '\0';
     return s;
 }
 
@@ -356,7 +360,7 @@ void export_pass_on(void) {
     unsetenv("LOONY_WATCH_EXPORT_SAID");
     if (!X.running)
         return;
-    if (X.fd >= 0 && !drain()) { /* each line is one write, so none is left half read */
+    if (X.fd >= 0 && !drain()) {
         close(X.fd);
         X.fd = -1;
     }
