@@ -364,10 +364,22 @@ static void begin_piece(size_t i) {
     }
 }
 
-/* The program exited before the clip's end: what there is is kept. The
-   status says when that is nothing (the recording ended before the clip's
-   start: CLIP_NOTHING_STATUS) or the file couldn't be finished (1), unless a
-   failure or a desync has said so already. This is the program's first
+/* Closes the clip's file and removes it, so nothing of the clip is left. err
+   says why the close failed, if it did. */
+static void discard(char *err, size_t cap) {
+    mp4_file *f = C.mp4;
+    C.mp4 = NULL;
+    mp4_close(f, err, cap);
+    unlink(C.part);
+}
+
+/* The program exited before the clip's end: what there is is kept when the
+   recording ended there, and thrown away when it goes on (a desync, a
+   failure, LOONY_EXIT_AFTER), so a later export renders the clip instead
+   of skipping it. The status says when nothing was written (the recording
+   ended before the clip's start: CLIP_NOTHING_STATUS) or the clip was
+   thrown away or couldn't be finished (1), unless a failure or a desync has
+   said so already. This is the program's first
    atexit handler (clip_open must stay before any other sets one), so it runs
    last and _exit skips none of the program's. */
 static void finish_at_exit(void) {
@@ -390,7 +402,16 @@ static void finish_at_exit(void) {
     log_msg("clip: the replay stopped at %s, before the clip's end at %s",
             clip_format_time(C.spans[C.clip].start + (uint32_t)C.frames, a, sizeof a),
             clip_format_time(C.spans[C.clip].end, b, sizeof b));
-    if (!finish() && !failed) {
+    bool kept;
+    if (replay_reached_end()) {
+        kept = finish();
+    } else {
+        char err[256];
+        discard(err, sizeof err);
+        log_msg("clip: %s isn't written: the recording goes on past where the replay stopped", C.out);
+        kept = false;
+    }
+    if (!kept && !failed) {
         fflush(NULL);
         _exit(1);
     }
@@ -398,11 +419,8 @@ static void finish_at_exit(void) {
 
 static _Noreturn void write_failed(void) {
     char err[256];
-    mp4_file *f = C.mp4;
-    C.mp4 = NULL;
     C.finished = true;
-    mp4_close(f, err, sizeof err);
-    unlink(C.part);
+    discard(err, sizeof err);
     fatal("clip: can't write %s: %s", C.out, err);
 }
 
@@ -615,7 +633,10 @@ static void skip_written(void) {
         C.spans[kept++] = C.spans[i];
     }
     if (!kept) {
-        log_msg("clip: all %zu clips are written already", C.nspans);
+        if (C.nspans == 1)
+            log_msg("clip: the clip is written already");
+        else
+            log_msg("clip: all %zu clips are written already", C.nspans);
         exit(0);
     }
     C.nspans = kept;

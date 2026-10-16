@@ -404,7 +404,8 @@ is `LOONY_CLIP_QUALITY`, above 0 and at most 1 (0.65 by default, which matched x
 30-second clip from minute 10 of a 15-minute game takes about 30 seconds and
 comes to 3.1 MB in HD, or 16 seconds and 2.1 MB at 800x600. A clip
 that runs past the end of the recording keeps what it has; one that starts
-past it writes nothing and exits with status 4. A file already at
+past it writes nothing and exits with status 4. A clip cut short any other
+way (a desync, an error, `LOONY_EXIT_AFTER`) is thrown away, with status 1. A file already at
 `LOONY_CLIP_OUT` is replaced, but the replay itself is refused, as is a
 folder that can't be written, before the seek.
 
@@ -468,7 +469,8 @@ into `game.clips` next to `game.lwreplay`, one `<start>-<end>` a line in `LOONY_
 format, so the file can be edited by hand too; `LOONY_CLIP=clips` then
 renders each into `game-0m01-0m03.mp4` and so on, in one pass, as
 `LOONY_CLIP=marks` does (clips that overlap become one). Taking a line out
-of the file, or adding one, renames none of the other clips' files. A recording in
+of the file, or adding one, renames none of the other clips' files, though
+clips that come to overlap, or stop overlapping, get new files. A recording in
 `recordings` with a `.clips` file is kept, like a marked one.
 
 Going ahead replays without pacing to the time. A replay only runs

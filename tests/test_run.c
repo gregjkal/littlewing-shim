@@ -504,16 +504,6 @@ TEST(run_a_clip_past_the_end_of_a_recording_keeps_what_there_is) {
     CHECK_CONTAINS(out[3], "can't load the script");
 }
 
-/* The tick of mark n (from 1) where a run logged "<who>: mark <n> at tick",
-   or 0. */
-static unsigned mark_tick(const char *out, const char *who, int n) {
-    char what[64];
-    snprintf(what, sizeof what, "%s: mark %d at tick ", who, n);
-    const char *at = strstr(out, what);
-    unsigned tick = 0;
-    return at && sscanf(at + strlen(what), "%u", &tick) == 1 ? tick : 0;
-}
-
 /* The files in dir ending in suffix: those starting with a dot (a clip
    not yet finished) if hidden, else the others. */
 static int files_in(const char *dir, const char *suffix, bool hidden) {
@@ -528,6 +518,58 @@ static int files_in(const char *dir, const char *suffix, bool hidden) {
     if (d)
         closedir(d);
     return n;
+}
+
+/* A clip cut short with the recording still going on (here
+   LOONY_EXIT_AFTER; for the user, a desync) is thrown away, not left under
+   its name, so the next export renders it instead of skipping it. */
+TEST(run_a_clip_cut_short_is_thrown_away_and_rendered_again) {
+    SKIP_UNLESS_GAME();
+    char rec_dir[1024], play_dir[1024], list[1100], file[1100], span[64], err[256] = "";
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    char out[3][32768];
+    int rec_status = record_for_clips(rec_dir, "330 quit\n", out[0], sizeof out[0]);
+    snprintf(list, sizeof list, "%s/game.clips", rec_dir);
+    FILE *f = fopen(list, "w");
+    fputs("0:01-0:04\n", f);
+    fclose(f);
+    clip_span_name(60, 240, span, sizeof span);
+    snprintf(file, sizeof file, "%s/game-%s.mp4", rec_dir, span);
+    setenv("LOONY_EXIT_AFTER", "150", 1);
+    int short_status = clip_recording("clips", play_dir, NULL, out[1], sizeof out[1]);
+    unsetenv("LOONY_EXIT_AFTER");
+    bool short_written = access(file, F_OK) == 0;
+    int short_unfinished = files_in(rec_dir, ".mp4", true);
+    int again_status = clip_recording("clips", play_dir, NULL, out[2], sizeof out[2]);
+    mp4_info info;
+    bool read = mp4_read_info(file, &info, err, sizeof err);
+    int unfinished = files_in(rec_dir, ".mp4", true);
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(short_status, 1);
+    CHECK_CONTAINS(out[1], "loony: exiting after 150 ticks (LOONY_EXIT_AFTER)");
+    CHECK_CONTAINS(out[1], "isn't written: the recording goes on past where the replay stopped");
+    CHECK(!short_written);
+    CHECK_EQ(short_unfinished, 0);
+    CHECK_EQ(again_status, 0);
+    CHECK(!strstr(out[2], "already"));
+    if (!read)
+        fprintf(stderr, "%s: %s\n", file, err);
+    CHECK(read);
+    CHECK_EQ(info.video_frames, 180);
+    CHECK_EQ(unfinished, 0);
+}
+
+/* The tick of mark n (from 1) where a run logged "<who>: mark <n> at tick",
+   or 0. */
+static unsigned mark_tick(const char *out, const char *who, int n) {
+    char what[64];
+    snprintf(what, sizeof what, "%s: mark %d at tick ", who, n);
+    const char *at = strstr(out, what);
+    unsigned tick = 0;
+    return at && sscanf(at + strlen(what), "%u", &tick) == 1 ? tick : 0;
 }
 
 /* Marks made while recording (Cmd-S; here the script's) become clips: the

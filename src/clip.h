@@ -24,14 +24,17 @@
    replay (without the replay's -marked), or LOONY_CLIP_OUT-2m58-3m20.mp4
    when it names one. A clip whose file is there already is skipped, so
    exporting again renders only the new ones, and editing the list never
-   renames a file; with none left to render, clip_open exits.
+   renames a file (spans that come to merge, or stop merging, get files of
+   their own); with none left to render, clip_open exits.
 
    LOONY_CLIP=clips makes a clip of each span in the replay's list of clips
    (clip_list_path; watching a replay saves them there, watch.h), named as
    for marks. Spans that overlap or touch share one clip.
 
    A clip is written to a hidden file beside its own (.<name>) and renamed
-   when it is finished, so one cut short never passes for a whole one.
+   when it is finished, so one cut short never passes for a whole one. A
+   clip the recording ends inside keeps what there is; one cut short by
+   anything else (a desync, a failure, LOONY_EXIT_AFTER) is thrown away.
 
    The picture is the window's: in HD mode (hd.h) the HD frame, at 2x unless
    LOONY_HD_SCALE says otherwise, scaled down to CLIP_HD_WIDTH pixels wide;
@@ -74,8 +77,9 @@ bool clip_parse_span(const char *s, uint32_t *start, uint32_t *end);
    clip_parse_span reads them back. Returns buf. */
 const char *clip_format_time(uint32_t ticks, char *buf, size_t cap);
 
-/* A span as a clip's file names it: m and s for the colons of
-   clip_format_time, h past an hour, with hundredths when not whole
+/* A span as a clip's file names it: clip_format_time's, with m for the
+   colon before the seconds and h for the one before the minutes, with
+   hundredths when not whole
    (2m58-3m20, 0m05.65-0m07.15, 1h00m01.01-1h00m05). Two spans never get
    the same name. Returns buf. */
 const char *clip_span_name(uint32_t start, uint32_t end, char *buf, size_t cap);
