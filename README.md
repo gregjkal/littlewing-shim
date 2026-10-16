@@ -423,10 +423,13 @@ LOONY_REPLAY=game.lwreplay LOONY_CLIP=marks ./build-release/loony
 Each clip runs from 30 seconds before its mark to 3 seconds after it, since
 the key comes a moment late; `LOONY_CLIP_BEFORE` and `LOONY_CLIP_AFTER` set
 those, in seconds. The clips go next to the replay, each named for its
-span: `game-2m58-3m20.mp4` and so on (with `LOONY_CLIP_OUT=ramps.mp4`,
+span: `game-2m58-3m20.mp4` and so on, for `game.lwreplay` or
+`game-marked.lwreplay` (with `LOONY_CLIP_OUT=ramps.mp4`,
 `ramps-2m58-3m20.mp4`), and the other `LOONY_CLIP_` settings apply to each.
 A clip whose file is there already is skipped, so exporting again renders
-only new clips, and when there are none it exits at once. Each clip is
+only new clips, and when there are none it exits at once. The skip goes by
+the name alone: to render a clip again, with other settings say, delete
+its file, and give each replay a `LOONY_CLIP_OUT` of its own. Each clip is
 written to a hidden file and renamed once it is finished, so an export
 that is stopped never leaves a clip that looks whole. Marks whose
 clips overlap, or come within a second of each other, share one clip. A

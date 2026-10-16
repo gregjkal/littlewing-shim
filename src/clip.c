@@ -40,7 +40,7 @@ static struct {
     uint32_t start, end, at; /* and the piece of it being made */
     char out[PATH_MAX];  /* and its file */
     char part[PATH_MAX + 2]; /* and where it is written until it is finished */
-    bool wrote;          /* a clip was written */
+    bool wrote;          /* a clip was written, by this export or an earlier one */
     double quality; /* or 0 for kbps */
     int kbps;       /* 0: clip_default_kbps */
     int width; /* LOONY_CLIP_WIDTH, or 0 */
@@ -629,6 +629,7 @@ static void skip_written(void) {
         if (access(path, F_OK) == 0) {
             log_msg("clip: %s-%s is in %s already: skipped", clip_format_time(C.spans[i].start, a, sizeof a),
                     clip_format_time(C.spans[i].end, b, sizeof b), path);
+            C.wrote = true;
             continue;
         }
         C.spans[kept++] = C.spans[i];

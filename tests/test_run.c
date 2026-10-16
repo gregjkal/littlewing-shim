@@ -565,11 +565,11 @@ TEST(run_a_clip_cut_short_is_thrown_away_and_rendered_again) {
     char rec_dir[1024], play_dir[1024], list[1100], file[1100], span[64], err[256] = "";
     test_tmp_dir(rec_dir, sizeof rec_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
-    char out[3][32768];
+    char out[4][32768];
     int rec_status = record_for_clips(rec_dir, "330 quit\n", out[0], sizeof out[0]);
     snprintf(list, sizeof list, "%s/game.clips", rec_dir);
     FILE *f = fopen(list, "w");
-    fputs("0:01-0:04\n", f);
+    fputs("0:01-0:04\n0:30-0:35\n", f); /* the second past the recording's end */
     fclose(f);
     clip_span_name(60, 240, span, sizeof span);
     snprintf(file, sizeof file, "%s/game-%s.mp4", rec_dir, span);
@@ -582,6 +582,9 @@ TEST(run_a_clip_cut_short_is_thrown_away_and_rendered_again) {
     mp4_info info;
     bool read = mp4_read_info(file, &info, err, sizeof err);
     int unfinished = files_in(rec_dir, ".mp4", true);
+    /* Once more: the first is skipped, and the export still isn't one that
+       wrote nothing. */
+    int skip_status = clip_recording("clips", play_dir, NULL, out[3], sizeof out[3]);
     test_remove_tree(rec_dir);
     test_remove_tree(play_dir);
     CHECK_EQ(rec_status, 0);
@@ -597,6 +600,11 @@ TEST(run_a_clip_cut_short_is_thrown_away_and_rendered_again) {
     CHECK(read);
     CHECK_EQ(info.video_frames, 180);
     CHECK_EQ(unfinished, 0);
+    CHECK_CONTAINS(out[2], "where the clip starts: nothing written");
+    CHECK_EQ(skip_status, 0);
+    CHECK_CONTAINS(out[3], "is in ");
+    CHECK_CONTAINS(out[3], "already: skipped");
+    CHECK_CONTAINS(out[3], "where the clip starts: nothing written");
 }
 
 /* The tick of mark n (from 1) where a run logged "<who>: mark <n> at tick",
