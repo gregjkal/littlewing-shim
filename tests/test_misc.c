@@ -225,12 +225,15 @@ TEST(misc_delay_and_tick_count_run_the_idle_hook) {
     misc_set_idle(count_idle);
     call_import("Delay", 2, 3u, 0u);
     int after_delay = idle_calls;
+    uint32_t t0 = misc_ticks();
     for (int i = 0; i < 1000; i++)
         call_import("TickCount", 0);
+    uint32_t ticks = misc_ticks() - t0; /* more than a couple on a busy machine */
     misc_set_idle(NULL);
     CHECK(after_delay >= 3); /* once per tick while waiting */
     CHECK(after_delay <= 5);
-    CHECK(idle_calls - after_delay <= 2); /* TickCount only when the tick changes */
+    /* TickCount only when the tick changes, not once per call */
+    CHECK(idle_calls - after_delay <= (int)ticks + 1);
 }
 
 /* Runs with the virtual clock; restores the real one afterwards. */
