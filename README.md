@@ -431,12 +431,28 @@ only new clips, and when there are none it exits at once. The skip goes by
 the name alone: to render a clip again, with other settings say, delete
 its file, and give each replay a `LOONY_CLIP_OUT` of its own. Each clip is
 written to a hidden file and renamed once it is finished, so an export
-that is stopped never leaves a clip that looks whole. Marks whose
+that is stopped never leaves a clip that looks whole. Ctrl-C, SIGTERM or
+SIGHUP removes that hidden file too, and the export exits with 128 plus
+the signal (130 for Ctrl-C, 143 for SIGTERM). Marks whose
 clips overlap, or come within a second of each other, share one clip. A
 replay with no marks is refused. When nothing is being recorded
 (outside a game when each game gets a file, with `LOONY_RECORD=0`, with
 `LOONY_FIXED_CLOCK=1`, or in a Loony Labyrinth other than 3.0.1, whose games
 can't be told apart), Cmd-S marks nothing and the title says so.
+
+For a program running an export, `LOONY_CLIP_PROGRESS=1` reports it on
+stdout, a whole line for each event (the log on stderr is unchanged, and
+without the setting nothing goes to stdout):
+
+| Line | When |
+| --- | --- |
+| `skipped <file>` | a clip whose file is there already |
+| `seek <tick> <target>` | replaying up to the next clip's start, on the game's clock in ticks, at most 4 a second |
+| `clip <k> <n> <frame> <frames>` | making clip k of the n left to render, frame of its frames written: at 0 and each time the percentage changes |
+| `wrote <file>` | a clip finished and in place |
+| `error <message>` | the export couldn't start (no `.clips` file, no marks, a bad setting) |
+
+`<file>` is the clip's file as the replay or `LOONY_CLIP_OUT` names it.
 
 To find a moment you didn't mark, watch the replay in a window, at the speed
 it was played and with its sound:

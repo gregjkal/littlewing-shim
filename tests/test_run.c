@@ -2,7 +2,10 @@
 
 #include <dirent.h>
 #include <math.h>
+#include <poll.h>
+#include <signal.h>
 #include <stdlib.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -660,6 +663,202 @@ TEST(run_marks_in_a_recording_become_clips) {
     CHECK_EQ(clips, 2);
     CHECK_EQ(unfinished, 0);
     CHECK(!strstr(out[1], "desync"));
+}
+
+static void run_loony_clipping_with_progress(void *unused) {
+    setenv("LOONY_CLIP_PROGRESS", "1", 1);
+    run_loony_clipping(unused);
+}
+
+/* Appends what fd has to buf (NUL-terminated, cut at cap - 1): false at
+   its end. */
+static bool read_into(int fd, char *buf, size_t cap, size_t *len) {
+    char tmp[4096];
+    ssize_t n = read(fd, tmp, sizeof tmp);
+    if (n <= 0)
+        return false;
+    size_t take = (size_t)n < cap - 1 - *len ? (size_t)n : cap - 1 - *len;
+    memcpy(buf + *len, tmp, take);
+    *len += take;
+    buf[*len] = '\0';
+    return true;
+}
+
+/* clip_recording with LOONY_CLIP_PROGRESS=1: its stdout (the progress) in
+   progress and its stderr in out. With stop_at, the export gets SIGTERM
+   once a progress line starts with it, and *hidden is then the number of
+   unfinished clips in hidden_dir. The status, or -1 if a signal killed it
+   (so 143 is the export's own exit after SIGTERM). */
+static int clip_with_progress(const char *span, const char *play_dir, const char *stop_at,
+                              const char *hidden_dir, int *hidden, char *progress, size_t pcap,
+                              char *out, size_t cap) {
+    clip_spec = span;
+    clip_path[0] = '\0';
+    snprintf(run_data, sizeof run_data, "%s/data-progress", play_dir);
+    int o[2], e[2];
+    if (pipe(o) != 0 || pipe(e) != 0)
+        return -2;
+    fflush(stdout);
+    fflush(stderr);
+    pid_t pid = fork();
+    if (pid == 0) {
+        dup2(o[1], STDOUT_FILENO);
+        dup2(e[1], STDERR_FILENO);
+        close(o[0]);
+        close(o[1]);
+        close(e[0]);
+        close(e[1]);
+        run_loony_clipping_with_progress(NULL);
+    }
+    close(o[1]);
+    close(e[1]);
+    progress[0] = out[0] = '\0';
+    size_t plen = 0, elen = 0;
+    bool stopped = false;
+    struct pollfd fds[2] = {{.fd = o[0], .events = POLLIN}, {.fd = e[0], .events = POLLIN}};
+    while (fds[0].fd >= 0 || fds[1].fd >= 0) {
+        if (poll(fds, 2, -1) < 0)
+            break;
+        for (int i = 0; i < 2; i++) {
+            if (fds[i].fd < 0 || !(fds[i].revents & (POLLIN | POLLHUP)))
+                continue;
+            bool more = i ? read_into(fds[i].fd, out, cap, &elen) : read_into(fds[i].fd, progress, pcap, &plen);
+            if (!more) {
+                close(fds[i].fd);
+                fds[i].fd = -1;
+            }
+        }
+        if (stop_at && !stopped) {
+            char line[128];
+            snprintf(line, sizeof line, "\n%s", stop_at);
+            if (strncmp(progress, stop_at, strlen(stop_at)) == 0 || strstr(progress, line)) {
+                *hidden = files_in(hidden_dir, ".mp4", true);
+                kill(pid, SIGTERM);
+                stopped = true;
+            }
+        }
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+    run_data[0] = '\0';
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+/* Whether each line of progress is one LOONY_CLIP_PROGRESS writes. */
+static bool progress_lines_are_whole(const char *progress) {
+    for (const char *p = progress; *p;) {
+        const char *nl = strchr(p, '\n');
+        if (!nl)
+            return false;
+        char line[1200], word[16];
+        unsigned a, b, c, d;
+        size_t len = (size_t)(nl - p) < sizeof line - 1 ? (size_t)(nl - p) : sizeof line - 1;
+        memcpy(line, p, len);
+        line[len] = '\0';
+        bool ok = (sscanf(line, "seek %u %u%15s", &a, &b, word) == 2) ||
+                  (sscanf(line, "clip %u %u %u %u%15s", &a, &b, &c, &d, word) == 4 && a >= 1 && a <= b &&
+                   c <= d) ||
+                  strncmp(line, "skipped /", 9) == 0 || strncmp(line, "wrote /", 7) == 0 ||
+                  strncmp(line, "error ", 6) == 0;
+        if (!ok) {
+            fprintf(stderr, "not a progress line: \"%s\"\n", line);
+            return false;
+        }
+        p = nl + 1;
+    }
+    return true;
+}
+
+/* LOONY_CLIP_PROGRESS=1 tells the program running an export what it is
+   doing, on stdout: why it couldn't start, the seek, each clip's frames and
+   file, and, exporting again, the clips it skips. */
+TEST(run_an_export_reports_its_progress) {
+    SKIP_UNLESS_GAME();
+    char rec_dir[1024], play_dir[1024], list[1100], files[2][1100], want[6][2400];
+    static char progress[3][65536], out[4][32768];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    int rec_status = record_for_clips(rec_dir, "330 quit\n", out[0], sizeof out[0]);
+    int no_list_status = clip_with_progress("clips", play_dir, NULL, NULL, NULL, progress[0],
+                                            sizeof progress[0], out[1], sizeof out[1]);
+    snprintf(list, sizeof list, "%s/game.clips", rec_dir);
+    FILE *f = fopen(list, "w");
+    fputs("0:01-0:02\n0:03-0:04\n", f);
+    fclose(f);
+    snprintf(files[0], sizeof files[0], "%s/game-0m01-0m02.mp4", rec_dir);
+    snprintf(files[1], sizeof files[1], "%s/game-0m03-0m04.mp4", rec_dir);
+    int status = clip_with_progress("clips", play_dir, NULL, NULL, NULL, progress[1], sizeof progress[1],
+                                    out[2], sizeof out[2]);
+    int again_status = clip_with_progress("clips", play_dir, NULL, NULL, NULL, progress[2],
+                                          sizeof progress[2], out[3], sizeof out[3]);
+    int clips = files_in(rec_dir, ".mp4", false);
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    snprintf(want[0], sizeof want[0], "error can't read the clips of %s/game.lwreplay from %s", rec_dir, list);
+    snprintf(want[1], sizeof want[1], "clip 1 2 0 60\n");
+    snprintf(want[2], sizeof want[2], "clip 1 2 60 60\nwrote %s\n", files[0]);
+    snprintf(want[3], sizeof want[3], "clip 2 2 0 60\n");
+    snprintf(want[4], sizeof want[4], "clip 2 2 60 60\nwrote %s\n", files[1]);
+    snprintf(want[5], sizeof want[5], "skipped %s\nskipped %s\n", files[0], files[1]);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(no_list_status, 1);
+    CHECK_CONTAINS(progress[0], want[0]);
+    CHECK(progress_lines_are_whole(progress[0]));
+    CHECK_EQ(status, 0);
+    CHECK(progress_lines_are_whole(progress[1]));
+    CHECK(strncmp(progress[1], "seek ", 5) == 0);
+    for (int i = 1; i <= 4; i++)
+        CHECK_CONTAINS(progress[1], want[i]);
+    CHECK(strstr(progress[1], want[2]) < strstr(progress[1], want[3]));
+    CHECK_EQ(count_of(progress[1], "\nclip 1 2 "), 61); /* 0, then each frame's new percent */
+    CHECK(!strstr(progress[1], "skipped"));
+    CHECK(!strstr(out[2], "clip 1 2")); /* the log is as it was */
+    CHECK_EQ(again_status, 0);
+    CHECK_STR(progress[2], want[5]);
+    CHECK_EQ(clips, 2);
+}
+
+/* An export stopped by SIGTERM (or SIGINT, SIGHUP) takes the clip it was
+   writing with it, hidden file and all, and exits 128 plus the signal, so
+   the next export renders that clip in full. */
+TEST(run_an_export_stopped_by_a_signal_leaves_nothing_behind) {
+    SKIP_UNLESS_GAME();
+    char rec_dir[1024], play_dir[1024], list[1100], file[1100], want[1300], err[256] = "";
+    static char progress[2][65536], out[3][32768];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    int rec_status = record_for_clips(rec_dir, "330 quit\n", out[0], sizeof out[0]);
+    snprintf(list, sizeof list, "%s/game.clips", rec_dir);
+    FILE *f = fopen(list, "w");
+    fputs("0:01-0:04\n", f);
+    fclose(f);
+    snprintf(file, sizeof file, "%s/game-0m01-0m04.mp4", rec_dir);
+    int hidden_at_stop = -1;
+    int stopped_status = clip_with_progress("clips", play_dir, "clip 1 1 90 ", rec_dir, &hidden_at_stop,
+                                            progress[0], sizeof progress[0], out[1], sizeof out[1]);
+    int hidden = files_in(rec_dir, ".mp4", true), written = files_in(rec_dir, ".mp4", false);
+    int again_status = clip_with_progress("clips", play_dir, NULL, NULL, NULL, progress[1], sizeof progress[1],
+                                          out[2], sizeof out[2]);
+    mp4_info info;
+    bool read = mp4_read_info(file, &info, err, sizeof err);
+    int hidden_after = files_in(rec_dir, ".mp4", true);
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    snprintf(want, sizeof want, "clip 1 1 180 180\nwrote %s\n", file);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(stopped_status, 143);
+    CHECK_EQ(hidden_at_stop, 1);
+    CHECK(!strstr(progress[0], "wrote"));
+    CHECK_EQ(hidden, 0);
+    CHECK_EQ(written, 0);
+    CHECK_EQ(again_status, 0);
+    CHECK(!strstr(progress[1], "skipped"));
+    CHECK_CONTAINS(progress[1], want);
+    if (!read)
+        fprintf(stderr, "%s: %s\n", file, err);
+    CHECK(read);
+    CHECK_EQ(info.video_frames, 180);
+    CHECK_EQ(hidden_after, 0);
 }
 
 static void run_loony_watching(void *unused) {

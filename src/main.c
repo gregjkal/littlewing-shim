@@ -111,7 +111,8 @@ static void present_frame(void) {
         display_present();
 }
 
-/* An error before the game starts: printed, and shown when running as the app. */
+/* An error before the game starts: printed, and shown when running as the
+   app or reported to the program running an export (clip_progress_error). */
 static int startup_error(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static int startup_error(const char *fmt, ...) {
     char msg[2048];
@@ -120,6 +121,7 @@ static int startup_error(const char *fmt, ...) {
     vsnprintf(msg, sizeof msg, fmt, ap);
     va_end(ap);
     fprintf(stderr, "loony: %s\n", msg);
+    clip_progress_error(msg);
     util_report_failure(msg);
     return 1;
 }

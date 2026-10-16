@@ -35,14 +35,29 @@
    when it is finished, so one cut short never passes for a whole one. A
    clip the recording ends inside keeps what there is, even when the replay
    fails there as the recording did; one cut short before the recording's
-   end (a desync, a failure, LOONY_EXIT_AFTER) is thrown away.
+   end (a desync, a failure, LOONY_EXIT_AFTER) is thrown away. SIGTERM,
+   SIGINT or SIGHUP removes the hidden file and exits with 128 plus the
+   signal (143 for SIGTERM).
 
    The picture is the window's: in HD mode (hd.h) the HD frame, at 2x unless
    LOONY_HD_SCALE says otherwise, scaled down to CLIP_HD_WIDTH pixels wide;
    else the 800x600 screen. LOONY_CLIP_WIDTH sets the width instead (the
    height follows), but a picture is never scaled up. The video is
    H.264 at LOONY_CLIP_QUALITY (above 0, at most 1; CLIP_QUALITY by default), or at
-   LOONY_CLIP_KBPS kbit/s on average instead; the sound is AAC at 160 kbit/s. */
+   LOONY_CLIP_KBPS kbit/s on average instead; the sound is AAC at 160 kbit/s.
+
+   LOONY_CLIP_PROGRESS=1 reports the export on stdout for a program running
+   it, a line for each event, each written whole:
+     skipped <file>               a clip whose file is there already
+     seek <tick> <target>         replaying, at most 4 a second, on the
+                                  game's clock, up to the next clip's start
+     clip <k> <n> <frame> <frames>  making clip k of the n to render (from
+                                  1), frame of its frames written, at 0 and
+                                  each time the percentage changes
+     wrote <file>                 a clip finished and renamed into place
+     error <message>              an error before the game starts
+   <file> is the clip's file as LOONY_CLIP_OUT or the replay names it (so
+   relative when that is). Without it, nothing is written to stdout. */
 
 #define CLIP_FPS 60
 /* 4/5 of HD at 2x (1280x960): the 1600x1200 picture was more than a phone
@@ -131,3 +146,25 @@ void clip_present(bool dirty);
 /* The mixer's output, in order from launch (sound_set_tap): keeps what falls
    in the clip. */
 void clip_sound(const int16_t *samples, uint32_t frames);
+
+/* LOONY_CLIP_PROGRESS's lines, without writing them: what (skipped, wrote,
+   error) and text, the text's line breaks made spaces and the text cut
+   short if it doesn't fit; seek and clip with their numbers. Each ends in a
+   line break. The length, or 0 if cap can't hold even what and the break. */
+size_t clip_progress_text(const char *what, const char *text, char *buf, size_t cap);
+size_t clip_progress_seek(uint32_t tick, uint32_t target, char *buf, size_t cap);
+size_t clip_progress_clip(size_t k, size_t n, uint64_t frame, uint64_t frames, char *buf, size_t cap);
+
+/* Whether a clip line is due for frame of frames: at frame 0, and when the
+   whole percentage differs from *percent, which then becomes it. */
+bool clip_progress_frame_due(uint64_t frame, uint64_t frames, int *percent);
+
+/* Whether a seek line is due now (in seconds): the first, and each
+   CLIP_PROGRESS_SEEK_EVERY after the last (*last, which then becomes now;
+   start it below 0). */
+#define CLIP_PROGRESS_SEEK_EVERY 0.25
+bool clip_progress_seek_due(double now, double *last);
+
+/* With LOONY_CLIP_PROGRESS=1, writes msg as an error line, for a parent to
+   show: for errors before the game starts. */
+void clip_progress_error(const char *msg);
