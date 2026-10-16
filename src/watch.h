@@ -12,8 +12,18 @@
      Right, Left   faster or slower: 1x, 2x, 4x, 8x, as fast as it can
      I, O          the start and end of a clip; O saves it
      J, L          back or ahead 10 seconds (Shift: a minute)
+     E             export the clips (LOONY_CLIP=clips, export.h)
+     Esc           cancel the export
 
    The window's title says the game's time and the speed. Only 1x has sound.
+
+   Exporting runs in a second copy of this program while the viewer goes on,
+   one export at a time, and the title says how far it has got. Once it is
+   done, Finder shows the clips it wrote (or, when every clip was there
+   already, those), next to the recording. The Replay menu (menu.h) exports
+   the clips or the marks, and cancels. Going back takes the export through
+   the restart (LOONY_WATCH_EXPORT and LOONY_WATCH_EXPORT_SAID, export.h);
+   quitting stops it, which removes its unfinished file.
 
    Pacing: the replay's clock never runs ahead of the wall clock times the
    speed. When it falls more than WATCH_MAX_LAG behind (HD at 8x, or the
@@ -33,7 +43,8 @@
    start not yet ended; the restart sets them, and drops LOONY_SCRIPT, whose
    actions would come again. At the
    replay's end, or when the game quits, the last frame stays up until the
-   window is closed (unless SDL_VIDEO_DRIVER=dummy, where it exits). */
+   window is closed (unless SDL_VIDEO_DRIVER=dummy, where it exits once an
+   export has finished). */
 
 #define WATCH_MAX_LAG 0.1 /* seconds */
 #define WATCH_STEP_TICKS 600        /* J and L: 10 s */
@@ -56,6 +67,21 @@ void watch_start(const char *title, void (*restart)(void));
    replay). */
 void watch_key(int scancode, bool down, bool repeat);
 
+/* Exports the watched recording's clips (or its marks, if marks), unless
+   an export is running already, or there are no clips: the title says why
+   not. */
+void watch_export(bool marks);
+
+/* Cancels the running export, if there is one. */
+void watch_cancel_export(void);
+
+/* Whether an export is running. */
+bool watch_exporting(void);
+
+/* Stops the running export, if there is one, and waits a moment for it to
+   end: before the program quits or restarts for something else. */
+void watch_stop_export(void);
+
 /* The event pump's present, in place of the window's: dirty if the screen
    changed since the last one. Draws at most once a frame of wall clock,
    and a few times a second while going to a time. */
@@ -63,7 +89,7 @@ void watch_present(bool dirty);
 
 /* The replay reached its end, or the game quit: keeps the window up until
    it is closed, or a key goes back. Returns at once unless watching, and
-   when SDL_VIDEO_DRIVER=dummy. */
+   when SDL_VIDEO_DRIVER=dummy once no export is running. */
 void watch_hold(void);
 
 /* For tests: forget everything. */

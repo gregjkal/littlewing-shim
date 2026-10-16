@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,6 +51,9 @@ static struct {
     uint32_t next;     /* the next tick to add a frame for */
     bool changed;      /* the screen changed since the last frame */
     uint64_t frames;   /* frames added */
+    uint64_t total;    /* of the clip's frames */
+    int percent;       /* of them, as the last progress line said */
+    double seek_said;  /* when the last seek line was, or below 0 */
     uint64_t rendered; /* sound frames the mixer has rendered since launch */
     /* Sound in the clip that came before the file was opened (the pump
        renders sound before it presents). */
@@ -256,6 +260,128 @@ static double since_launch(void) {
     return (double)(now.tv_sec - C.t0.tv_sec) + (now.tv_nsec - C.t0.tv_nsec) / 1e9;
 }
 
+/* ---- progress (LOONY_CLIP_PROGRESS) ---- */
+
+size_t clip_progress_text(const char *what, const char *text, char *buf, size_t cap) {
+    size_t w = strlen(what), n = strlen(text);
+    if (cap < w + 3)
+        return 0;
+    if (n > cap - w - 3)
+        n = cap - w - 3;
+    memcpy(buf, what, w);
+    buf[w] = ' ';
+    for (size_t i = 0; i < n; i++)
+        buf[w + 1 + i] = text[i] == '\n' || text[i] == '\r' ? ' ' : text[i];
+    buf[w + 1 + n] = '\n';
+    buf[w + 2 + n] = '\0';
+    return w + 2 + n;
+}
+
+/* snprintf's length, or 0 if it didn't fit. */
+static size_t fitted(int n, size_t cap) { return n > 0 && (size_t)n < cap ? (size_t)n : 0; }
+
+size_t clip_progress_seek(uint32_t tick, uint32_t target, char *buf, size_t cap) {
+    return fitted(snprintf(buf, cap, "seek %u %u\n", tick, target), cap);
+}
+
+size_t clip_progress_clip(size_t k, size_t n, uint64_t frame, uint64_t frames, char *buf, size_t cap) {
+    return fitted(snprintf(buf, cap, "clip %zu %zu %llu %llu\n", k, n, (unsigned long long)frame,
+                           (unsigned long long)frames),
+                  cap);
+}
+
+bool clip_progress_frame_due(uint64_t frame, uint64_t frames, int *percent) {
+    int now = frames ? (int)(frame >= frames ? 100 : frame * 100 / frames) : 100;
+    if (frame && now == *percent)
+        return false;
+    *percent = now;
+    return true;
+}
+
+bool clip_progress_seek_due(double now, double *last) {
+    if (*last >= 0 && now - *last < CLIP_PROGRESS_SEEK_EVERY)
+        return false;
+    *last = now;
+    return true;
+}
+
+/* 1 when LOONY_CLIP_PROGRESS=1 and no write of it has failed, 0 when not,
+   -1 until it is read. A parent that goes away must not take the export
+   with it, so SIGPIPE is ignored from then on. */
+static int progress = -1;
+
+static bool progress_on(void) {
+    if (progress < 0) {
+        const char *v = getenv("LOONY_CLIP_PROGRESS");
+        progress = v && strcmp(v, "1") == 0;
+        if (progress)
+            signal(SIGPIPE, SIG_IGN);
+    }
+    return progress;
+}
+
+/* Writes a line in one write, so a reader never sees half of one; the first
+   that fails ends the progress, not the export. */
+static void say(const char *line, size_t len) {
+    if (!len || !progress_on())
+        return;
+    ssize_t n;
+    do
+        n = write(STDOUT_FILENO, line, len);
+    while (n < 0 && errno == EINTR);
+    if (n != (ssize_t)len)
+        progress = 0;
+}
+
+static void say_text(const char *what, const char *text) {
+    if (!progress_on())
+        return;
+    char line[PATH_MAX + 64];
+    say(line, clip_progress_text(what, text, line, sizeof line));
+}
+
+void clip_progress_error(const char *msg) { say_text("error", msg); }
+
+/* A clip line for the clip being made, when one is due. */
+static void say_frames(void) {
+    if (!progress_on() || !clip_progress_frame_due(C.frames, C.total, &C.percent))
+        return;
+    char line[128];
+    say(line, clip_progress_clip(C.clip + 1, C.nspans, C.frames, C.total, line, sizeof line));
+}
+
+/* ---- the file ---- */
+
+/* Set while the clip's hidden file (C.part) may be on disk, for a signal
+   that stops the export to remove it. C.part changes only while it is
+   clear. It stays set through the rename: removing a name that is gone is
+   harmless, while clearing it first would leave the file if the signal
+   came between. */
+static volatile sig_atomic_t part_on_disk;
+
+static void set_part_on_disk(bool on) { __atomic_store_n(&part_on_disk, on, __ATOMIC_SEQ_CST); }
+
+/* SIGTERM, SIGINT or SIGHUP: no clip is left half written, hidden or not.
+   Only what is safe in a handler. */
+static void stopped(int sig) {
+    if (__atomic_load_n(&part_on_disk, __ATOMIC_SEQ_CST))
+        unlink(C.part);
+    _exit(128 + sig);
+}
+
+static void stop_on_signals(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = stopped;
+    sigemptyset(&sa.sa_mask);
+    sigaddset(&sa.sa_mask, SIGTERM);
+    sigaddset(&sa.sa_mask, SIGINT);
+    sigaddset(&sa.sa_mask, SIGHUP);
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGHUP, &sa, NULL);
+}
+
 static void open_file(void) {
     qd_pixels px;
     qd_palette pal;
@@ -277,9 +403,13 @@ static void open_file(void) {
                       .rate = MIX_RATE,
                       .audio_kbps = CLIP_AUDIO_KBPS};
     char err[256], a[32], how[96], size[64];
+    set_part_on_disk(true);
     C.mp4 = mp4_open(C.part, &s, err, sizeof err);
-    if (!C.mp4)
+    if (!C.mp4) {
+        unlink(C.part);
+        set_part_on_disk(false);
         fatal("clip: can't write %s: %s", C.out, err);
+    }
     if (mp4_at_quality(C.mp4))
         snprintf(how, sizeof how, "quality %.2f", s.quality);
     else
@@ -297,6 +427,7 @@ static void open_file(void) {
     free(C.early);
     C.early = NULL;
     C.early_frames = C.early_cap = 0;
+    say_frames();
 }
 
 /* Finishes the file. False if it couldn't be written. */
@@ -309,6 +440,7 @@ static bool finish(void) {
     if (!mp4_close(f, err, sizeof err)) {
         log_msg("clip: can't write %s: %s", C.out, err);
         unlink(C.part);
+        set_part_on_disk(false);
         return false;
     }
     struct stat st;
@@ -316,8 +448,11 @@ static bool finish(void) {
     if (rename(C.part, C.out) != 0) {
         log_msg("clip: can't move %s to %s: %s", C.part, C.out, strerror(errno));
         unlink(C.part);
+        set_part_on_disk(false);
         return false;
     }
+    set_part_on_disk(false);
+    say_text("wrote", C.out);
     log_msg("clip: wrote %s-%s to %s: %llu frames, %.1f MB, %.1f s after launch",
             clip_format_time(C.spans[C.clip].start, a, sizeof a),
             clip_format_time(C.spans[C.clip].start + (uint32_t)C.frames, b, sizeof b),
@@ -358,6 +493,9 @@ static void begin_piece(size_t i) {
     C.next = C.start;
     if (first) {
         C.frames = 0;
+        C.total = 0;
+        for (size_t k = i; k < C.npieces && C.pieces[k].clip == p->clip; k++)
+            C.total += C.pieces[k].end - C.pieces[k].start;
         C.changed = false;
         file_of(p->clip, C.out, sizeof C.out); /* clip_open checked it fits */
         part_of(C.out, C.part, sizeof C.part);
@@ -371,6 +509,7 @@ static void discard(char *err, size_t cap) {
     C.mp4 = NULL;
     mp4_close(f, err, cap);
     unlink(C.part);
+    set_part_on_disk(false);
 }
 
 /* The program exited before the clip's end: what there is is kept when the
@@ -462,6 +601,7 @@ static void add_frame(uint32_t tick, bool now) {
     if (!mp4_video(C.mp4, rgba, (int64_t)(tick - C.start + C.at)))
         write_failed();
     C.frames++;
+    say_frames();
 }
 
 /* The tick of the clock as the game last read it (reading it again would be
@@ -491,6 +631,10 @@ void clip_present(bool dirty) {
                 log_msg("clip: replaying, at %s of %s on the game's clock after %.1f s",
                         clip_format_time(t, a, sizeof a), clip_format_time(C.start, b, sizeof b),
                         since_launch());
+            }
+            if (!C.mp4 && progress_on() && clip_progress_seek_due(since_launch(), &C.seek_said)) {
+                char line[64];
+                say(line, clip_progress_seek(t, C.start, line, sizeof line));
             }
             return; /* before the clip, or where it leaves out a pause */
         }
@@ -629,6 +773,7 @@ static void skip_written(void) {
         if (access(path, F_OK) == 0) {
             log_msg("clip: %s-%s is in %s already: skipped", clip_format_time(C.spans[i].start, a, sizeof a),
                     clip_format_time(C.spans[i].end, b, sizeof b), path);
+            say_text("skipped", path);
             C.wrote = true;
             continue;
         }
@@ -861,9 +1006,11 @@ bool clip_open(char *err, size_t errlen) {
     }
     begin_piece(0);
     C.on = true;
+    C.seek_said = -1;
     clock_gettime(CLOCK_MONOTONIC, &C.t0);
     sound_set_tap(clip_sound);
     atexit(finish_at_exit);
+    stop_on_signals();
     for (size_t i = 0; i < C.nspans; i++) {
         const clip_span *c = &C.spans[i];
         file_of(i, path, sizeof path);

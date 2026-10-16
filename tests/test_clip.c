@@ -155,6 +155,56 @@ TEST(clip_default_bitrate_grows_with_the_picture) {
     CHECK(clip_default_kbps(16, 16) >= 100);
 }
 
+/* LOONY_CLIP_PROGRESS's lines are whole, one to an event, and say a
+   path or message as it is, but on one line. */
+TEST(clip_progress_lines_are_whole_lines) {
+    char buf[64];
+    CHECK_EQ(clip_progress_text("wrote", "/tmp/a b/game-0m01-0m04.mp4", buf, sizeof buf), 34);
+    CHECK_STR(buf, "wrote /tmp/a b/game-0m01-0m04.mp4\n");
+    CHECK_EQ(clip_progress_text("error", "no clips\nin game.clips\r", buf, sizeof buf), 30);
+    CHECK_STR(buf, "error no clips in game.clips \n");
+    CHECK_EQ(clip_progress_text("skipped", "abcdefghij", buf, 12), 11);
+    CHECK_STR(buf, "skipped ab\n");
+    CHECK_EQ(clip_progress_text("skipped", "abc", buf, 9), 0);
+    CHECK_EQ(clip_progress_seek(1234, 34800, buf, sizeof buf), 16);
+    CHECK_STR(buf, "seek 1234 34800\n");
+    CHECK_EQ(clip_progress_clip(2, 3, 90, 180, buf, sizeof buf), 16);
+    CHECK_STR(buf, "clip 2 3 90 180\n");
+    CHECK_EQ(clip_progress_clip(2, 3, 90, 180, buf, 10), 0);
+}
+
+/* A clip line comes at the first frame and each time the percentage
+   changes, so a long clip says no more than a short one; a seek line
+   comes at most CLIP_PROGRESS_SEEK_EVERY. */
+TEST(clip_progress_lines_are_rate_limited) {
+    int percent = 50, lines = 0;
+    for (uint64_t f = 0; f <= 18000; f++)
+        lines += clip_progress_frame_due(f, 18000, &percent);
+    CHECK_EQ(lines, 101);
+    CHECK_EQ(percent, 100);
+    percent = 100;
+    CHECK(clip_progress_frame_due(0, 18000, &percent)); /* the next clip's first frame */
+    CHECK_EQ(percent, 0);
+    CHECK(!clip_progress_frame_due(179, 18000, &percent));
+    CHECK(clip_progress_frame_due(180, 18000, &percent));
+    CHECK_EQ(percent, 1);
+    lines = 0;
+    percent = 0;
+    for (uint64_t f = 0; f <= 30; f++) /* fewer frames than percents: each one */
+        lines += clip_progress_frame_due(f, 30, &percent);
+    CHECK_EQ(lines, 31);
+    double last = -1;
+    CHECK(clip_progress_seek_due(0.0, &last));
+    CHECK(!clip_progress_seek_due(0.1, &last));
+    CHECK(!clip_progress_seek_due(0.24, &last));
+    CHECK(clip_progress_seek_due(0.25, &last));
+    lines = 0;
+    last = -1;
+    for (int ms = 0; ms < 3000; ms++)
+        lines += clip_progress_seek_due(ms / 1000.0, &last);
+    CHECK(lines >= 10 && lines <= 12);
+}
+
 static void tmp_mp4(char *path, size_t cap) {
     const char *t = getenv("TMPDIR");
     snprintf(path, cap, "%s/loony-clip-XXXXXX.mp4", t && *t ? t : "/tmp");

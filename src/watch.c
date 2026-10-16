@@ -3,15 +3,20 @@
 #include <SDL3/SDL.h>
 #include <errno.h>
 #include <limits.h>
+#include <mach-o/dyld.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "clip.h"
 #include "display.h"
+#include "export.h"
 #include "hd.h"
+#include "menu.h"
 #include "qd.h"
 #include "replay.h"
 #include "sound.h"
@@ -35,6 +40,11 @@ static const int speeds[] = {1, 2, 4, 8, 0};
 /* While waiting (paused, held at the end, or a wait longer than this): how
    often the window is polled, in seconds. */
 #define IDLE_GAP 0.01
+/* While exporting: how often what the export says is read, and the title
+   shows it, in seconds. */
+#define EXPORT_POLL_GAP 0.25
+/* How long the viewer waits, quitting, for the export it stops. */
+#define EXPORT_STOP_WAIT 2.0
 
 static struct {
     bool on, started, at_end;
@@ -48,6 +58,8 @@ static struct {
     bool have_in;
     uint32_t in;
     char list[PATH_MAX]; /* the clips' list */
+    char replay[PATH_MAX]; /* the recording, as an absolute path, for an export */
+    double export_polled; /* the wall clock when the export was last read */
     /* Times shown and keyed (from, in, the list) are in play time; the
        replay's own clock is clock_us (replay_play_us maps one to the
        other). */
@@ -91,7 +103,10 @@ static const char *fmt_seconds(uint32_t ticks, char *buf, size_t cap) {
 
 /* ---- the window ---- */
 
-static void update_title(void) {
+static void tend_export(void);
+
+/* Sets the title to what it says now. */
+static void set_title(void) {
     char text[sizeof W.text], t[32], u[32], in[48] = "";
     const char *title = W.title ? W.title : "LittleWing";
     fmt_seconds(now_tick(), t, sizeof t);
@@ -113,10 +128,21 @@ static void update_title(void) {
         snprintf(text, sizeof text, "%s: %s at %dx%s", title, t, speeds[W.speed], in);
     else
         snprintf(text, sizeof text, "%s: %s, fastest%s", title, t, in);
+    if (export_running()) {
+        char exporting[96];
+        size_t len = strlen(text);
+        export_title(export_now(), exporting, sizeof exporting);
+        snprintf(text + len, sizeof text - len, "%s", exporting);
+    }
     if (strcmp(text, W.text) != 0) {
         snprintf(W.text, sizeof W.text, "%s", text);
         display_set_title(W.text);
     }
+}
+
+static void update_title(void) {
+    tend_export();
+    set_title();
 }
 
 static void flash(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -315,6 +341,9 @@ static _Noreturn void go_back(uint32_t tick) {
     }
     unsetenv("LOONY_SCRIPT");
     sound_monitor(false);
+    if (export_running())
+        log_msg("watch: the export goes on through the restart");
+    export_pass_on();
     W.restart();
     fatal("watch: can't restart to go back");
 }
@@ -385,6 +414,107 @@ static void save_clip(void) {
     flash("clip %d saved: %s-%s", n, a, b);
 }
 
+/* ---- exporting (export.h) ---- */
+
+static const char *export_what(export_kind kind) { return kind == EXPORT_MARKS ? "marks" : "clips"; }
+
+/* Shows each file in Finder, selected. */
+static void reveal(char *const *files, size_t n) {
+    for (size_t i = 0; i < n; i++)
+        log_msg("watch: revealing %s", files[i]);
+    menu_reveal((const char *const *)files, n);
+}
+
+/* The export ended with status: says how, and shows what it wrote. */
+static void export_ended(int status) {
+    const export_progress *p = export_now();
+    set_title(); /* without the progress, which the flash would repeat */
+    if (export_cancelled() && status == 128 + SIGTERM) {
+        log_msg("watch: export cancelled");
+        flash("export cancelled");
+    } else if (status == 0 && p->nwrote) {
+        log_msg("watch: exported %zu clip%s", p->nwrote, p->nwrote == 1 ? "" : "s");
+        flash("exported %zu clip%s", p->nwrote, p->nwrote == 1 ? "" : "s");
+        reveal(p->wrote, p->nwrote);
+    } else if (status == 0 && p->nskipped) {
+        log_msg("watch: the %zu clip%s exported already", p->nskipped,
+                p->nskipped == 1 ? " is" : "s are");
+        flash("clips are exported already");
+        reveal(p->skipped, p->nskipped);
+    } else if (p->error[0]) {
+        log_msg("watch: can't export: %s", p->error);
+        flash("%s", p->error);
+    } else if (status == CLIP_NOTHING_STATUS) {
+        log_msg("watch: export: the recording ends before the clip starts, nothing written");
+        flash("the recording ends before the clip starts: nothing exported");
+    } else {
+        log_msg("watch: export failed (status %d)", status);
+        flash("export failed (status %d), see the log", status);
+    }
+}
+
+/* A few times a second while exporting: reads what the export said, and
+   says how it ended once it has. */
+static void tend_export(void) {
+    if (!export_running())
+        return;
+    double now = wall();
+    if (now - W.export_polled < EXPORT_POLL_GAP)
+        return;
+    W.export_polled = now;
+    int status;
+    if (export_poll(&status))
+        export_ended(status);
+}
+
+void watch_export(bool marks) {
+    if (!W.started)
+        return;
+    export_kind kind = marks ? EXPORT_MARKS : EXPORT_CLIPS;
+    if (export_running()) {
+        flash("already exporting: Esc cancels it");
+        return;
+    }
+    if (kind == EXPORT_CLIPS && (access(W.list, F_OK) != 0 || clips_in_list() == 0)) {
+        log_msg("watch: no clips to export in %s", W.list);
+        flash("no clips to export: I marks where one starts, O where it ends");
+        return;
+    }
+    char self[PATH_MAX], err[PATH_MAX + 64];
+    uint32_t size = sizeof self;
+    bool found = _NSGetExecutablePath(self, &size) == 0;
+    if (!found)
+        snprintf(err, sizeof err, "can't find this program");
+    if (!found || !export_start(self, kind, W.replay, err, sizeof err)) {
+        log_msg("watch: can't export: %s", err);
+        flash("can't export: %s", err);
+        return;
+    }
+    log_msg("watch: exporting the %s of %s", export_what(kind), W.replay);
+    W.export_polled = wall();
+    update_title();
+}
+
+void watch_cancel_export(void) {
+    if (!export_running() || export_cancelled())
+        return;
+    log_msg("watch: cancelling the export");
+    export_cancel();
+}
+
+bool watch_exporting(void) { return export_running(); }
+
+void watch_stop_export(void) {
+    if (!export_running())
+        return;
+    log_msg("watch: stopping the export");
+    int status;
+    if (export_stop(EXPORT_STOP_WAIT, &status))
+        log_msg("watch: the export stopped (status %d)", status);
+    else
+        log_msg("watch: the export hasn't stopped after %.0f s", EXPORT_STOP_WAIT);
+}
+
 void watch_key(int scancode, bool down, bool repeat) {
     if (!W.started || !down)
         return;
@@ -429,6 +559,14 @@ void watch_key(int scancode, bool down, bool repeat) {
     case SDL_SCANCODE_L:
         step_by(step);
         break;
+    case SDL_SCANCODE_E:
+        if (!repeat)
+            watch_export(false);
+        break;
+    case SDL_SCANCODE_ESCAPE:
+        if (!repeat)
+            watch_cancel_export();
+        break;
     default:
         break;
     }
@@ -453,6 +591,17 @@ static bool env_number(const char *name, uint32_t max, uint32_t dflt, uint32_t *
     }
     *out = (uint32_t)v;
     return true;
+}
+
+/* Quitting: nothing outlives the viewer. */
+static void stop_export_at_exit(void) { watch_stop_export(); }
+
+/* From now on, an exit stops the export: once is enough. */
+static void stop_export_on_exit(void) {
+    static bool set;
+    if (!set)
+        atexit(stop_export_at_exit);
+    set = true;
 }
 
 bool watch_open(char *err, size_t errlen) {
@@ -491,6 +640,20 @@ bool watch_open(char *err, size_t errlen) {
         snprintf(err, errlen, "LOONY_REPLAY is longer than %d characters", PATH_MAX - 16);
         return false;
     }
+    /* Absolute, so the export names its files that way, but not resolved:
+       they are named as the viewer names the recording. */
+    char cwd[PATH_MAX];
+    if (replay[0] != '/' && getcwd(cwd, sizeof cwd))
+        snprintf(W.replay, sizeof W.replay, "%s/%s", cwd, replay);
+    else
+        snprintf(W.replay, sizeof W.replay, "%s", replay);
+    char why[512];
+    if (!export_take_up(why, sizeof why))
+        log_msg("watch: %s", why);
+    else if (export_running()) {
+        log_msg("watch: the export of the %s goes on", export_what(export_running_kind()));
+        stop_export_on_exit(); /* even if the restart fails before watch_start */
+    }
     W.on = true;
     return true;
 }
@@ -513,6 +676,7 @@ void watch_start(const char *title, void (*restart)(void)) {
     display_raise_on_open();
     sound_open_monitor();
     atexit(log_at_exit);
+    stop_export_on_exit();
     char t[32], speed[32];
     if (speeds[W.speed])
         snprintf(speed, sizeof speed, "at %dx", speeds[W.speed]);
@@ -529,8 +693,13 @@ void watch_hold(void) {
     if (!W.started || W.at_end)
         return;
     const char *video = getenv("SDL_VIDEO_DRIVER");
-    if (video && strcmp(video, "dummy") == 0) /* headless: nobody to close the window */
+    if (video && strcmp(video, "dummy") == 0) { /* headless: nobody to close the window */
+        if (export_running())
+            log_msg("watch: the end: waiting for the export");
+        while (export_running()) /* so a scripted run ends with it done */
+            idle();
         return;
+    }
     if (!W.skipping) /* else logged as it began */
         log_run("the last stretch");
     W.at_end = true;
