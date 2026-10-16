@@ -1025,13 +1025,16 @@ void replay_finish(void) {
             log_msg("replay: recorded %llu steps", (unsigned long long)R.step);
         }
     } else if (R.mode == PLAYING) {
-        if (R.next.kind == REPLAY_END && R.next.step == R.step)
+        /* The game quit where it did when it was recorded. */
+        if (R.next.kind == REPLAY_END && R.next.step == R.step) {
+            R.reached_end = true;
             log_msg("replay: reached %s at step %llu (tick %u), %u frames checked, no desync",
                     R.cut_short ? "where the recording was cut short" : "the end of the recording",
                     (unsigned long long)R.step, tick(), R.frames_checked);
-        else
+        } else {
             log_msg("replay: stopped at step %llu (tick %u), before the end of the recording",
                     (unsigned long long)R.step, tick());
+        }
     }
     R.mode = OFF;
 }

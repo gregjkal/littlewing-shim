@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "clip.h"
@@ -79,6 +80,27 @@ TEST(clip_times_read_back_as_written) {
     CHECK(all);
     CHECK_STR(clip_format_time(3600 * 60 + 61, a, sizeof a), "1:00:01.01");
     CHECK_STR(clip_format_time(600, a, sizeof a), "0:10");
+}
+
+/* A clip's file is named for its span, with no colons in it, and no two
+   spans share a name. */
+TEST(clip_span_names_are_times_without_colons) {
+    char a[64], b[64];
+    CHECK_STR(clip_span_name(178 * 60, 200 * 60, a, sizeof a), "2m58-3m20");
+    CHECK_STR(clip_span_name(339, 429, a, sizeof a), "0m05.65-0m07.15");
+    CHECK_STR(clip_span_name(3600 * 60 + 61, 3605 * 60, a, sizeof a), "1h00m01.01-1h00m05");
+    CHECK_STR(clip_span_name(0, 600, a, sizeof a), "0m00-0m10");
+    bool distinct = true;
+    for (uint32_t t = 0; t < 2 * 3600 * 60; t += t < 7200 ? 1 : 997) {
+        clip_span_name(t, t + 1, a, sizeof a);
+        clip_span_name(t + 1, t + 2, b, sizeof b);
+        if (strcmp(a, b) == 0 || strchr(a, ':') || strchr(a, '/')) {
+            fprintf(stderr, "%u: %s\n", t, a);
+            distinct = false;
+        }
+    }
+    CHECK(distinct);
+    CHECK_STR(clip_span_name(0, 600, a, 6), "0m00-"); /* cut short, but ended */
 }
 
 /* A list of clips (watching a replay saves one): a span a line. */
@@ -350,7 +372,8 @@ TEST(clip_open_checks_its_settings) {
 }
 
 /* LOONY_CLIP=clips: a clip of each span in the replay's list, sorted and
-   merged, numbered as for marks; a list that is wrong or empty is refused. */
+   merged, named for their spans as for marks; a list that is wrong or
+   empty is refused. */
 TEST(clip_open_makes_a_clip_of_each_span_in_the_list) {
     char out[4096], dir[1024], replay[1100], list[1100];
     test_tmp_dir(dir, sizeof dir);
@@ -361,8 +384,8 @@ TEST(clip_open_makes_a_clip_of_each_span_in_the_list) {
     fclose(f);
     int listed = clip_open_with("clips", NULL, NULL, replay, out, sizeof out);
     char clip1[1200], clip2[1200], log2[4096];
-    snprintf(clip1, sizeof clip1, "clip: 0:01-0:03 to %s/game-clip-1.mp4", dir);
-    snprintf(clip2, sizeof clip2, "clip: 0:20-0:30 to %s/game-clip-2.mp4", dir);
+    snprintf(clip1, sizeof clip1, "clip: 0:01-0:03 to %s/game-0m01-0m03.mp4", dir);
+    snprintf(clip2, sizeof clip2, "clip: 0:20-0:30 to %s/game-0m20-0m30.mp4", dir);
     f = fopen(list, "w");
     fputs("# nothing yet\n", f);
     fclose(f);
@@ -375,6 +398,75 @@ TEST(clip_open_makes_a_clip_of_each_span_in_the_list) {
     CHECK_CONTAINS(out, clip2);
     CHECK_EQ(empty, 1);
     CHECK_CONTAINS(log2, "game.clips has no clips");
+}
+
+static void write_text(const char *path, const char *text) {
+    FILE *f = fopen(path, "w");
+    if (f) {
+        fputs(text, f);
+        fclose(f);
+    }
+}
+
+/* Exporting again renders only the clips with no file yet. Taking a line
+   out of the list renames none of the others' files, so with each of them
+   written, there is nothing to render, and the export exits at once. */
+TEST(clip_open_skips_the_clips_already_written) {
+    char dir[1024], replay[1100], list[1100], first[1100], others[2][1100];
+    char out[3][4096], want[3][1300];
+    test_tmp_dir(dir, sizeof dir);
+    snprintf(replay, sizeof replay, "%s/game.lwreplay", dir);
+    snprintf(list, sizeof list, "%s/game.clips", dir);
+    snprintf(first, sizeof first, "%s/game-0m01-0m02.mp4", dir);
+    snprintf(others[0], sizeof others[0], "%s/game-0m10-0m12.mp4", dir);
+    snprintf(others[1], sizeof others[1], "%s/game-0m20-0m30.mp4", dir);
+    write_text(list, "0:01-0:02\n0:10-0:12\n0:20-0:30\n");
+    write_text(first, "");
+    int some = clip_open_with("clips", NULL, NULL, replay, out[0], sizeof out[0]);
+    snprintf(want[0], sizeof want[0], "clip: 0:01-0:02 is in %s already: skipped", first);
+    snprintf(want[1], sizeof want[1], "clip: 0:10-0:12 to %s", others[0]);
+    snprintf(want[2], sizeof want[2], "clip: 0:20-0:30 to %s", others[1]);
+    write_text(others[0], "");
+    write_text(others[1], "");
+    int all = clip_open_with("clips", NULL, NULL, replay, out[1], sizeof out[1]);
+    write_text(list, "0:10-0:12\n0:20-0:30\n"); /* the first line taken out */
+    unlink(first);
+    int edited = clip_open_with("clips", NULL, NULL, replay, out[2], sizeof out[2]);
+    test_remove_tree(dir);
+    CHECK_EQ(some, 0);
+    CHECK_CONTAINS(out[0], want[0]);
+    CHECK_CONTAINS(out[0], want[1]);
+    CHECK_CONTAINS(out[0], want[2]);
+    CHECK_CONTAINS(out[0], "clip on: 1");
+    CHECK_EQ(all, 0);
+    CHECK_CONTAINS(out[1], "clip: all 3 clips are written already");
+    CHECK(!strstr(out[1], "clip on:"));
+    CHECK_EQ(edited, 0);
+    CHECK_CONTAINS(out[2], "clip: all 2 clips are written already");
+    CHECK(!strstr(out[2], "clip on:"));
+}
+
+/* The clips are named after the replay without its -marked, or after
+   LOONY_CLIP_OUT, keeping its extension. */
+TEST(clip_open_names_the_clips_after_the_replay_or_the_out) {
+    char dir[1024], replay[1100], out_mov[1100], log[3][4096], want[3][1300];
+    test_tmp_dir(dir, sizeof dir);
+    snprintf(replay, sizeof replay, "%s/loony-2026-10-15-201530-marked.lwreplay", dir);
+    char list[1100];
+    snprintf(list, sizeof list, "%s/loony-2026-10-15-201530-marked.clips", dir);
+    write_text(list, "2:58-3:20\n");
+    snprintf(out_mov, sizeof out_mov, "%s/ramps.mov", dir);
+    int named[3] = {clip_open_with("clips", NULL, NULL, replay, log[0], sizeof log[0]),
+                    clip_open_with("clips", "ramps.mp4", NULL, replay, log[1], sizeof log[1]),
+                    clip_open_with("clips", out_mov, NULL, replay, log[2], sizeof log[2])};
+    snprintf(want[0], sizeof want[0], "clip: 2:58-3:20 to %s/loony-2026-10-15-201530-2m58-3m20.mp4", dir);
+    snprintf(want[1], sizeof want[1], "clip: 2:58-3:20 to ramps-2m58-3m20.mp4");
+    snprintf(want[2], sizeof want[2], "clip: 2:58-3:20 to %s/ramps-2m58-3m20.mov", dir);
+    test_remove_tree(dir);
+    for (int i = 0; i < 3; i++) {
+        CHECK_EQ(named[i], 0);
+        CHECK_CONTAINS(log[i], want[i]);
+    }
 }
 
 /* An output the clip couldn't write is refused before the seek, and so is

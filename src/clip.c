@@ -33,12 +33,14 @@ static struct {
     size_t nspans;
     piece *pieces; /* and their pieces, in order */
     size_t npieces, cur;
-    bool numbered;       /* LOONY_CLIP=marks or clips: the files are numbered */
-    char base[PATH_MAX]; /* the file, or what the numbered ones are named from */
+    bool named;          /* LOONY_CLIP=marks or clips: the files are named for their spans */
+    char base[PATH_MAX]; /* the file, or what the named ones start with */
+    char ext[32];        /* and end with */
     size_t clip;         /* the clip being made */
     uint32_t start, end, at; /* and the piece of it being made */
     char out[PATH_MAX];  /* and its file */
-    bool wrote;          /* a clip was written */
+    char part[PATH_MAX + 2]; /* and where it is written until it is finished */
+    bool wrote;          /* a clip was written, by this export or an earlier one */
     double quality; /* or 0 for kbps */
     int kbps;       /* 0: clip_default_kbps */
     int width; /* LOONY_CLIP_WIDTH, or 0 */
@@ -142,6 +144,26 @@ const char *clip_format_time(uint32_t ticks, char *buf, size_t cap) {
                       : snprintf(buf, cap, "%u:%02u", s / 60, s % 60);
     if (rem && n > 0 && (size_t)n < cap)
         snprintf(buf + n, cap - (size_t)n, ".%02u", rem * 100 / 60);
+    return buf;
+}
+
+/* One end of a span in a file's name: clip_format_time's, with letters
+   for the colons. */
+static int name_time(uint32_t ticks, char *buf, size_t cap) {
+    uint32_t s = ticks / 60, rem = ticks % 60;
+    int n = s >= 3600 ? snprintf(buf, cap, "%uh%02um%02u", s / 3600, s / 60 % 60, s % 60)
+                      : snprintf(buf, cap, "%um%02u", s / 60, s % 60);
+    if (rem && n > 0 && (size_t)n < cap)
+        n += snprintf(buf + n, cap - (size_t)n, ".%02u", rem * 100 / 60);
+    return n;
+}
+
+const char *clip_span_name(uint32_t start, uint32_t end, char *buf, size_t cap) {
+    int n = name_time(start, buf, cap);
+    if (n > 0 && (size_t)n + 1 < cap) {
+        buf[n] = '-';
+        name_time(end, buf + n + 1, cap - (size_t)n - 1);
+    }
     return buf;
 }
 
@@ -255,7 +277,7 @@ static void open_file(void) {
                       .rate = MIX_RATE,
                       .audio_kbps = CLIP_AUDIO_KBPS};
     char err[256], a[32], how[96], size[64];
-    C.mp4 = mp4_open(C.out, &s, err, sizeof err);
+    C.mp4 = mp4_open(C.part, &s, err, sizeof err);
     if (!C.mp4)
         fatal("clip: can't write %s: %s", C.out, err);
     if (mp4_at_quality(C.mp4))
@@ -286,10 +308,16 @@ static bool finish(void) {
     char err[256], a[32], b[32];
     if (!mp4_close(f, err, sizeof err)) {
         log_msg("clip: can't write %s: %s", C.out, err);
+        unlink(C.part);
         return false;
     }
     struct stat st;
-    double mb = stat(C.out, &st) == 0 ? (double)st.st_size / 1e6 : 0;
+    double mb = stat(C.part, &st) == 0 ? (double)st.st_size / 1e6 : 0;
+    if (rename(C.part, C.out) != 0) {
+        log_msg("clip: can't move %s to %s: %s", C.part, C.out, strerror(errno));
+        unlink(C.part);
+        return false;
+    }
     log_msg("clip: wrote %s-%s to %s: %llu frames, %.1f MB, %.1f s after launch",
             clip_format_time(C.spans[C.clip].start, a, sizeof a),
             clip_format_time(C.spans[C.clip].start + (uint32_t)C.frames, b, sizeof b),
@@ -298,16 +326,24 @@ static bool finish(void) {
     return true;
 }
 
-/* The file of clip i: the base, numbered from 1 before its extension for
-   LOONY_CLIP=marks and clips. False if that is too long. */
+/* The file of clip i: the base, or for LOONY_CLIP=marks and clips, the
+   base, its span and the extension. False if that is too long. */
 static bool file_of(size_t i, char *out, size_t cap) {
-    if (!C.numbered)
+    if (!C.named)
         return (size_t)snprintf(out, cap, "%s", C.base) < cap;
-    const char *slash = strrchr(C.base, '/'), *name = slash ? slash + 1 : C.base;
-    const char *dot = strrchr(name, '.');
-    if (!dot || dot == name)
-        dot = name + strlen(name);
-    return (size_t)snprintf(out, cap, "%.*s-%zu%s", (int)(dot - C.base), C.base, i + 1, dot) < cap;
+    char span[64];
+    clip_span_name(C.spans[i].start, C.spans[i].end, span, sizeof span);
+    return (size_t)snprintf(out, cap, "%s-%s%s", C.base, span, C.ext) < cap;
+}
+
+/* The hidden file beside path that a clip is written to: .<name>, keeping
+   the extension the encoder goes by. */
+static void part_of(const char *path, char *out, size_t cap) {
+    const char *slash = strrchr(path, '/');
+    if (slash)
+        snprintf(out, cap, "%.*s.%s", (int)(slash + 1 - path), path, slash + 1);
+    else
+        snprintf(out, cap, ".%s", path);
 }
 
 /* Makes piece i the one being made, and its clip, if it starts one. */
@@ -324,15 +360,29 @@ static void begin_piece(size_t i) {
         C.frames = 0;
         C.changed = false;
         file_of(p->clip, C.out, sizeof C.out); /* clip_open checked it fits */
+        part_of(C.out, C.part, sizeof C.part);
     }
 }
 
-/* The program exited before the clip's end: what there is is kept. The
-   status says when that is nothing (the recording ended before the clip's
-   start: CLIP_NOTHING_STATUS) or the file couldn't be finished (1), unless a
-   failure or a desync has said so already. This is the program's first
-   atexit handler (clip_open must stay before any other sets one), so it runs
-   last and _exit skips none of the program's. */
+/* Closes the clip's file and removes it, so nothing of the clip is left. err
+   says why the close failed, if it did. */
+static void discard(char *err, size_t cap) {
+    mp4_file *f = C.mp4;
+    C.mp4 = NULL;
+    mp4_close(f, err, cap);
+    unlink(C.part);
+}
+
+/* The program exited before the clip's end: what there is is kept when the
+   recording ended there too (replay_reached_end, which the replay's own
+   handler sets before this one runs), and thrown away when it goes on (a
+   desync, a failure, LOONY_EXIT_AFTER), so a later export renders the clip
+   instead of skipping it. The status says when nothing was written (the
+   recording ended before the clip's start: CLIP_NOTHING_STATUS) or the clip
+   was thrown away or couldn't be finished (1), unless a failure or a desync
+   has said so already. This is the program's first atexit handler
+   (clip_open must stay before any other sets one), so it runs last and
+   _exit skips none of the program's. */
 static void finish_at_exit(void) {
     if (!C.on || C.finished)
         return;
@@ -353,7 +403,16 @@ static void finish_at_exit(void) {
     log_msg("clip: the replay stopped at %s, before the clip's end at %s",
             clip_format_time(C.spans[C.clip].start + (uint32_t)C.frames, a, sizeof a),
             clip_format_time(C.spans[C.clip].end, b, sizeof b));
-    if (!finish() && !failed) {
+    bool kept;
+    if (replay_reached_end()) {
+        kept = finish();
+    } else {
+        char err[256];
+        discard(err, sizeof err);
+        log_msg("clip: %s isn't written: the recording goes on past where the replay stopped", C.out);
+        kept = false;
+    }
+    if (!kept && !failed) {
         fflush(NULL);
         _exit(1);
     }
@@ -361,10 +420,8 @@ static void finish_at_exit(void) {
 
 static _Noreturn void write_failed(void) {
     char err[256];
-    mp4_file *f = C.mp4;
-    C.mp4 = NULL;
     C.finished = true;
-    mp4_close(f, err, sizeof err);
+    discard(err, sizeof err);
     fatal("clip: can't write %s: %s", C.out, err);
 }
 
@@ -536,17 +593,55 @@ static bool check_out(const char *path, const char *replay, char *err, size_t er
     return true;
 }
 
-/* The numbered clips' files are named from out, or else the replay. */
-static void numbered_base(const char *out, const char *replay) {
-    C.numbered = true;
+/* What strip says at the end of the first len bytes of s: len without it. */
+static size_t without(const char *s, size_t len, const char *strip) {
+    size_t n = strlen(strip);
+    return len > n && strncmp(s + len - n, strip, n) == 0 ? len - n : len;
+}
+
+/* The clips' files are named from out (its extension after the span), or
+   else the replay, without .lwreplay and -marked (a recording is renamed
+   when it is marked). */
+static void named_base(const char *out, const char *replay) {
+    C.named = true;
     if (out && *out) {
-        snprintf(C.base, sizeof C.base, "%s", out);
+        const char *slash = strrchr(out, '/'), *name = slash ? slash + 1 : out;
+        const char *dot = strrchr(name, '.');
+        if (!dot || dot == name || strlen(dot) >= sizeof C.ext)
+            dot = name + strlen(name);
+        snprintf(C.base, sizeof C.base, "%.*s", (int)(dot - out), out);
+        snprintf(C.ext, sizeof C.ext, "%s", dot);
     } else {
-        size_t len = strlen(replay), ext = strlen(".lwreplay");
-        if (len > ext && strcmp(replay + len - ext, ".lwreplay") == 0)
-            len -= ext;
-        snprintf(C.base, sizeof C.base, "%.*s-clip.mp4", (int)len, replay);
+        size_t len = without(replay, strlen(replay), ".lwreplay");
+        len = without(replay, len, "-marked");
+        snprintf(C.base, sizeof C.base, "%.*s", (int)len, replay);
+        snprintf(C.ext, sizeof C.ext, ".mp4");
     }
+}
+
+/* Leaves out the clips whose files are there already, and exits if that is
+   all of them. */
+static void skip_written(void) {
+    char path[PATH_MAX], a[32], b[32];
+    size_t kept = 0;
+    for (size_t i = 0; i < C.nspans; i++) {
+        file_of(i, path, sizeof path); /* clip_open checked it fits */
+        if (access(path, F_OK) == 0) {
+            log_msg("clip: %s-%s is in %s already: skipped", clip_format_time(C.spans[i].start, a, sizeof a),
+                    clip_format_time(C.spans[i].end, b, sizeof b), path);
+            C.wrote = true;
+            continue;
+        }
+        C.spans[kept++] = C.spans[i];
+    }
+    if (!kept) {
+        if (C.nspans == 1)
+            log_msg("clip: the clip is written already");
+        else
+            log_msg("clip: all %zu clips are written already", C.nspans);
+        exit(0);
+    }
+    C.nspans = kept;
 }
 
 /* LOONY_CLIP=clips: a clip for each span in the replay's list. */
@@ -578,7 +673,7 @@ static bool open_list(const char *out, const char *replay, char *err, size_t err
     }
     size_t listed = C.nspans;
     C.nspans = clip_merge_spans(C.spans, C.nspans);
-    numbered_base(out, replay);
+    named_base(out, replay);
     log_msg("clip: %zu listed in %s%s", listed, path, C.nspans < listed ? ", some overlapping" : "");
     return true;
 }
@@ -607,7 +702,7 @@ static bool open_marks(const char *out, const char *replay, const char *before, 
     for (size_t i = 0; i < n; i++)
         played[i] = replay_play_ticks(marks[i]);
     C.nspans = clip_mark_spans(played, n, b, a, C.spans);
-    numbered_base(out, replay);
+    named_base(out, replay);
     char t[32];
     for (size_t i = 0; i < n; i++)
         log_msg("clip: mark %zu at tick %u (%s)", i + 1, played[i], clip_format_time(played[i], t, sizeof t));
@@ -749,6 +844,8 @@ bool clip_open(char *err, size_t errlen) {
         if (!check_out(path, replay, err, errlen))
             return false;
     }
+    if (C.named)
+        skip_written();
     const char *scale = getenv("LOONY_HD_SCALE");
     if (!scale || !*scale)
         setenv("LOONY_HD_SCALE", "2", 1);
@@ -775,7 +872,7 @@ bool clip_open(char *err, size_t errlen) {
         size_t pieces = pieces_of(i);
         if (pieces > 1)
             log_msg("clip: %s-%s leaves out %zu stretches that aren't play", a, b, pieces - 1);
-        if (!C.numbered)
+        if (!C.named)
             log_msg("clip: replaying to %s, then writing %s-%s to %s", a, a, b, path);
         else if (!c->first_mark)
             log_msg("clip: %s-%s to %s", a, b, path);
