@@ -290,6 +290,19 @@ static NSMenuItem *open_item(NSString *title, const char *path, uint32_t from, i
 }
 
 @implementation LoonyRecordings
+/* Neither menu has key equivalents. Saying so keeps AppKit from filling
+   them, a rescan of the recordings folder, on every Command-key press. */
+- (BOOL)menuHasKeyEquivalent:(NSMenu *)menu
+                    forEvent:(NSEvent *)event
+                      target:(id _Nullable *)target
+                      action:(SEL _Nullable *)action {
+    (void)menu;
+    (void)event;
+    (void)target;
+    (void)action;
+    return NO;
+}
+
 - (void)menuNeedsUpdate:(NSMenu *)menu {
     [menu removeAllItems];
     if (menu == self.recent) {
@@ -308,6 +321,8 @@ static NSMenuItem *open_item(NSString *title, const char *path, uint32_t from, i
         NSString *title = @(recordings_label(&list[i], games, label, sizeof label));
         [menu addItem:open_item(title, list[i].path, 0, self)];
         for (size_t m = 0; m < list[i].nmarks; m++) {
+            if (m && list[i].marks[m] / 60 == list[i].marks[m - 1] / 60)
+                continue; /* the same second: an item just like the last */
             title = @(recordings_mark_label(list[i].marks[m], label, sizeof label));
             NSMenuItem *at = open_item(title, list[i].path, list[i].marks[m], self);
             at.indentationLevel = 1;

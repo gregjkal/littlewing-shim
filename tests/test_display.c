@@ -241,3 +241,34 @@ TEST(display_poll_opens_a_requested_file_after_its_events) {
     CHECK_EQ(opened_from, 0);
     display_set_open(NULL);
 }
+
+static void push_drop(const char *path) {
+    SDL_Event e;
+    memset(&e, 0, sizeof e);
+    e.type = SDL_EVENT_DROP_FILE;
+    e.drop.data = path;
+    SDL_PushEvent(&e);
+}
+
+/* Of several files dropped at once, the first replay opens, whatever comes
+   before or after it. */
+TEST(display_poll_opens_the_first_replay_of_several_dropped) {
+    gm_init();
+    mm_init();
+    qd_init(64, 48, 16);
+    display_present();
+    display_set_open(on_open);
+    opens = 0;
+    push_drop("/r/notes.txt");
+    push_drop("/r/first.lwreplay");
+    push_drop("/r/second.lwreplay");
+    push_drop("/r/after.txt");
+    display_poll();
+    CHECK_EQ(opens, 1);
+    CHECK_STR(opened, "/r/first.lwreplay");
+    push_drop("/r/notes.txt");
+    display_poll(); /* not a replay: still handed on, to be turned down */
+    CHECK_EQ(opens, 2);
+    CHECK_STR(opened, "/r/notes.txt");
+    display_set_open(NULL);
+}

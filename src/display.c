@@ -267,7 +267,14 @@ void display_set_input(const display_input *in) { D.input = *in; }
 
 void display_set_open(void (*fn)(const char *path, uint32_t from_ticks)) { D.open = fn; }
 
+static bool is_replay_path(const char *path) {
+    size_t n = strlen(path);
+    return n >= 9 && strcmp(path + n - 9, ".lwreplay") == 0;
+}
+
 void display_request_open(const char *path, uint32_t from_ticks) {
+    if (D.open_pending && is_replay_path(D.open_path))
+        return; /* the first replay asked for wins, as when each opened at once */
     if ((size_t)snprintf(D.open_path, sizeof D.open_path, "%s", path) >= sizeof D.open_path) {
         log_msg("can't open %s: its path is too long", path);
         return;

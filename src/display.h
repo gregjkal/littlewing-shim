@@ -57,8 +57,9 @@ void display_set_open(void (*fn)(const char *path, uint32_t from_ticks));
 /* Asks for path to be opened from from_ticks once display_poll has handled
    the events it is handling, rather than at once: a menu item's action
    runs inside AppKit's handling of an event, where the restart that opens
-   a replay must not happen. A second request before then replaces the
-   first. Drops come here too. */
+   a replay must not happen. A later request before then replaces an
+   earlier one, unless the earlier one is a replay (.lwreplay): of several
+   files dropped at once, the first replay opens. Drops come here too. */
 void display_request_open(const char *path, uint32_t from_ticks);
 
 /* At launch, before anything is shown: starts SDL's video and handles the
