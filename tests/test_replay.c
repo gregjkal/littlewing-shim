@@ -252,9 +252,9 @@ TEST(replay_marks_become_clips_named_after_the_replay) {
     CHECK_CONTAINS(out, "clip: mark 1 at tick 60 (0:01)");
     CHECK_CONTAINS(out, "clip: mark 2 at tick 150 (0:02.50)");
     CHECK_CONTAINS(out, "clip: mark 3 at tick 399 (0:06.65)");
-    snprintf(want, sizeof want, "clip: 0:00-0:03 (marks 1 to 2) to %s/run-clip-1.mp4", dir);
+    snprintf(want, sizeof want, "clip: 0:00-0:03 (marks 1 to 2) to %s/run-0m00-0m03.mp4", dir);
     CHECK_CONTAINS(out, want);
-    snprintf(want, sizeof want, "clip: 0:05.65-0:07.15 (mark 3) to %s/run-clip-2.mp4", dir);
+    snprintf(want, sizeof want, "clip: 0:05.65-0:07.15 (mark 3) to %s/run-0m05.65-0m07.15.mp4", dir);
     CHECK_CONTAINS(out, want);
 
     CHECK(record(NULL)); /* none */
@@ -761,6 +761,26 @@ TEST(replay_refuses_another_game_or_program) {
     setenv("LOONY_REPLAY", "/nonexistent/run.lwreplay", 1);
     CHECK(!replay_open(err, sizeof err));
     CHECK_CONTAINS(err, "can't read the replay /nonexistent/run.lwreplay");
+}
+
+/* A replay that finishes where the recording did (the game quits there on
+   its own, as it did when recorded) has reached the end, so a clip running
+   past it keeps what there is; one that finishes a step short hasn't. */
+TEST(replay_finishing_where_the_recording_did_is_its_end) {
+    BEGIN_TEST();
+    CHECK(record(NULL));
+    replay_step();
+    replay_step();
+    replay_finish();
+    CHECK(play_back());
+    replay_step();
+    replay_finish();
+    CHECK(!replay_reached_end());
+    CHECK(play_back());
+    replay_step();
+    replay_step();
+    replay_finish();
+    CHECK(replay_reached_end());
 }
 
 /* The clock moves in whole ms while recording, and a run of TickCount polls

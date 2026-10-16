@@ -404,7 +404,9 @@ is `LOONY_CLIP_QUALITY`, above 0 and at most 1 (0.65 by default, which matched x
 30-second clip from minute 10 of a 15-minute game takes about 30 seconds and
 comes to 3.1 MB in HD, or 16 seconds and 2.1 MB at 800x600. A clip
 that runs past the end of the recording keeps what it has; one that starts
-past it writes nothing and exits with status 4. A file already at
+past it writes nothing and exits with status 4. A clip cut short before
+the recording's end (by a desync, an error, `LOONY_EXIT_AFTER`) is thrown
+away, with the desync's or the error's status, or else 1. A file already at
 `LOONY_CLIP_OUT` is replaced, but the replay itself is refused, as is a
 folder that can't be written, before the seek.
 
@@ -420,9 +422,16 @@ LOONY_REPLAY=game.lwreplay LOONY_CLIP=marks ./build-release/loony
 
 Each clip runs from 30 seconds before its mark to 3 seconds after it, since
 the key comes a moment late; `LOONY_CLIP_BEFORE` and `LOONY_CLIP_AFTER` set
-those, in seconds. The clips go next to the replay as `game-clip-1.mp4`,
-`game-clip-2.mp4` and so on (with `LOONY_CLIP_OUT=ramps.mp4`, `ramps-1.mp4`
-and so on), and the other `LOONY_CLIP_` settings apply to each. Marks whose
+those, in seconds. The clips go next to the replay, each named for its
+span: `game-2m58-3m20.mp4` and so on, for `game.lwreplay` or
+`game-marked.lwreplay` (with `LOONY_CLIP_OUT=ramps.mp4`,
+`ramps-2m58-3m20.mp4`), and the other `LOONY_CLIP_` settings apply to each.
+A clip whose file is there already is skipped, so exporting again renders
+only new clips, and when there are none it exits at once. The skip goes by
+the name alone: to render a clip again, with other settings say, delete
+its file, and give each replay a `LOONY_CLIP_OUT` of its own. Each clip is
+written to a hidden file and renamed once it is finished, so an export
+that is stopped never leaves a clip that looks whole. Marks whose
 clips overlap, or come within a second of each other, share one clip. A
 replay with no marks is refused. When nothing is being recorded
 (outside a game when each game gets a file, with `LOONY_RECORD=0`, with
@@ -462,8 +471,10 @@ it skips frames to keep time, and shows the latest once it has caught up,
 or a few times a second when it can't catch up (HD at 8x). Each clip goes
 into `game.clips` next to `game.lwreplay`, one `<start>-<end>` a line in `LOONY_CLIP`'s
 format, so the file can be edited by hand too; `LOONY_CLIP=clips` then
-renders each into `game-clip-1.mp4` and so on, in one pass, as
-`LOONY_CLIP=marks` does (clips that overlap become one). A recording in
+renders each into `game-0m01-0m03.mp4` and so on, in one pass, as
+`LOONY_CLIP=marks` does (clips that overlap become one). Taking a line out
+of the file, or adding one, renames none of the other clips' files, though
+clips that come to overlap, or stop overlapping, get new files. A recording in
 `recordings` with a `.clips` file is kept, like a marked one.
 
 Going ahead replays without pacing to the time. A replay only runs
