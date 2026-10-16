@@ -47,7 +47,10 @@ static char log_path[PATH_MAX];
 
 static void show_failure(const char *msg) {
     const char *video = getenv("SDL_VIDEO_DRIVER");
+    const char *progress = getenv("LOONY_CLIP_PROGRESS");
     if (video && strcmp(video, "dummy") == 0) /* headless: nobody to click it */
+        return;
+    if (progress && strcmp(progress, "1") == 0) /* an export: the program running it says so */
         return;
     char text[2048];
     if (log_path[0])
@@ -229,6 +232,7 @@ static void open_replay(const char *path) {
     }
     if (!replay_playing())
         cf_save_prefs();
+    watch_stop_export(); /* it would go on unseen */
     setenv("LOONY_REPLAY", full, 1);
     setenv("LOONY_WATCH", "1", 1);
     static const char *const clear[] = {"LOONY_GAME", "LOONY_DATA_DIR", "LOONY_RECORD",
@@ -412,6 +416,7 @@ int main(int argc, char **argv) {
     if (watch_on()) {
         events_set_replay_key(watch_key);
         watch_start(game->title, restart_watching);
+        menu_add_replay();
     }
     const char *script = getenv("LOONY_SCRIPT");
     if (script && *script && !script_load(script, err, sizeof err)) {

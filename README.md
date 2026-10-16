@@ -468,6 +468,8 @@ LOONY_REPLAY=game.lwreplay LOONY_CLIP=clips ./build-release/loony
 | Right, Left | Faster or slower: 1x, 2x, 4x, 8x, as fast as it can |
 | I, O | Where a clip starts, and where it ends (O saves it) |
 | J, L | Back or ahead 10 seconds (with Shift, a minute) |
+| E | Export the clips, as `LOONY_CLIP=clips` does |
+| Esc | Cancel the export |
 
 Watching starts where the game does. First it replays what came before the
 game, silent and as fast as it can, about 70 times real time, drawing a few
@@ -503,6 +505,21 @@ minute of play logs how long it took on the wall clock: within a few
 milliseconds. The keys of a `LOONY_SCRIPT` go to the viewer too (`60 down
 i`), until a restart.
 
+#### Exporting from the viewer
+
+E exports the clips in `game.clips` without leaving the viewer: the
+replay plays on while a second copy of LittleWing renders them, as
+`LOONY_CLIP=clips` does, and the window's title says how far it has got
+("exporting clip 2 of 3, 40%", or "exporting, finding clip 2 of 3, 15%"
+while it replays up to that clip). When it is done, Finder opens with the
+new files selected, next to the recording, where the clips always go.
+With every clip exported already, the title says so and Finder shows
+those. Esc cancels, which leaves no file behind. One export runs at a
+time; going back (J) doesn't stop it, and quitting does. While watching,
+the **Replay** menu (next to Sound) has the same: **Export Clips**,
+**Export Marks** (as `LOONY_CLIP=marks`, from the marks made with Cmd-S
+while recording) and **Cancel Export**.
+
 #### Sharing a high score
 
 While Loony Labyrinth plays, the **High Scores** menu (next to Sound)
@@ -533,7 +550,7 @@ the replay would start differently.
 Double-click a `.lwreplay` file, or drop one on the window, and
 LittleWing.app watches it from 0:00, with the keys above. Whatever was
 playing stops first, and a game's preferences and recording are saved as
-on quit. Opening another file switches to it. When the replay ends, the
+on quit. Opening another file switches to it, and stops an export. When the replay ends, the
 last frame stays up until you close the window, which quits the app.
 
 To watch a shared replay you need Loony Labyrinth installed and registered

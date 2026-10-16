@@ -1000,6 +1000,129 @@ TEST(run_a_watched_replay_goes_ahead_and_back) {
     CHECK(!strstr(out[2], "replay: desync"));
 }
 
+/* The file the first clip in rec_dir/game.clips is exported to, or "". */
+static void first_clip_file(const char *rec_dir, char *out, size_t cap) {
+    char list[1100], err[256];
+    snprintf(list, sizeof list, "%s/game.clips", rec_dir);
+    size_t len;
+    char *text = (char *)read_file(list, &len);
+    clip_span *spans = NULL;
+    size_t n = 0;
+    out[0] = '\0';
+    if (text && clip_parse_list(text, &spans, &n, err, sizeof err) && n) {
+        char span[64];
+        clip_span_name(spans[0].start, spans[0].end, span, sizeof span);
+        snprintf(out, cap, "%s/game-%s.mp4", rec_dir, span);
+    }
+    free(text);
+    free(spans);
+}
+
+/* E exports the clips marked so far while the replay plays on, and the
+   viewer waits for it at the end; Finder is shown the file. E again, with
+   it written, says so. */
+TEST(run_a_watched_replay_exports_its_clips) {
+    SKIP_UNLESS_GAME();
+    char rec_dir[1024], play_dir[1024], file[1200], want[1300];
+    static char out[3][65536];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    double seconds;
+    int rec_status = record_for_clips(rec_dir, "330 quit\n", out[0], sizeof out[0]);
+    int watch_status = watch_recording("30 down i\n34 up i\n90 down o\n94 up o\n100 down e\n104 up e\n",
+                                       play_dir, out[1], sizeof out[1], &seconds);
+    first_clip_file(rec_dir, file, sizeof file);
+    mp4_info info;
+    char err[256] = "";
+    bool read = file[0] && mp4_read_info(file, &info, err, sizeof err);
+    int unfinished = files_in(rec_dir, ".mp4", true);
+    test_remove_tree(play_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    int again_status = watch_recording("30 down e\n34 up e\n", play_dir, out[2], sizeof out[2], &seconds);
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(watch_status, 0);
+    CHECK(file[0]);
+    snprintf(want, sizeof want, "watch: exporting the clips of %s", replay_file);
+    CHECK_CONTAINS(out[1], want);
+    CHECK_CONTAINS(out[1], "watch: exported 1 clip");
+    snprintf(want, sizeof want, "watch: revealing %s\n", file);
+    CHECK_CONTAINS(out[1], want);
+    if (!read)
+        fprintf(stderr, "%s: %s\n", file, err);
+    CHECK(read);
+    CHECK_EQ(unfinished, 0);
+    CHECK(!strstr(out[1], "replay: desync"));
+    CHECK(!strstr(out[1], "not understood"));
+    CHECK_EQ(again_status, 0);
+    CHECK_CONTAINS(out[2], "watch: the 1 clip is exported already");
+    CHECK_CONTAINS(out[2], want);
+}
+
+/* Esc cancels the export, here as it starts (an export of these clips
+   takes about a second, too little to time a key inside the rendering;
+   run_an_export_stopped_by_a_signal_leaves_nothing_behind stops one
+   there): nothing is left. */
+TEST(run_a_watched_replay_cancels_its_export) {
+    SKIP_UNLESS_GAME();
+    char rec_dir[1024], play_dir[1024];
+    static char out[2][65536];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    int rec_status = record_for_clips(rec_dir, "330 quit\n", out[0], sizeof out[0]);
+    double seconds;
+    int watch_status = watch_recording("30 down i\n34 up i\n150 down o\n154 up o\n160 down e\n161 up e\n"
+                                       "162 down esc\n163 up esc\n",
+                                       play_dir, out[1], sizeof out[1], &seconds);
+    int clips = files_in(rec_dir, ".mp4", false), unfinished = files_in(rec_dir, ".mp4", true);
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(watch_status, 0);
+    CHECK_CONTAINS(out[1], "watch: cancelling the export");
+    CHECK_CONTAINS(out[1], "watch: export cancelled");
+    CHECK(!strstr(out[1], "watch: exported"));
+    CHECK(!strstr(out[1], "watch: revealing"));
+    CHECK_EQ(clips, 0);
+    CHECK_EQ(unfinished, 0);
+}
+
+/* Going back restarts the viewer, and the export goes on through it: the
+   viewer after the restart follows it to its end and shows the file. J
+   comes as the export starts, long before it ends. */
+TEST(run_a_watched_replay_keeps_exporting_when_it_goes_back) {
+    SKIP_UNLESS_GAME();
+    char rec_dir[1024], play_dir[1024], file[1200], want[1300];
+    static char out[2][65536];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    int rec_status = record_for_clips(rec_dir, "330 quit\n", out[0], sizeof out[0]);
+    double seconds;
+    int watch_status = watch_recording("30 down i\n34 up i\n150 down o\n154 up o\n160 down e\n161 up e\n"
+                                       "168 down j\n169 up j\n",
+                                       play_dir, out[1], sizeof out[1], &seconds);
+    first_clip_file(rec_dir, file, sizeof file);
+    bool written = file[0] && access(file, F_OK) == 0;
+    int unfinished = files_in(rec_dir, ".mp4", true);
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(watch_status, 0);
+    const char *restarted = strstr(out[1], "loony: watch: restarting the replay");
+    CHECK_CONTAINS(out[1], "watch: the export goes on through the restart");
+    CHECK(restarted);
+    if (restarted) {
+        CHECK_CONTAINS(restarted, "watch: the export of the clips goes on");
+        CHECK_CONTAINS(restarted, "watch: exported 1 clip");
+        snprintf(want, sizeof want, "watch: revealing %s\n", file);
+        CHECK_CONTAINS(restarted, want);
+    }
+    CHECK(written);
+    CHECK_EQ(unfinished, 0);
+    CHECK(!strstr(out[1], "replay: desync"));
+}
+
 static uint32_t le32_at(const uint8_t *p) {
     return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
 }
