@@ -33,8 +33,9 @@
 
    A clip is written to a hidden file beside its own (.<name>) and renamed
    when it is finished, so one cut short never passes for a whole one. A
-   clip the recording ends inside keeps what there is; one cut short by
-   anything else (a desync, a failure, LOONY_EXIT_AFTER) is thrown away.
+   clip the recording ends inside keeps what there is, even when the replay
+   fails there as the recording did; one cut short before the recording's
+   end (a desync, a failure, LOONY_EXIT_AFTER) is thrown away.
 
    The picture is the window's: in HD mode (hd.h) the HD frame, at 2x unless
    LOONY_HD_SCALE says otherwise, scaled down to CLIP_HD_WIDTH pixels wide;

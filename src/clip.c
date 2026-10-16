@@ -374,14 +374,15 @@ static void discard(char *err, size_t cap) {
 }
 
 /* The program exited before the clip's end: what there is is kept when the
-   recording ended there, and thrown away when it goes on (a desync, a
-   failure, LOONY_EXIT_AFTER), so a later export renders the clip instead
-   of skipping it. The status says when nothing was written (the recording
-   ended before the clip's start: CLIP_NOTHING_STATUS) or the clip was
-   thrown away or couldn't be finished (1), unless a failure or a desync has
-   said so already. This is the program's first
-   atexit handler (clip_open must stay before any other sets one), so it runs
-   last and _exit skips none of the program's. */
+   recording ended there too (replay_reached_end, which the replay's own
+   handler sets before this one runs), and thrown away when it goes on (a
+   desync, a failure, LOONY_EXIT_AFTER), so a later export renders the clip
+   instead of skipping it. The status says when nothing was written (the
+   recording ended before the clip's start: CLIP_NOTHING_STATUS) or the clip
+   was thrown away or couldn't be finished (1), unless a failure or a desync
+   has said so already. This is the program's first atexit handler
+   (clip_open must stay before any other sets one), so it runs last and
+   _exit skips none of the program's. */
 static void finish_at_exit(void) {
     if (!C.on || C.finished)
         return;

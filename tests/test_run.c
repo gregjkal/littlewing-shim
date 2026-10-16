@@ -504,6 +504,43 @@ TEST(run_a_clip_past_the_end_of_a_recording_keeps_what_there_is) {
     CHECK_CONTAINS(out[3], "can't load the script");
 }
 
+/* The same when the player quits mid-game: the game quits on its own where
+   the recording ends, so the replay finishes there instead of stepping past
+   it, and the clip still keeps what there is. */
+TEST(run_a_clip_past_the_end_of_a_game_quit_mid_play_keeps_what_there_is) {
+    SKIP_UNLESS_GAME();
+    char rec_dir[1024], play_dir[1024];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    char out[3][32768];
+    int rec_status = record_for_clips(rec_dir,
+                                      "1720 down esc\n1724 up esc\n1800 down esc\n1804 up esc\n"
+                                      "1900 down return\n1906 up return\n2100 down return\n"
+                                      "2190 up return\n2400 quit\n",
+                                      out[0], sizeof out[0]);
+    int past_status = clip_recording("0:01-0:20", play_dir, "past.mp4", out[1], sizeof out[1]);
+    mp4_info info;
+    char err[256] = "";
+    bool read = mp4_read_info(clip_path, &info, err, sizeof err);
+    int none_status = clip_recording("0:30-0:35", play_dir, "none.mp4", out[2], sizeof out[2]);
+    bool none_written = access(clip_path, F_OK) != 0;
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_CONTAINS(out[0], "loony: ExitToShell");
+    CHECK_EQ(past_status, 0);
+    CHECK_CONTAINS(out[1], "loony: replay: reached the end of the recording");
+    CHECK(!strstr(out[1], "exiting where the recording stopped")); /* it finished there */
+    CHECK_CONTAINS(out[1], "loony: clip: wrote 0:01-0:");
+    if (!read)
+        fprintf(stderr, "%s\n", err);
+    CHECK(read);
+    CHECK(info.video_frames > 60);
+    CHECK_EQ(none_status, CLIP_NOTHING_STATUS);
+    CHECK_CONTAINS(out[2], "where the clip starts: nothing written");
+    CHECK(none_written);
+}
+
 /* The files in dir ending in suffix: those starting with a dot (a clip
    not yet finished) if hidden, else the others. */
 static int files_in(const char *dir, const char *suffix, bool hidden) {
