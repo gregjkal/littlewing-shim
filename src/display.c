@@ -21,7 +21,11 @@ static struct {
     unsigned frames;
     const char *screenshot;
     display_input input;
-    void (*open)(const char *path);
+    void (*open)(const char *path, uint32_t from_ticks);
+    /* A file to open once display_poll's events are handled. */
+    bool open_pending;
+    char open_path[4096];
+    uint32_t open_from;
     bool no_vsync;
     bool cursor_hidden;
     bool raise; /* on opening */
@@ -261,7 +265,27 @@ unsigned display_frames(void) { return D.frames; }
 
 void display_set_input(const display_input *in) { D.input = *in; }
 
-void display_set_open(void (*fn)(const char *path)) { D.open = fn; }
+void display_set_open(void (*fn)(const char *path, uint32_t from_ticks)) { D.open = fn; }
+
+void display_request_open(const char *path, uint32_t from_ticks) {
+    if ((size_t)snprintf(D.open_path, sizeof D.open_path, "%s", path) >= sizeof D.open_path) {
+        log_msg("can't open %s: its path is too long", path);
+        return;
+    }
+    D.open_from = from_ticks;
+    D.open_pending = true;
+}
+
+/* Opens the file display_request_open asked for, if any. */
+static void open_pending(void) {
+    if (!D.open_pending)
+        return;
+    char path[sizeof D.open_path];
+    snprintf(path, sizeof path, "%s", D.open_path);
+    D.open_pending = false;
+    if (D.open)
+        D.open(path, D.open_from); /* restarts the program, if it opens */
+}
 
 void display_take_launch_events(uint32_t wait_ms) {
     const char *driver = getenv("SDL_VIDEO_DRIVER");
@@ -273,8 +297,9 @@ void display_take_launch_events(uint32_t wait_ms) {
         SDL_Event e;
         SDL_PumpEvents();
         while (SDL_PeepEvents(&e, 1, SDL_GETEVENT, SDL_EVENT_DROP_FILE, SDL_EVENT_DROP_POSITION) > 0)
-            if (e.type == SDL_EVENT_DROP_FILE && D.open && e.drop.data)
-                D.open(e.drop.data);
+            if (e.type == SDL_EVENT_DROP_FILE && e.drop.data)
+                display_request_open(e.drop.data, 0);
+        open_pending();
         if (SDL_GetTicks() < until)
             SDL_Delay(5);
     } while (SDL_GetTicks() < until);
@@ -366,11 +391,12 @@ void display_poll(void) {
             break;
         }
         case SDL_EVENT_DROP_FILE:
-            if (D.open && e.drop.data)
-                D.open(e.drop.data);
+            if (e.drop.data)
+                display_request_open(e.drop.data, 0);
             break;
         default:
             break;
         }
     }
+    open_pending();
 }

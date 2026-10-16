@@ -49,9 +49,17 @@ typedef struct {
 void display_set_input(const display_input *in);
 
 /* Where display_poll sends a file opened from Finder (one of the app's
-   documents) or dropped on the window: fn gets its path. Apart from
-   display_set_input, so it holds in the picker too. */
-void display_set_open(void (*fn)(const char *path));
+   documents), dropped on the window or chosen from a menu: fn gets its
+   path and where to start watching it, in ticks of play (0 for the
+   start). Apart from display_set_input, so it holds in the picker too. */
+void display_set_open(void (*fn)(const char *path, uint32_t from_ticks));
+
+/* Asks for path to be opened from from_ticks once display_poll has handled
+   the events it is handling, rather than at once: a menu item's action
+   runs inside AppKit's handling of an event, where the restart that opens
+   a replay must not happen. A second request before then replaces the
+   first. Drops come here too. */
+void display_request_open(const char *path, uint32_t from_ticks);
 
 /* At launch, before anything is shown: starts SDL's video and handles the
    events macOS sends within wait_ms, so a file opened from Finder to launch

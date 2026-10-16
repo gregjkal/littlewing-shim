@@ -520,6 +520,21 @@ the **Replay** menu (next to Sound) has the same: **Export Clips**,
 **Export Marks** (as `LOONY_CLIP=marks`, from the marks made with Cmd-S
 while recording) and **Cancel Export**.
 
+#### The Replays menu
+
+The **Replays** menu lists the recordings kept in the recordings folder,
+newest first, read again each time it opens, so a game that just ended is
+there: when the game started, how long it was played (the menus and pauses
+left out, as the viewer counts), and how many marks it has and whether it
+has clips, as in "Oct 15, 8:15 PM, 14:32, 2 marks, clips". Choosing one
+watches it from 0:00, as opening the file does (below). Under a recording
+with marks, an indented **Play from 3:12** for each mark watches it from that
+mark, and J goes back from there. **Show Recordings in Finder**, at the
+bottom, opens the folder. The menu is there in the picker, while Loony
+Labyrinth plays and while watching; not in the other games, which aren't
+recorded yet. A file in the folder that isn't a replay this version plays
+is left out.
+
 #### Sharing a high score
 
 While Loony Labyrinth plays, the **High Scores** menu (next to Sound)
@@ -552,6 +567,8 @@ LittleWing.app watches it from 0:00, with the keys above. Whatever was
 playing stops first, and a game's preferences and recording are saved as
 on quit. Opening another file switches to it, and stops an export. When the replay ends, the
 last frame stays up until you close the window, which quits the app.
+**File > Open Recent** lists the recordings watched lately, however they
+were opened, and **Clear Menu** forgets them.
 
 To watch a shared replay you need Loony Labyrinth installed and registered
 in LittleWing: the replay uses your registration in place of the one left
