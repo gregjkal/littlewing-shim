@@ -34,6 +34,28 @@ void menu_add_high_scores(const char *game_id, const char *title, const char *re
    and Esc are the viewer's own keys, which AppKit would take first. */
 void menu_add_replay(void);
 
+/* Adds a Replays menu, before SDL's Window menu, and a File menu with Open
+   Recent, after the app menu: at once if menu_install has run, else when
+   it does; again does nothing. Replays lists the recordings in the
+   recordings folder (recordings_dir, recordings_list), read each time it
+   opens, newest first: "Oct 15, 8:15 PM, 14:32, 2 marks, clips". Each
+   opens the viewer at its start, and under one with marks an indented
+   "Play from 3:12" for each opens it at that mark. Show Recordings in
+   Finder, at the bottom, makes the folder if it is missing and opens it.
+   Open Recent lists the recordings watched lately (menu_note_recent), and
+   Clear Menu forgets them. Every recording opens through
+   display_request_open. */
+void menu_add_replays(void);
+
+/* Takes the Replays and File menus away again (the picker chose a game
+   without replays). */
+void menu_remove_replays(void);
+
+/* Adds the recording at path, which this process watches, to Open Recent
+   (NSDocumentController's recent documents). Does nothing with a video
+   driver other than Cocoa. */
+void menu_note_recent(const char *path);
+
 /* Shows the n files in Finder, selected. Does nothing with a video driver
    other than Cocoa. */
 void menu_reveal(const char *const *paths, size_t n);

@@ -273,46 +273,68 @@ static void read_next(void) {
     R.cut_short = true;
 }
 
-/* Finds the marks and the spans of play ahead of the replay, so a clip can
-   start before a mark and a replay can leave out what isn't play: the clock
-   records say what the clock was at each. */
-static void scan(void) {
+/* What scan finds in a file's records. */
+typedef struct {
+    uint32_t *mark_ticks; /* the clock's ticks at each mark, malloc'd */
+    size_t nmark_ticks;
+    replay_span *spans; /* where it is played, malloc'd */
+    size_t nspans;
+    uint64_t end_ms; /* the clock at the last record */
+} scan_result;
+
+/* Finds the marks and the spans of play in the records at c, so a clip
+   can start before a mark and a replay can leave out what isn't play: the
+   clock records say what the clock was at each. */
+static void scan(cursor c, scan_result *out) {
     static record r;
-    cursor c = R.in;
     size_t mark_cap = 0, span_cap = 0;
     uint64_t clock_ms = 0;
     bool on = false;
     memset(&r, 0, sizeof r);
+    memset(out, 0, sizeof *out);
     while (parse_record(&c, &r) && r.kind != REPLAY_END) {
         if (r.kind == REPLAY_CLOCK) {
             clock_ms += r.v[0];
         } else if (r.kind == REPLAY_MARK) {
-            if (R.nmark_ticks == mark_cap) {
+            if (out->nmark_ticks == mark_cap) {
                 mark_cap = mark_cap ? mark_cap * 2 : 16;
-                if (!(R.mark_ticks = realloc(R.mark_ticks, mark_cap * sizeof *R.mark_ticks)))
+                if (!(out->mark_ticks = realloc(out->mark_ticks, mark_cap * sizeof *out->mark_ticks)))
                     fatal("out of memory");
             }
-            R.mark_ticks[R.nmark_ticks++] = (uint32_t)(clock_ms * 60 / 1000);
+            out->mark_ticks[out->nmark_ticks++] = (uint32_t)(clock_ms * 60 / 1000);
         } else if (r.kind == REPLAY_PLAY && (r.v[0] != 0) != on) {
             on = r.v[0] != 0;
             if (on) {
-                if (R.nspans == span_cap) {
+                if (out->nspans == span_cap) {
                     span_cap = span_cap ? span_cap * 2 : 16;
-                    if (!(R.spans = realloc(R.spans, span_cap * sizeof *R.spans)))
+                    if (!(out->spans = realloc(out->spans, span_cap * sizeof *out->spans)))
                         fatal("out of memory");
                 }
-                R.spans[R.nspans++] = (replay_span){clock_ms * 1000, UINT64_MAX};
+                out->spans[out->nspans++] = (replay_span){clock_ms * 1000, UINT64_MAX};
             } else {
-                R.spans[R.nspans - 1].off_us = clock_ms * 1000;
+                out->spans[out->nspans - 1].off_us = clock_ms * 1000;
             }
         }
     }
     /* Play that goes on and off at the same ms is no play. */
     size_t n = 0;
-    for (size_t i = 0; i < R.nspans; i++)
-        if (R.spans[i].off_us > R.spans[i].on_us)
-            R.spans[n++] = R.spans[i];
-    R.nspans = n;
+    for (size_t i = 0; i < out->nspans; i++)
+        if (out->spans[i].off_us > out->spans[i].on_us)
+            out->spans[n++] = out->spans[i];
+    out->nspans = n;
+    out->end_ms = clock_ms;
+}
+
+/* replay_play_us over these spans. */
+static uint64_t play_us_in(const replay_span *spans, size_t nspans, uint64_t clock_us) {
+    if (!nspans)
+        return clock_us;
+    uint64_t play = 0;
+    for (size_t i = 0; i < nspans && spans[i].on_us < clock_us; i++) {
+        uint64_t off = spans[i].off_us < clock_us ? spans[i].off_us : clock_us;
+        play += off - spans[i].on_us;
+    }
+    return play;
 }
 
 size_t replay_play_spans(const replay_span **spans) {
@@ -320,16 +342,7 @@ size_t replay_play_spans(const replay_span **spans) {
     return R.nspans;
 }
 
-uint64_t replay_play_us(uint64_t clock_us) {
-    if (!R.nspans)
-        return clock_us;
-    uint64_t play = 0;
-    for (size_t i = 0; i < R.nspans && R.spans[i].on_us < clock_us; i++) {
-        uint64_t off = R.spans[i].off_us < clock_us ? R.spans[i].off_us : clock_us;
-        play += off - R.spans[i].on_us;
-    }
-    return play;
-}
+uint64_t replay_play_us(uint64_t clock_us) { return play_us_in(R.spans, R.nspans, clock_us); }
 
 uint64_t replay_clock_us(uint64_t play_us) {
     if (!R.nspans)
@@ -476,7 +489,12 @@ bool replay_open(char *err, size_t errlen) {
     R.in.data = R.data;
     if (!parse_header(&R.in, &R.h, err, errlen))
         return false;
-    scan();
+    scan_result found;
+    scan(R.in, &found);
+    R.mark_ticks = found.mark_ticks;
+    R.nmark_ticks = found.nmark_ticks;
+    R.spans = found.spans;
+    R.nspans = found.nspans;
     R.loaded = true;
     const char *game = getenv("LOONY_GAME");
     if (!game || !*game)
@@ -944,6 +962,43 @@ bool replay_check(const char *path, char *err, size_t errlen) {
     }
     free(data);
     return ok;
+}
+
+bool replay_summarize(const char *path, replay_summary *out, char *err, size_t errlen) {
+    memset(out, 0, sizeof *out);
+    size_t len;
+    uint8_t *data = gunzip_file(path, &len);
+    if (!data) {
+        snprintf(err, errlen, "it can't be read");
+        return false;
+    }
+    cursor c = {data, len, 0};
+    header h;
+    if (!parse_header(&c, &h, err, errlen)) {
+        free(data);
+        return false;
+    }
+    scan_result found;
+    scan(c, &found);
+    free(data);
+    snprintf(out->game_id, sizeof out->game_id, "%s", h.game_id);
+    out->start_unix = h.start_unix;
+    out->gmtoff = h.gmtoff;
+    /* Play to the last record: a span still open there ends with it. */
+    out->play_ticks = tick_of_us(play_us_in(found.spans, found.nspans, found.end_ms * 1000));
+    for (size_t i = 0; i < found.nmark_ticks; i++)
+        found.mark_ticks[i] =
+            tick_of_us(play_us_in(found.spans, found.nspans, us_of_tick(found.mark_ticks[i])));
+    out->marks = found.mark_ticks;
+    out->nmarks = found.nmark_ticks;
+    free(found.spans);
+    return true;
+}
+
+void replay_summary_free(replay_summary *s) {
+    free(s->marks);
+    s->marks = NULL;
+    s->nmarks = 0;
 }
 
 void replay_record_into(const char *dir, const char *game_id, const time_t *high_scores, size_t n) {

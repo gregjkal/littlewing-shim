@@ -185,3 +185,90 @@ TEST(display_poll_maps_clicks_to_the_screen_and_pastes) {
     display_set_cursor(false);
     display_set_cursor(true);
 }
+
+static int opens, opens_in_poll, key_events, keys_at_open;
+static char opened[256];
+static uint32_t opened_from;
+static bool polling; /* inside the key callback, as a menu's action runs inside an event */
+static void on_open(const char *path, uint32_t from) {
+    opens++;
+    opens_in_poll += polling;
+    keys_at_open = key_events;
+    snprintf(opened, sizeof opened, "%s", path);
+    opened_from = from;
+}
+static void on_key_opening(int sc, bool down, bool repeat) {
+    (void)sc;
+    (void)repeat;
+    key_events++;
+    if (!down)
+        return;
+    polling = true;
+    display_request_open("/r/game.lwreplay", 3600);
+    polling = false;
+}
+
+/* A file asked to be opened while events are handled (a menu item's
+   action), or dropped, opens once the events are handled: once, with its
+   start. */
+TEST(display_poll_opens_a_requested_file_after_its_events) {
+    gm_init();
+    mm_init();
+    qd_init(64, 48, 16);
+    display_present();
+    static const display_input in = {on_key_opening, on_focus, on_quit, on_mouse, on_paste, on_mark};
+    display_set_input(&in);
+    display_set_open(on_open);
+    opens = opens_in_poll = key_events = 0;
+    push_key(SDL_SCANCODE_A, true, SDL_KMOD_NONE);
+    push_key(SDL_SCANCODE_A, false, SDL_KMOD_NONE);
+    display_poll();
+    CHECK_EQ(opens, 1);
+    CHECK_EQ(opens_in_poll, 0);
+    CHECK_EQ(keys_at_open, 2); /* after the key-up that came next */
+    CHECK_STR(opened, "/r/game.lwreplay");
+    CHECK_EQ(opened_from, 3600);
+    display_poll(); /* nothing more */
+    CHECK_EQ(opens, 1);
+    SDL_Event e;
+    memset(&e, 0, sizeof e);
+    e.type = SDL_EVENT_DROP_FILE;
+    e.drop.data = "/r/dropped.lwreplay";
+    SDL_PushEvent(&e);
+    display_poll();
+    CHECK_EQ(opens, 2);
+    CHECK_STR(opened, "/r/dropped.lwreplay");
+    CHECK_EQ(opened_from, 0);
+    display_set_open(NULL);
+}
+
+static void push_drop(const char *path) {
+    SDL_Event e;
+    memset(&e, 0, sizeof e);
+    e.type = SDL_EVENT_DROP_FILE;
+    e.drop.data = path;
+    SDL_PushEvent(&e);
+}
+
+/* Of several files dropped at once, the first replay opens, whatever comes
+   before or after it. */
+TEST(display_poll_opens_the_first_replay_of_several_dropped) {
+    gm_init();
+    mm_init();
+    qd_init(64, 48, 16);
+    display_present();
+    display_set_open(on_open);
+    opens = 0;
+    push_drop("/r/notes.txt");
+    push_drop("/r/first.lwreplay");
+    push_drop("/r/second.lwreplay");
+    push_drop("/r/after.txt");
+    display_poll();
+    CHECK_EQ(opens, 1);
+    CHECK_STR(opened, "/r/first.lwreplay");
+    push_drop("/r/notes.txt");
+    display_poll(); /* not a replay: still handed on, to be turned down */
+    CHECK_EQ(opens, 2);
+    CHECK_STR(opened, "/r/notes.txt");
+    display_set_open(NULL);
+}
