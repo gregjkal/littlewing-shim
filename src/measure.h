@@ -5,7 +5,8 @@
    LOONY_MEASURE=1, at exit: the guest memory resident (mincore over the
    guest mapping, by region), the bytes a saved CPU context takes, the HD
    copies and their bytes, and how many traps the guest entered at each
-   guest_call depth (a snapshot can only be taken at depth 1). With
+   guest_call depth (which says where a snapshot could be taken: the depth
+   the game's loop runs at, 2 for Loony, inside its event loop timer). With
    LOONY_MEASURE_COW=<seconds>, once the game's clock passes that: the
    copy-on-write spike, which copies the guest mapping with mach_vm_remap
    and with vm_copy, times each copy, then times the page faults the live

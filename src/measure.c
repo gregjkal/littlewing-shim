@@ -7,7 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
-#include <time.h>
 #include <unistd.h>
 
 #include "cpu.h"
@@ -22,12 +21,6 @@ static struct {
     double cow_at; /* seconds of the game's clock, or -1 */
     bool cow_done;
 } MS;
-
-static double wall(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec + ts.tv_nsec / 1e9;
-}
 
 static double mb(size_t bytes) { return (double)bytes / (1024 * 1024); }
 
@@ -62,7 +55,10 @@ static void log_sizes(void) {
         int n = gm_regions(&regions);
         char text[512] = "";
         for (int i = 0; i < n; i++) {
-            size_t from = regions[i].base / page, to = from + regions[i].size / page;
+            size_t from = regions[i].base / page, /* the pages the region touches */
+                to = (regions[i].base + regions[i].size + page - 1) / page;
+            if (to > npages)
+                to = npages;
             size_t len = strlen(text);
             snprintf(text + len, sizeof text - len, "%s0x%08x: %.1f of %.1f MB", i ? ", " : "",
                      regions[i].base, mb(count_resident(vec, from, to) * page), mb(regions[i].size));
@@ -113,7 +109,7 @@ static void cow_spike(void) {
         const char *name = variant == 0 ? "mach_vm_remap" : "vm_copy";
         mach_vm_address_t dst = 0;
         kern_return_t kr;
-        double t0 = wall();
+        double t0 = wall_seconds();
         if (variant == 0) {
             vm_prot_t cur, max;
             kr = mach_vm_remap(mach_task_self(), &dst, len, 0, VM_FLAGS_ANYWHERE, mach_task_self(),
@@ -123,7 +119,7 @@ static void cow_spike(void) {
             if (kr == KERN_SUCCESS)
                 kr = vm_copy(mach_task_self(), (vm_address_t)(uintptr_t)src, len, (vm_address_t)dst);
         }
-        double t1 = wall();
+        double t1 = wall_seconds();
         if (kr != KERN_SUCCESS) {
             log_msg("measure: copy-on-write with %s failed: %s", name, mach_error_string(kr));
             if (dst)
@@ -136,11 +132,11 @@ static void cow_spike(void) {
             if ((vec[i] & MINCORE_INCORE) &&
                 memcmp(src + i * page, (const uint8_t *)(uintptr_t)dst + i * page, page) != 0)
                 differ++;
-        double t2 = wall();
+        double t2 = wall_seconds();
         touch_resident(vec, npages, page); /* the faults */
-        double t3 = wall();
+        double t3 = wall_seconds();
         touch_resident(vec, npages, page); /* again, private now: the loop alone */
-        double t4 = wall();
+        double t4 = wall_seconds();
         log_msg("measure: copy-on-write with %s: %.1f MB resident of %.1f MB mapped copied in "
                 "%.3f ms (%zu of %zu pages differ, checked in %.1f ms); the first write to every "
                 "resident page took %.2f ms (%.2f us a page), the loop alone %.2f ms",

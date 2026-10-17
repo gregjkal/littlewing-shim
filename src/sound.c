@@ -3,7 +3,6 @@
 #include <SDL3/SDL.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #include "guest_mem.h"
 #include "memmgr.h"
@@ -87,22 +86,16 @@ static void SDLCALL feed(void *unused, SDL_AudioStream *stream, int additional, 
    recording or a replay, now is when the game last read the clock: reading
    it here would be a step, which a recording with an audio device doesn't
    take. */
-static double wall(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec + ts.tv_nsec / 1e9;
-}
-
 static void catch_up(void) {
     if (SND.stream)
         return;
     double now = replay_recording() || replay_playing() ? misc_last_seconds() : misc_seconds();
     uint64_t target = (uint64_t)(now * MIX_RATE);
     if (target > SND.rendered) {
-        double t0 = wall();
+        double t0 = wall_seconds();
         render((uint32_t)(target - SND.rendered));
         SND.rendered = target;
-        SND.render_seconds += wall() - t0;
+        SND.render_seconds += wall_seconds() - t0;
     }
 }
 

@@ -136,12 +136,6 @@ void replay_reset(void) {
 
 static uint32_t tick(void) { return (uint32_t)(R.clock_ms * 60 / 1000); }
 
-static double wall(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec + ts.tv_nsec / 1e9;
-}
-
 _Noreturn void replay_desync(const char *fmt, ...) {
     char msg[512];
     va_list ap;
@@ -667,7 +661,7 @@ static bool start_playing(const char *game_id, const uint8_t *sha, const char *d
     free(licensed);
     read_next();
     R.mode = PLAYING;
-    R.started_wall = wall();
+    R.started_wall = wall_seconds();
     log_msg("replay: playing %s, saving in %s", getenv("LOONY_REPLAY"), data_dir);
     return true;
 }
@@ -1099,7 +1093,7 @@ void replay_finish(void) {
                     (unsigned long long)R.step, tick());
         }
         /* The speed: paced by the viewer (watch.h), or as fast as it can. */
-        double took = wall() - R.started_wall, game = (double)R.clock_ms / 1000;
+        double took = wall_seconds() - R.started_wall, game = (double)R.clock_ms / 1000;
         if (took > 0 && game > 0)
             log_msg("replay: %.1f s of the game's clock in %.2f s on the wall clock (%.1fx)", game,
                     took, game / took);

@@ -44,10 +44,10 @@ const char *trap_format_addr(uint32_t a, char buf[static 32]);
 bool trap_has_handler(uint32_t index);
 
 /* How many traps the guest has entered at each guest_call depth since
-   trap_init: counts[1] at depth 1 (the game's own code, where a snapshot
-   of the emulator could be taken; measure.h), counts[2] inside a callback
-   a handler ran, and so on, the last count holding every deeper entry.
-   counts[0] is unused. Returns how many counts there are. */
+   trap_init: counts[1] at depth 1 (the game's own code, called from main),
+   counts[2] inside a callback a handler ran (Loony's event loop timer, where
+   its games run; measure.h), and so on, the last count holding every deeper
+   entry. counts[0] is unused. Returns how many counts there are. */
 #define TRAP_DEPTH_COUNTS 8
 size_t trap_depth_counts(const uint64_t **counts);
 
