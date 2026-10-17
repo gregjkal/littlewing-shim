@@ -1,5 +1,6 @@
 #pragma once
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "cpu.h"
@@ -41,6 +42,14 @@ const char *trap_format_addr(uint32_t a, char buf[static 32]);
 
 /* True if import index has a handler. */
 bool trap_has_handler(uint32_t index);
+
+/* How many traps the guest has entered at each guest_call depth since
+   trap_init: counts[1] at depth 1 (the game's own code, where a snapshot
+   of the emulator could be taken; measure.h), counts[2] inside a callback
+   a handler ran, and so on, the last count holding every deeper entry.
+   counts[0] is unused. Returns how many counts there are. */
+#define TRAP_DEPTH_COUNTS 8
+size_t trap_depth_counts(const uint64_t **counts);
 
 /* Prints a crash report (message, registers, depth, recent imports) and exits 2. */
 _Noreturn void trap_crash(const char *fmt, ...) __attribute__((format(printf, 1, 2)));

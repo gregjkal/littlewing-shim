@@ -1060,6 +1060,60 @@ TEST(run_a_watched_replay_goes_ahead_and_back) {
     CHECK(!strstr(out[2], "replay: desync"));
 }
 
+/* Watches the recording going to a time past its end, in HD, with the seek
+   engine's measurements on (measure.h) and the copy-on-write spike at 2 s. */
+static void run_loony_watching_measured(void *unused) {
+    (void)unused;
+    unsetenv("LOONY_AUTO_ALERTS");
+    setenv("LOONY_REPLAY", replay_file, 1);
+    setenv("LOONY_DATA_DIR", run_data, 1);
+    setenv("LOONY_WATCH", "1", 1);
+    setenv("LOONY_WATCH_FROM", "36000", 1);
+    setenv("LOONY_HD", LOONY_SRC_DIR "/hd-art/loony-labyrinth", 1);
+    setenv("LOONY_MEASURE", "1", 1);
+    setenv("LOONY_MEASURE_COW", "2", 1);
+    execl(LOONY_BIN, "loony", (char *)NULL);
+    _exit(127);
+}
+
+/* A replay going to a time logs how fast it went and what its output work
+   cost; LOONY_MEASURE logs the sizes the seek engine is designed around,
+   and LOONY_MEASURE_COW the copy-on-write spike's numbers, with the copies
+   holding what the guest held. None of it changes the replay. */
+TEST(run_a_watched_replay_logs_the_seek_engines_measurements) {
+    SKIP_UNLESS_GAME();
+    char rec_dir[1024], play_dir[1024];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    char out[2][32768];
+    int rec_status = record_for_clips(rec_dir, "330 quit\n", out[0], sizeof out[0]);
+    snprintf(run_data, sizeof run_data, "%s/data-watch", play_dir);
+    int status = test_run_child(run_loony_watching_measured, NULL, out[1], sizeof out[1]);
+    run_data[0] = '\0';
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out[1], "watch: going to 10:00");
+    CHECK_CONTAINS(out[1], "watch: the stretch to the end, unpaced: ");
+    CHECK_CONTAINS(out[1], " presents; HD sync ");
+    CHECK_CONTAINS(out[1], "loony: replay: reached the end of the recording");
+    CHECK_CONTAINS(out[1], "s of the game's clock in ");
+    CHECK_CONTAINS(out[1], "measure: guest memory: ");
+    CHECK_CONTAINS(out[1], " MB resident of ");
+    CHECK_CONTAINS(out[1], "measure: a saved CPU context takes ");
+    CHECK_CONTAINS(out[1], "measure: HD copies: ");
+    CHECK_CONTAINS(out[1], "measure: trap entries by depth: 1: ");
+    CHECK_CONTAINS(out[1], "measure: copy-on-write with mach_vm_remap: ");
+    CHECK_CONTAINS(out[1], "measure: copy-on-write with vm_copy: ");
+    CHECK(!strstr(out[1], "pages differ") || !strstr(out[1], " (1 of ")); /* every page matched */
+    const char *cow = strstr(out[1], "measure: copy-on-write with mach_vm_remap: ");
+    CHECK(cow && strstr(cow, " (0 of "));
+    cow = strstr(out[1], "measure: copy-on-write with vm_copy: ");
+    CHECK(cow && strstr(cow, " (0 of "));
+    CHECK(!strstr(out[1], "replay: desync"));
+}
+
 /* The file the first clip in rec_dir/game.clips is exported to, or "". */
 static void first_clip_file(const char *rec_dir, char *out, size_t cap) {
     char list[1100], err[256];

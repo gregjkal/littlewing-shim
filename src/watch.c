@@ -71,6 +71,12 @@ static struct {
     unsigned minutes;  /* whole minutes of the clock logged since the anchor */
     bool pending;      /* the screen changed and isn't drawn yet */
     double drawn, polled;
+    /* An unpaced stretch (going or skipping): when it began on both clocks,
+       what the mixer had rendered by then, and what its output work has
+       cost so far, in seconds of wall clock (log_stretch). */
+    double stretch_wall, stretch_mixer, stretch_hd, stretch_poll, stretch_draw;
+    uint64_t stretch_us;
+    unsigned stretch_presents;
     char text[256]; /* the window's title */
 } W;
 
@@ -173,6 +179,9 @@ void watch_present(bool dirty) {
     W.pending |= dirty;
     if (!W.pending)
         return;
+    bool unpaced = W.going || W.skipping;
+    if (dirty && unpaced)
+        W.stretch_presents++;
     int speed = speeds[W.speed];
     double now = wall();
     double lag = W.paused || !speed
@@ -180,12 +189,16 @@ void watch_present(bool dirty) {
                      : now - (W.anchor_wall + (double)(W.clock_us - W.anchor_us) / 1e6 / speed);
     if (!W.skipping && watch_draws(now - W.drawn, lag, speed, W.going)) {
         draw();
+        if (unpaced)
+            W.stretch_draw += W.drawn - now;
     } else if (dirty && hd_scale()) { /* the HD copy kept in step, as when every frame is drawn */
         qd_pixels px;
         qd_palette pal;
         int w, h;
         qd_screen(&px, &pal);
         hd_frame(&px, &w, &h);
+        if (unpaced)
+            W.stretch_hd += wall() - now;
     }
 }
 
@@ -223,12 +236,36 @@ static void log_run(const char *what) {
             clip_format_time(now_tick(), b, sizeof b), took, (took - game) * 1000);
 }
 
+/* ---- unpaced stretches: going to a time, or leaving out what isn't play ---- */
+
+/* One begins now. */
+static void begin_stretch(void) {
+    W.stretch_wall = wall();
+    W.stretch_us = W.clock_us;
+    W.stretch_mixer = sound_render_seconds();
+    W.stretch_hd = W.stretch_poll = W.stretch_draw = 0;
+    W.stretch_presents = 0;
+}
+
+/* It ends: logs how fast it went, and what each kind of output work cost
+   (the numbers the seek engine is sized by; #59). */
+static void log_stretch(const char *what) {
+    double took = wall() - W.stretch_wall, game = (double)(W.clock_us - W.stretch_us) / 1e6;
+    if (took <= 0 || game <= 0)
+        return;
+    log_msg("watch: %s: %.1f s of the game's clock in %.2f s on the wall clock (%.1fx); "
+            "%u presents; HD sync %.2f s, mixer %.2f s, polling %.2f s, drawing %.2f s",
+            what, game, took, game / took, W.stretch_presents, W.stretch_hd,
+            sound_render_seconds() - W.stretch_mixer, W.stretch_poll, W.stretch_draw);
+}
+
 /* Going or skipping: the window stays live, a few times a second. */
 static void poll_now_and_then(void) {
     if (wall() - W.polled >= GOING_DRAW_GAP / 4) {
         W.polled = wall();
         display_poll();
         update_title();
+        W.stretch_poll += wall() - W.polled;
     }
 }
 
@@ -244,8 +281,10 @@ static void pace(uint64_t clock_us) {
             return;
         }
         W.going = W.skipping = false;
-        char t[32];
-        log_msg("watch: reached %s", clip_format_time(W.from, t, sizeof t));
+        char t[32], what[64];
+        snprintf(what, sizeof what, "went to %s", clip_format_time(W.from, t, sizeof t));
+        log_stretch(what);
+        log_msg("watch: reached %s", t);
         anchor();
         update_title();
         return;
@@ -257,6 +296,7 @@ static void pace(uint64_t clock_us) {
             log_run("the last stretch");
             log_msg("watch: leaving out what isn't play from %s", clip_format_time(now_tick(), t, sizeof t));
             sound_monitor(false);
+            begin_stretch();
         }
         W.clock_us = clock_us;
         poll_now_and_then();
@@ -265,6 +305,7 @@ static void pace(uint64_t clock_us) {
     if (W.skipping) { /* play again: paced from here */
         W.skipping = false;
         W.clock_us = clock_us;
+        log_stretch("left out what isn't play");
         anchor();
     }
     for (;;) {
@@ -363,9 +404,12 @@ static void step_by(int64_t step) {
     char t[32];
     log_msg("watch: going to %s", clip_format_time(tick, t, sizeof t));
     W.from = tick;
+    bool was_going = W.going;
     W.going = tick > now_tick();
     if (!W.going)
         anchor();
+    else if (!was_going && !W.skipping)
+        begin_stretch();
     sound_monitor(sound_on());
 }
 
@@ -659,7 +703,9 @@ bool watch_open(char *err, size_t errlen) {
 }
 
 static void log_at_exit(void) {
-    if (!W.paused && !W.going && !W.skipping && !W.at_end) /* logged already */
+    if (W.going || W.skipping)
+        log_stretch("the last stretch, unpaced");
+    else if (!W.paused && !W.at_end) /* logged already */
         log_run("the last stretch");
 }
 
@@ -686,12 +732,20 @@ void watch_start(const char *title, void (*restart)(void)) {
     if (W.going)
         log_msg("watch: going to %s", clip_format_time(W.from, t, sizeof t));
     anchor();
+    if (W.going)
+        begin_stretch();
     update_title();
 }
 
 void watch_hold(void) {
     if (!W.started || W.at_end)
         return;
+    if (W.going || W.skipping)
+        log_stretch("the stretch to the end, unpaced");
+    else
+        log_run("the last stretch");
+    W.at_end = true;
+    W.going = W.skipping = false;
     const char *video = getenv("SDL_VIDEO_DRIVER");
     if (video && strcmp(video, "dummy") == 0) { /* headless: nobody to close the window */
         if (export_running())
@@ -700,10 +754,6 @@ void watch_hold(void) {
             idle();
         return;
     }
-    if (!W.skipping) /* else logged as it began */
-        log_run("the last stretch");
-    W.at_end = true;
-    W.going = W.skipping = false;
     sound_monitor(false);
     char t[32];
     log_msg("watch: the end, at %s: close the window to quit", clip_format_time(now_tick(), t, sizeof t));

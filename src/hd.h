@@ -48,6 +48,10 @@ void hd_configure(int scale, const char *art_dir, const char *dump_dir);
 /* N, or 0 when HD is off. */
 int hd_scale(void);
 
+/* The HD copies held: how many (*count), and the bytes they take, with
+   their 1x reference copies and change notes (measure.h). */
+size_t hd_copies_bytes(int *count);
+
 /* Forgets the HD copy of the buffer at base, which is being freed. */
 void hd_forget(const uint8_t *base);
 

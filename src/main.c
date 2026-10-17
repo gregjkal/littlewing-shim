@@ -23,6 +23,7 @@
 #include "hd.h"
 #include "libc.h"
 #include "loader.h"
+#include "measure.h"
 #include "memmgr.h"
 #include "menu.h"
 #include "misc.h"
@@ -113,6 +114,7 @@ static void present_frame(void) {
         watch_present(dirty);
     else if (dirty)
         display_present();
+    measure_present();
 }
 
 /* An error before the game starts: printed, and shown when running as the
@@ -401,6 +403,7 @@ int main(int argc, char **argv) {
     char self[PATH_MAX];
     uint32_t self_size = sizeof self;
     hd_init(game->id, _NSGetExecutablePath(self, &self_size) == 0 ? self : argv[0]);
+    measure_init();
     display_set_title(game->title);
     events_set_present(present_frame);
     events_set_poll(display_poll);

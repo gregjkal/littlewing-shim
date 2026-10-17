@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "guest_mem.h"
 #include "memmgr.h"
@@ -30,6 +31,7 @@ static struct {
     SDL_AudioStream *monitor; /* clock-driven, and played too (sound_open_monitor) */
     bool monitor_on;
     uint64_t rendered;       /* clock-driven: frames rendered since sound_init */
+    double render_seconds;   /* and the wall clock spent rendering them */
     wav_file wav;
     bool recording;
     int volume;
@@ -85,16 +87,26 @@ static void SDLCALL feed(void *unused, SDL_AudioStream *stream, int additional, 
    recording or a replay, now is when the game last read the clock: reading
    it here would be a step, which a recording with an audio device doesn't
    take. */
+static double wall(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
 static void catch_up(void) {
     if (SND.stream)
         return;
     double now = replay_recording() || replay_playing() ? misc_last_seconds() : misc_seconds();
     uint64_t target = (uint64_t)(now * MIX_RATE);
     if (target > SND.rendered) {
+        double t0 = wall();
         render((uint32_t)(target - SND.rendered));
         SND.rendered = target;
+        SND.render_seconds += wall() - t0;
     }
 }
+
+double sound_render_seconds(void) { return SND.render_seconds; }
 
 void sound_init(void) {
     mix_init();
@@ -102,6 +114,7 @@ void sound_init(void) {
     memset(SND.warned, 0, sizeof SND.warned);
     memset(SND.warned_encoding, 0, sizeof SND.warned_encoding);
     SND.rendered = 0;
+    SND.render_seconds = 0;
 }
 
 static void shutdown_output(void) {

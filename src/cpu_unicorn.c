@@ -223,3 +223,5 @@ void cpu_restore(cpu_context *ctx) {
     uc_context_free(ctx->uc_ctx);
     free(ctx);
 }
+
+size_t cpu_context_size(void) { return uc_context_size(uc); }
