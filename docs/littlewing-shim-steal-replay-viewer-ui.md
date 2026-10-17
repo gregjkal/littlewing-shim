@@ -19,6 +19,14 @@ The viewer can do the job, but you have to already know how. Every reference put
 9. **Give recordings a library and real ways in, as slippi-launcher and IINA do.** A document type, Open Recent, a browser with date and length, and "play from here" on each mark. Confidence: high.
 10. **Name exports by time range, never overwrite, show progress with cancel, and reveal the file, as LosslessCut, IINA, uosc and Slippi do.** Confidence: high.
 
+## Amendments, 2026-10-17
+
+A review of this report against the issues and the source changed three things. The findings stand as written; these notes say where the plan now departs from them, and #30, #33, #34, #39 and #42 carry the same changes.
+
+- **Right binds with the key table, in step 1** (Finding 6, #33). A forward seek doesn't restart the program, so Right goes ahead 5 s as soon as the table exists. Only Left, the back seek, waits for #59 and #42, and until then it flashes a message. Period and 0 to 9 can land early for the same reason if waiting on Left holds them up (#34).
+- **The strip is drawn in window coordinates** (Finding 5, #39). Compute the game's letterboxed rect by hand in place of `SDL_SetRenderLogicalPresentation`, and draw the strip below it. It then stays 32 pt and crisp at any window size, the hit test is one rectangle on the raw event position, and `present` in src/display.c already draws one texture into one rect. Growing the logical area would scale and blur the strip's text with the window.
+- **Scrubbing lands in two halves** (Finding 2, #42). The drag preview, seek on release, pause on press with restore on release, and newest target wins are right whatever a seek costs, so they go first. The progress overlay, the two-position display and the 300 ms and 500 ms thresholds are sized against a 90-second back seek, and wait for #59's measured number.
+
 ## Method
 
 I profiled the subject first, at PR #29 (commit 2ab6ac3), through nine UI lenses: transport controls, timeline, seek feel, range editing, feedback and discoverability, control placement, library and entry points, export flow, and messes. A survey then searched for open-source projects whose UI solves the same problem in any stack. It confirmed each candidate's feature in its source, not its README, and shortlisted 5 of 12 verified candidates. Parallel dives read each reference at a pinned commit and cited every UI behavior to the file and lines that implement it. Synthesis grouped the behaviors several references share, mapped each to a named subject deficit, and ranked by deficit severity, then how many references agree, then adoption cost. A citation check opened every cited range in the pinned clones and every web page cited for closed products. 72 of 83 citations passed as written, and the 11 failures were corrected, none dropped. The per-idiom provenance step, which dates idioms by AI-authorship markers in commit history, was skipped by choice: it says little about UI paradigms. One reference, LosslessCut, ships an AGENTS.md telling coding agents to add commit trailers. The dive recorded it and did not act on it.
@@ -141,7 +149,7 @@ This replaces `numbered_base` and `file_of` in src/clip.c and the blind second p
 ## Recommended execution order
 
 1. **The cheap wins under #31.** Export naming, skip-if-exists, progress lines and reveal in Finder (Finding 10). A Replay menu fed by one key table (Finding 4). The `.lwreplay` document type and a Replays menu (Finding 9). None of these needs on-screen drawing.
-2. **Key grammar** (Finding 6), in the same key table as step 1. It is small, but it moves muscle memory, so ship it before people learn the old keys.
+2. **Key grammar** (Finding 6), in the same key table as step 1. It is small, but it moves muscle memory, so ship it before people learn the old keys. Right lands with the table in step 1; Left waits (see Amendments).
 3. **The bar under #30.** The show-on-demand strip (Finding 5), the timeline with marks and clips (Finding 1), and on-screen feedback with the real speed (Finding 7). These touch the same display code, so do them as one piece.
 4. **Scrubbing** (Finding 2) on top of the bar: drag previews, seek on release, newest target wins, a progress overlay with cancel.
 5. **The clip list** (Finding 8), once the bar can show and drag ranges.
