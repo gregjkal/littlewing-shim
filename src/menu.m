@@ -9,7 +9,9 @@
 #include <string.h>
 
 #include "cf.h"
+#include "display.h"
 #include "game.h"
+#include "recordings.h"
 #include "replay.h"
 #include "settings.h"
 #include "sound.h"
@@ -272,6 +274,183 @@ void menu_add_replay(void) {
     }
 }
 
+/* The Replays menu, rebuilt each time it opens so a game recorded a moment
+   ago is in it, and the File menu's Open Recent, rebuilt the same way: the
+   menus' delegate and their items' target. An item's representedObject
+   holds the recording's path and where to start, in ticks of play. */
+@interface LoonyRecordings : NSObject <NSMenuDelegate>
+@property(nonatomic, strong) NSMenu *recent; /* Open Recent; the other is Replays */
+@end
+
+static NSMenuItem *open_item(NSString *title, const char *path, uint32_t from, id target) {
+    NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:@selector(open:) keyEquivalent:@""];
+    item.target = target;
+    item.representedObject = @{@"path" : @(path), @"from" : @(from)};
+    return item;
+}
+
+@implementation LoonyRecordings
+/* Neither menu has key equivalents. Saying so keeps AppKit from filling
+   them, a rescan of the recordings folder, on every Command-key press. */
+- (BOOL)menuHasKeyEquivalent:(NSMenu *)menu
+                    forEvent:(NSEvent *)event
+                      target:(id _Nullable *)target
+                      action:(SEL _Nullable *)action {
+    (void)menu;
+    (void)event;
+    (void)target;
+    (void)action;
+    return NO;
+}
+
+- (void)menuNeedsUpdate:(NSMenu *)menu {
+    [menu removeAllItems];
+    if (menu == self.recent) {
+        [self fillRecent:menu];
+        return;
+    }
+    char dir[PATH_MAX] = "", label[256];
+    const recording *list = NULL;
+    size_t n = recordings_dir(dir, sizeof dir) ? recordings_list(dir, &list) : 0;
+    bool games = false; /* of more than one game: each says which */
+    for (size_t i = 1; i < n; i++)
+        games = games || strcmp(list[i].game_id, list[0].game_id) != 0;
+    if (!n)
+        [menu addItem:disabled_item(@"No Recordings")];
+    for (size_t i = 0; i < n; i++) {
+        NSString *title = @(recordings_label(&list[i], games, label, sizeof label));
+        [menu addItem:open_item(title, list[i].path, 0, self)];
+        for (size_t m = 0; m < list[i].nmarks; m++) {
+            if (!recordings_mark_shown(&list[i], m))
+                continue;
+            title = @(recordings_mark_label(list[i].marks[m], label, sizeof label));
+            NSMenuItem *at = open_item(title, list[i].path, list[i].marks[m], self);
+            at.indentationLevel = 1;
+            [menu addItem:at];
+        }
+    }
+    [menu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *show = [[NSMenuItem alloc] initWithTitle:@"Show Recordings in Finder"
+                                                  action:@selector(showFolder:)
+                                           keyEquivalent:@""];
+    show.target = self;
+    show.representedObject = @(dir);
+    show.enabled = dir[0] != '\0';
+    [menu addItem:show];
+}
+
+/* The recordings watched lately that are still there, then Clear Menu. */
+- (void)fillRecent:(NSMenu *)menu {
+    NSDocumentController *docs = [NSDocumentController sharedDocumentController];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSInteger shown = 0;
+    for (NSURL *url in docs.recentDocumentURLs) {
+        if (!url.fileURL || ![fm fileExistsAtPath:url.path])
+            continue;
+        NSMenuItem *item = open_item(url.lastPathComponent, url.fileSystemRepresentation, 0, self);
+        NSImage *icon = [[NSWorkspace sharedWorkspace] iconForFile:url.path];
+        icon.size = NSMakeSize(16, 16);
+        item.image = icon;
+        [menu addItem:item];
+        shown++;
+    }
+    if (shown)
+        [menu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *clear = [[NSMenuItem alloc] initWithTitle:@"Clear Menu"
+                                                   action:@selector(clearRecentDocuments:)
+                                            keyEquivalent:@""];
+    clear.target = docs; /* which disables it when there is nothing to clear */
+    [menu addItem:clear];
+}
+
+- (void)open:(NSMenuItem *)item {
+    NSDictionary *info = item.representedObject;
+    display_request_open([info[@"path"] fileSystemRepresentation], [info[@"from"] unsignedIntValue]);
+}
+
+- (void)showFolder:(NSMenuItem *)item {
+    NSString *dir = item.representedObject;
+    if (!make_dirs(dir.fileSystemRepresentation)) {
+        log_msg("menu: can't create %s", dir.fileSystemRepresentation);
+        return;
+    }
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:dir isDirectory:YES]];
+}
+@end
+
+static bool replays_wanted;              /* menu_add_replays was called, and not taken back */
+static LoonyRecordings *recordings;      /* the Replays and Open Recent menus' delegate, once added */
+static NSMenuItem *replays_item, *file_item; /* their titles in the bar */
+static char recent_path[PATH_MAX];       /* menu_note_recent's, until menu_install */
+
+/* The Replays menu, before the Window menu (after Sound, High Scores and
+   Replay), and the File menu, after the app menu. */
+static void add_replays_menu(void) {
+    NSMenu *bar = NSApp.mainMenu;
+    if (recordings || !sound_item || !bar)
+        return;
+    recordings = [[LoonyRecordings alloc] init];
+    NSMenu *list = [[NSMenu alloc] initWithTitle:@"Replays"];
+    list.delegate = recordings;
+    list.autoenablesItems = NO;
+    [list addItem:disabled_item(@"No Recordings")]; /* until it opens */
+    replays_item = [[NSMenuItem alloc] initWithTitle:@"Replays" action:nil keyEquivalent:@""];
+    replays_item.submenu = list;
+    NSInteger at = NSApp.windowsMenu ? [bar indexOfItemWithSubmenu:NSApp.windowsMenu] : -1;
+    [bar insertItem:replays_item atIndex:at < 0 ? bar.numberOfItems : at];
+
+    NSMenu *recent = [[NSMenu alloc] initWithTitle:@"Open Recent"];
+    recent.delegate = recordings;
+    recordings.recent = recent;
+    [recent addItem:disabled_item(@"Clear Menu")]; /* until it opens */
+    NSMenuItem *open_recent = [[NSMenuItem alloc] initWithTitle:@"Open Recent" action:nil keyEquivalent:@""];
+    open_recent.submenu = recent;
+    NSMenu *file = [[NSMenu alloc] initWithTitle:@"File"];
+    [file addItem:open_recent];
+    file_item = [[NSMenuItem alloc] initWithTitle:@"File" action:nil keyEquivalent:@""];
+    file_item.submenu = file;
+    [bar insertItem:file_item atIndex:bar.numberOfItems ? 1 : 0];
+    log_msg("menu: Replays and File added");
+}
+
+void menu_add_replays(void) {
+    replays_wanted = true;
+    @autoreleasepool {
+        add_replays_menu();
+    }
+}
+
+void menu_remove_replays(void) {
+    replays_wanted = false;
+    @autoreleasepool {
+        NSMenu *bar = NSApp.mainMenu;
+        if (!recordings || !bar)
+            return;
+        [bar removeItem:replays_item];
+        [bar removeItem:file_item];
+        replays_item = file_item = nil;
+        recordings = nil;
+        log_msg("menu: Replays and File taken away");
+    }
+}
+
+static void note_recent(const char *path) {
+    NSURL *url = [NSURL fileURLWithFileSystemRepresentation:path isDirectory:NO relativeToURL:nil];
+    [[NSDocumentController sharedDocumentController] noteNewRecentDocumentURL:url.absoluteURL];
+}
+
+void menu_note_recent(const char *path) {
+    if (!path || !*path)
+        return;
+    if (!controller) { /* the menu bar isn't there yet: menu_install notes it */
+        snprintf(recent_path, sizeof recent_path, "%s", path);
+        return;
+    }
+    @autoreleasepool {
+        note_recent(path);
+    }
+}
+
 void menu_reveal(const char *const *paths, size_t n) {
     const char *driver = SDL_GetCurrentVideoDriver();
     if (!n || !driver || strcmp(driver, "cocoa") != 0)
@@ -435,5 +614,11 @@ void menu_install(void) {
             add_scores_menu();
         if (replay_wanted)
             add_replay_menu();
+        if (replays_wanted)
+            add_replays_menu();
+        if (recent_path[0]) {
+            note_recent(recent_path);
+            recent_path[0] = '\0';
+        }
     }
 }

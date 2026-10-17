@@ -22,9 +22,9 @@ pkg_check_modules(UNICORN REQUIRED IMPORTED_TARGET unicorn)
 pkg_check_modules(SDL3 REQUIRED IMPORTED_TARGET sdl3)
 
 # Objective-C only where Apple's frameworks need it (menu.m: the Sound, High
-# Scores and Replay menus, Check for Updates, with Sparkle loaded at run time,
-# and showing exported clips in Finder; mp4.m: clips, written with
-# AVFoundation).
+# Scores, Replay and Replays menus, File > Open Recent, Check for Updates,
+# with Sparkle loaded at run time, and showing exported clips and the
+# recordings folder in Finder; mp4.m: clips, written with AVFoundation).
 file(GLOB CORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.c ${CMAKE_SOURCE_DIR}/src/*.m)
 list(REMOVE_ITEM CORE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.c)
 

@@ -13,6 +13,7 @@
 #include "clip.h"
 #include "mp4.h"
 #include "plist.h"
+#include "recordings.h"
 #include "util.h"
 #include "watch.h"
 
@@ -961,6 +962,65 @@ TEST(run_a_watched_replay_keeps_time_and_its_clips_render) {
     CHECK_EQ(again_status, 0);
     CHECK_CONTAINS(again, "loony: clip: all 2 clips are written already");
     free(spans);
+}
+
+static const recording *listed; /* run_loony_watching_listed's recording */
+
+/* Watches the listed recording from its first mark, as the Replays menu's
+   "Play from" item does (main.c's open_replay_at), in run_data. */
+static void run_loony_watching_listed(void *unused) {
+    (void)unused;
+    unsetenv("LOONY_AUTO_ALERTS");
+    recordings_watch_env(listed->path, listed->marks[0]);
+    setenv("LOONY_DATA_DIR", run_data, 1); /* in place of a temporary folder */
+    execl(LOONY_BIN, "loony", (char *)NULL);
+    _exit(127);
+}
+
+/* A game marked earlier is in the list of recordings, its marks in play
+   time, and watching it from a mark goes there first and plays on from
+   there to the end. */
+TEST(run_a_listed_recording_plays_from_its_mark) {
+    SKIP_UNLESS_GAME();
+    char rec_dir[1024], play_dir[1024];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    char out[2][32768];
+    int rec_status = record_for_clips(rec_dir, "100 mark\n280 mark\n330 quit\n", out[0], sizeof out[0]);
+    const recording *list = NULL;
+    size_t n = recordings_list(rec_dir, &list);
+    int watch_status = -1;
+    if (n == 1 && list[0].nmarks == 2) {
+        listed = &list[0];
+        snprintf(run_data, sizeof run_data, "%s/data-watch", play_dir);
+        watch_status = test_run_child(run_loony_watching_listed, NULL, out[1], sizeof out[1]);
+        run_data[0] = '\0';
+    }
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(n, 1);
+    if (n != 1)
+        return;
+    CHECK_EQ(list[0].nmarks, 2);
+    CHECK(list[0].length >= 330 && list[0].length < 1200); /* launch to the quit, and its end */
+    /* The opening isn't a game, so it is all play: the marks are where they
+       were made. */
+    unsigned made = mark_tick(out[0], "replay", 1);
+    CHECK(made >= 100 && made < 110);
+    if (list[0].nmarks == 2) {
+        CHECK_EQ(list[0].marks[0], made);
+        CHECK_EQ(list[0].marks[1], mark_tick(out[0], "replay", 2));
+    }
+    CHECK_EQ(watch_status, 0);
+    char want[64], t[32];
+    snprintf(want, sizeof want, "watch: reached %s\n", clip_format_time(made, t, sizeof t));
+    CHECK_CONTAINS(out[1], want);
+    CHECK_CONTAINS(out[1], "loony: replay: reached the end of the recording");
+    CHECK(!strstr(out[1], "replay: desync"));
+    snprintf(want, sizeof want, "watch: the last stretch, %s-", t); /* watched from there */
+    CHECK_CONTAINS(out[1], want);
+    recordings_forget();
 }
 
 /* L goes ahead without pacing; J goes back by restarting the program,

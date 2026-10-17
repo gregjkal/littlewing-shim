@@ -30,6 +30,7 @@
 #include "picker.h"
 #include "play.h"
 #include "qd.h"
+#include "recordings.h"
 #include "replay.h"
 #include "rsrc.h"
 #include "script.h"
@@ -205,11 +206,13 @@ static void restart_watching(void) {
     restart_self("watch: restarting the replay");
 }
 
-/* A recording opened from Finder or dropped on the window (display.h):
-   the program restarts to watch it (watch.h) at 0:00, in a save folder of
-   its own, whatever is playing. A game's preferences are saved first, and
-   its recording ends where it is (restart_self). */
-static void open_replay(const char *path) {
+/* A recording opened from Finder, dropped on the window or chosen from the
+   Replays or Open Recent menu (display.h): the program restarts to watch
+   it (watch.h) from from_ticks of play, in a save folder of its own,
+   whatever is playing. A game's preferences are saved first, and its
+   recording ends where it is (restart_self), so the recording being made
+   can be opened too. */
+static void open_replay_at(const char *path, uint32_t from_ticks) {
     size_t n = strlen(path);
     char full[PATH_MAX];
     if (n < 9 || strcmp(path + n - 9, ".lwreplay") != 0 || clip_on()) {
@@ -233,13 +236,7 @@ static void open_replay(const char *path) {
     if (!replay_playing())
         cf_save_prefs();
     watch_stop_export(); /* it would go on unseen */
-    setenv("LOONY_REPLAY", full, 1);
-    setenv("LOONY_WATCH", "1", 1);
-    static const char *const clear[] = {"LOONY_GAME", "LOONY_DATA_DIR", "LOONY_RECORD",
-                                        "LOONY_CLIP", "LOONY_REPLAY_LICENSE", "LOONY_WATCH_FROM",
-                                        "LOONY_WATCH_SPEED", "LOONY_WATCH_PAUSED", "LOONY_WATCH_IN"};
-    for (size_t i = 0; i < sizeof clear / sizeof clear[0]; i++)
-        unsetenv(clear[i]);
+    recordings_watch_env(full, from_ticks);
     restart_self("watch: opening a replay");
 }
 
@@ -252,7 +249,7 @@ int main(int argc, char **argv) {
         return startup_error("%s", err);
     if (!watch_open(err, sizeof err))
         return startup_error("%s", err);
-    display_set_open(open_replay);
+    display_set_open(open_replay_at);
     /* Launched by opening a recording in Finder: watch it, before the
        picker shows or a game starts recording (which deletes old ones). */
     const char *replaying = getenv("LOONY_REPLAY");
@@ -296,6 +293,7 @@ int main(int argc, char **argv) {
         if (n == 1) {
             game = installed[0];
         } else {
+            menu_add_replays(); /* the picker's menu bar has them */
             game = picker_run(installed, n);
             return_to_picker = true;
         }
@@ -362,13 +360,14 @@ int main(int argc, char **argv) {
     bool have_data = files_data_dir(game->id, data_dir, sizeof data_dir);
     if (!have_data)
         log_msg("neither LOONY_DATA_DIR nor HOME is set: nothing will be saved");
-    if (strcmp(game->id, "loony-labyrinth") == 0) { /* replays are its alone, for now */
-        char rec_dir[PATH_MAX + 16];
-        if (files_data_root(data_root, sizeof data_root))
-            snprintf(rec_dir, sizeof rec_dir, "%s/recordings", data_root);
-        else if (have_data)
-            snprintf(rec_dir, sizeof rec_dir, "%s/recordings", data_dir);
-        else
+    bool loony = strcmp(game->id, "loony-labyrinth") == 0; /* replays are its alone, for now */
+    if (loony && !clip_on())
+        menu_add_replays();
+    else
+        menu_remove_replays(); /* the picker had them */
+    if (loony) {
+        char rec_dir[PATH_MAX];
+        if (!recordings_dir(rec_dir, sizeof rec_dir))
             rec_dir[0] = '\0';
         time_t scores[16];
         size_t nscores = 0;
@@ -417,6 +416,7 @@ int main(int argc, char **argv) {
         events_set_replay_key(watch_key);
         watch_start(game->title, restart_watching);
         menu_add_replay();
+        menu_note_recent(getenv("LOONY_REPLAY")); /* for File > Open Recent */
     }
     const char *script = getenv("LOONY_SCRIPT");
     if (script && *script && !script_load(script, err, sizeof err)) {

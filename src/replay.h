@@ -130,6 +130,26 @@ bool replay_share(const char *src, const char *dst, char *err, size_t errlen);
    checked once the replay starts. */
 bool replay_check(const char *path, char *err, size_t errlen);
 
+/* What a list of recordings shows of one (recordings.h). */
+typedef struct {
+    char game_id[64];
+    int64_t start_unix; /* the header's: when the launch that recorded it started */
+    int32_t gmtoff;     /* and its time zone, in seconds east of UTC */
+    uint32_t play_ticks; /* its length in play time (replay_play_ticks): to its
+                            last record when it ends in play */
+    uint32_t *marks;     /* its marks in play ticks, as the viewer counts them
+                            (LOONY_WATCH_FROM); malloc'd */
+    size_t nmarks;
+} replay_summary;
+
+/* Reads the recording at path into s, decompressing all of it, without
+   touching the replay being played or recorded. A file still being
+   written reads to where it was last flushed. False, with err saying why,
+   when it isn't a replay this version reads. Free s with
+   replay_summary_free. */
+bool replay_summarize(const char *path, replay_summary *s, char *err, size_t errlen);
+void replay_summary_free(replay_summary *s);
+
 /* Replay: fn is called with the clock, in us, each time it is about to move,
    before the game sees it (watch.h paces the replay there). */
 void replay_set_pace(void (*fn)(uint64_t clock_us));
