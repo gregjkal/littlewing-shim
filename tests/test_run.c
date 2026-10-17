@@ -1114,6 +1114,75 @@ TEST(run_a_watched_replay_logs_the_seek_engines_measurements) {
     CHECK(!strstr(out[1], "replay: desync"));
 }
 
+/* Replays the recording in HD with the script loaded: headless (watching
+   nothing, so the HD copy is synced on every present), or watching it going
+   to hd_from (watch_from), so the copy is synced once at arrival. */
+static const char *hd_from;
+
+static void run_loony_replaying_hd(void *watching) {
+    unsetenv("LOONY_AUTO_ALERTS");
+    setenv("LOONY_REPLAY", replay_file, 1);
+    setenv("LOONY_DATA_DIR", run_data, 1);
+    setenv("LOONY_SCRIPT", script_path, 1);
+    setenv("LOONY_HD", LOONY_SRC_DIR "/hd-art/loony-labyrinth", 1);
+    if (watching) {
+        setenv("LOONY_WATCH", "1", 1);
+        setenv("LOONY_WATCH_FROM", hd_from, 1);
+        setenv("LOONY_WATCH_SPEED", "0", 1);
+    }
+    execl(LOONY_BIN, "loony", (char *)NULL);
+    _exit(127);
+}
+
+/* The HD screen at tick 241 of the recording, as a PNG's hash: from a
+   straight replay, or from one watched going to tick 240 (so the HD copy of
+   the screen was synced once at arrival, the tick before). Returns the
+   run's status; *hash gets 0 if no PNG was written. */
+static int hd_shot_at_241(bool watching, const char *play_dir, uint32_t *hash, char *out, size_t cap) {
+    char shot[1024];
+    tmp_name(shot, sizeof shot, "shot");
+    tmp_name(script_path, sizeof script_path, "script");
+    FILE *f = fopen(script_path, "w");
+    fprintf(f, "241 screenshot %s\n", shot);
+    fclose(f);
+    hd_from = "240";
+    snprintf(run_data, sizeof run_data, "%s/data-%s", play_dir, watching ? "seek" : "straight");
+    int status = test_run_child(run_loony_replaying_hd, watching ? (void *)"1" : NULL, out, cap);
+    run_data[0] = '\0';
+    size_t len = 0;
+    uint8_t *png = read_file(shot, &len);
+    *hash = png ? fnv1a32(png, len) : 0;
+    free(png);
+    unlink(shot);
+    unlink(script_path);
+    return status;
+}
+
+/* The HD picture after a seek, synced once from the 1x screen at arrival,
+   is the picture a straight run has at the same tick, synced on every
+   present on the way (the seek engine report's Spike C). */
+TEST(run_a_watched_replays_hd_after_a_seek_matches_a_straight_run) {
+    SKIP_UNLESS_GAME();
+    char rec_dir[1024], play_dir[1024];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    char out[3][32768];
+    uint32_t straight, seek;
+    int rec_status = record_for_clips(rec_dir, "330 quit\n", out[0], sizeof out[0]);
+    int straight_status = hd_shot_at_241(false, play_dir, &straight, out[1], sizeof out[1]);
+    int seek_status = hd_shot_at_241(true, play_dir, &seek, out[2], sizeof out[2]);
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(straight_status, 0);
+    CHECK_EQ(seek_status, 0);
+    CHECK_CONTAINS(out[2], "watch: reached 0:04");
+    CHECK(!strstr(out[1], "replay: desync"));
+    CHECK(!strstr(out[2], "replay: desync"));
+    CHECK(straight != 0);
+    CHECK_EQ(seek, straight);
+}
+
 /* The file the first clip in rec_dir/game.clips is exported to, or "". */
 static void first_clip_file(const char *rec_dir, char *out, size_t cap) {
     char list[1100], err[256];
