@@ -163,15 +163,15 @@ LittleWing's input log is immutable, fully decompressed into `R.data`, and openi
 ## Recommended execution order
 
 1. **Measure.** Log resident guest pages with `mincore()`, `uc_context_size`, HD twin count and bytes at 4x, and unpaced replay speed with and without HD sync and mixer rendering. Every size in this report is an estimate until this lands.
-2. **Spike A, restore at a depth-1 trap entry.** Headless, Loony, HD off. Capture guest pages, `uc_context` and every emulation module's statics crudely, at tick N. Run on, restore at the next depth-1 trap entry, flush the translation cache, and replay to the end. Pass means "no desync" and frame hashes that match. Nothing else gets built until this passes.
-3. **Spike B, the end-of-replay re-entry.** Seek back from `watch_hold`, both after `main` returns and from `R.end` inside a trap. Pass means the same.
-4. **Spike C, HD recipe rebuild.** Compare the restored HD screen with the straight run at the same tick. Its result picks Finding 7's path or its fallback. If Spike A fails for a reason the depth-1 rule can't fix, test fork with MAP_JIT under the hardened runtime before considering a core process.
-5. **The walker and registry.** Add tagged blocks, markers, length checks, zeroing and Verify mode, then convert the fourteen plain modules and the six heap modules. Add Finding 4's round-trip unit test in the same step.
-6. **The store**, as a standalone module with unit tests on fake blobs, including hundreds of thousands of captures and wraparound. Then the tiers, the gap rule and `is_reserved`.
-7. **The seek controller.** Target, `gen`, skip-if-closer and play/pause restore, replacing `go_back`. Rewrite the two restart tests deliberately in this commit, and add the seek-across-a-snapshot integration test.
-8. **Output suppression** (Finding 8), with the speed measured before and after.
+2. **Output suppression against today's restart path** (Finding 8, issue #59). This needs no snapshot, and it comes before the spikes because it delivers most of the user-visible win on its own: skip `hd_frame` on skipped presents and the mixer's `catch_up` while going, sync both once at arrival, and measure the back seek before and after. At the prelude's 70x, a 14-minute back seek costs about 15 s instead of about 90 s. The HD picture after arrival is also Spike C's first data point. The UI report's Finding 6 (arrows that seek back) waits for this step, not for the engine.
+3. **Spike A, restore at a depth-1 trap entry.** Headless, Loony, HD off. Capture guest pages, `uc_context` and every emulation module's statics crudely, at tick N. Run on, restore at the next depth-1 trap entry, flush the translation cache, and replay to the end. Pass means "no desync" and frame hashes that match. Nothing else gets built until this passes.
+4. **Spike B, the end-of-replay re-entry.** Seek back from `watch_hold`, both after `main` returns and from `R.end` inside a trap. Pass means the same.
+5. **Spike C, HD recipe rebuild.** Compare the restored HD screen with the straight run at the same tick. Its result picks Finding 7's path or its fallback. If Spike A fails for a reason the depth-1 rule can't fix, test fork with MAP_JIT under the hardened runtime before considering a core process.
+6. **The walker and registry.** Add tagged blocks, markers, length checks, zeroing and Verify mode, then convert the fourteen plain modules and the six heap modules. Add Finding 4's round-trip unit test in the same step.
+7. **The store**, as a standalone module with unit tests on fake blobs, including hundreds of thousands of captures and wraparound. Then the tiers, the gap rule and `is_reserved`.
+8. **The seek controller.** Target, `gen`, skip-if-closer and play/pause restore, replacing `go_back`. Rewrite the two restart tests deliberately in this commit, and add the seek-across-a-snapshot integration test. Step 2's skips apply to the fast-forward after a restore too; a snapshot captured while output was skipped carries the stale-output flag from Finding 8.
 9. **Page sharing** (Finding 6), if step 1 and real use show the budget is short.
-10. **Later.** Persisted snapshots for the exporter, behind a build-ID header. With cheap back seeks, revisit the UI report's Finding 2 and Finding 6: live scrubbing, and arrows that seek back 5 s and comma for a frame back, become affordable once the New tier is dense.
+10. **Later.** A persisted game-start snapshot in the recording (issue #46), behind a build-ID header, which also lets the exporter skip its seek from launch. With cheap back seeks, revisit the UI report's Finding 2 and Finding 6: live scrubbing and comma for a frame back become affordable once the New tier is dense.
 
 ## Refactor notes
 
