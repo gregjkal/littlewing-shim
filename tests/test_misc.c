@@ -219,23 +219,6 @@ TEST(misc_seconds_has_sub_tick_resolution) {
     CHECK(b - a < 0.5);
 }
 
-TEST(misc_delay_and_tick_count_run_the_idle_hook) {
-    setup();
-    idle_calls = 0;
-    misc_set_idle(count_idle);
-    call_import("Delay", 2, 3u, 0u);
-    int after_delay = idle_calls;
-    uint32_t t0 = misc_ticks();
-    for (int i = 0; i < 1000; i++)
-        call_import("TickCount", 0);
-    uint32_t ticks = misc_ticks() - t0; /* more than a couple on a busy machine */
-    misc_set_idle(NULL);
-    CHECK(after_delay >= 3); /* once per tick while waiting */
-    CHECK(after_delay <= 5);
-    /* TickCount only when the tick changes, not once per call */
-    CHECK(idle_calls - after_delay <= (int)ticks + 1);
-}
-
 /* Runs with the virtual clock; restores the real one afterwards. */
 static void fixed_setup(void) {
     setenv("LOONY_FIXED_CLOCK", "1", 1);
@@ -245,6 +228,30 @@ static void fixed_setup(void) {
 static void fixed_teardown(void) {
     unsetenv("LOONY_FIXED_CLOCK");
     misc_init();
+}
+
+TEST(misc_delay_and_tick_count_run_the_idle_hook) {
+    /* Delay on the virtual clock, where h_delay moves exactly one tick a
+       step however busy the machine. On the real clock a runner that stalls
+       inside the Delay sees two ticks go by, not three (#61). */
+    fixed_setup();
+    idle_calls = 0;
+    misc_set_idle(count_idle);
+    call_import("Delay", 2, 3u, 0u);
+    int after_delay = idle_calls;
+    misc_set_idle(NULL);
+    fixed_teardown();
+    idle_calls = 0;
+    misc_set_idle(count_idle);
+    uint32_t t0 = misc_ticks();
+    for (int i = 0; i < 1000; i++)
+        call_import("TickCount", 0);
+    uint32_t ticks = misc_ticks() - t0; /* more than a couple on a busy machine */
+    misc_set_idle(NULL);
+    CHECK(after_delay >= 3); /* once per tick while waiting */
+    CHECK(after_delay <= 4);
+    /* TickCount only when the tick changes, not once per call */
+    CHECK(idle_calls <= (int)ticks + 1);
 }
 
 TEST(misc_fixed_clock_stands_still_until_the_game_waits) {
