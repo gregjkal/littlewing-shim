@@ -74,7 +74,7 @@ static struct {
     /* An unpaced stretch (going or skipping): when it began on both clocks,
        what the mixer had rendered by then, and what its output work has
        cost so far, in seconds of wall clock (log_stretch). */
-    double stretch_wall, stretch_mixer, stretch_poll, stretch_draw;
+    double stretch_wall, stretch_mixer, stretch_hd, stretch_poll, stretch_draw;
     uint64_t stretch_us;
     unsigned stretch_presents;
     char text[256]; /* the window's title */
@@ -185,16 +185,14 @@ void watch_present(bool dirty) {
         draw();
         if (unpaced)
             W.stretch_draw += W.drawn - now;
-    } else if (dirty && hd_scale() && !unpaced) {
-        /* The HD copy kept in step, as when every frame is drawn. Not
-           unpaced: nobody sees those frames, and the first one drawn after
-           the stretch brings the copy up to date from the 1x screen in one
-           go (display_present). */
+    } else if (dirty && hd_scale()) { /* the HD copy kept in step, as when every frame is drawn */
         qd_pixels px;
         qd_palette pal;
         int w, h;
         qd_screen(&px, &pal);
         hd_frame(&px, &w, &h);
+        if (unpaced)
+            W.stretch_hd += wall_seconds() - now;
     }
 }
 
@@ -239,7 +237,7 @@ static void begin_stretch(void) {
     W.stretch_wall = wall_seconds();
     W.stretch_us = W.clock_us;
     W.stretch_mixer = sound_render_seconds();
-    W.stretch_poll = W.stretch_draw = 0;
+    W.stretch_hd = W.stretch_poll = W.stretch_draw = 0;
     W.stretch_presents = 0;
 }
 
@@ -250,8 +248,8 @@ static void log_stretch(const char *what) {
     if (took <= 0 || game <= 0)
         return;
     log_msg("watch: %s: %.1f s of the game's clock in %.2f s on the wall clock (%.1fx); "
-            "%u presents; mixer %.2f s, polling %.2f s, drawing %.2f s",
-            what, game, took, game / took, W.stretch_presents,
+            "%u presents; HD sync %.2f s, mixer %.2f s, polling %.2f s, drawing %.2f s",
+            what, game, took, game / took, W.stretch_presents, W.stretch_hd,
             sound_render_seconds() - W.stretch_mixer, W.stretch_poll, W.stretch_draw);
 }
 
