@@ -56,6 +56,9 @@ uint32_t gm_heap_size(void);
 /* Host address of guest address 0. Only backed regions may be touched. */
 uint8_t *gm_host_base(void);
 
+/* The bytes mapped there: from address 0 to the end of the highest region. */
+size_t gm_host_size(void);
+
 /* The regions the CPU maps. Everything else is unmapped. */
 int gm_regions(const gm_region **out);
 

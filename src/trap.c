@@ -25,6 +25,7 @@ static struct {
     hist_entry hist[HISTORY];
     uint32_t hist_count;
     int depth;
+    uint64_t depth_counts[TRAP_DEPTH_COUNTS]; /* trap entries at each depth */
     bool trace_imports;
     bool trace_calls;
     bool stub_all;
@@ -100,6 +101,11 @@ int32_t trap_find(const char *name) {
 }
 
 bool trap_has_handler(uint32_t index) { return index < T.n && T.handlers[index]; }
+
+size_t trap_depth_counts(const uint64_t **counts) {
+    *counts = T.depth_counts;
+    return TRAP_DEPTH_COUNTS;
+}
 
 const char *trap_import_name(uint32_t index) {
     return index < T.n ? T.names[index] : "(unknown)";
@@ -195,6 +201,7 @@ uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
         uint32_t index = (s.addr - GUEST_TRAP_BASE) / 4;
         if (index >= T.n)
             trap_crash("jump to unused trap address 0x%08x", s.addr);
+        T.depth_counts[T.depth < TRAP_DEPTH_COUNTS ? T.depth : TRAP_DEPTH_COUNTS - 1]++;
         const hist_entry *h = record(index);
         uint32_t resume = cpu_lr();
         if (!T.handlers[index]) {

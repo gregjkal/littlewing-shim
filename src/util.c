@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 
 static util_failure_fn failure_hook;
 static bool failed;
@@ -110,4 +111,10 @@ uint32_t fnv1a32(const void *data, size_t len) {
         h *= 0x01000193u;
     }
     return h;
+}
+
+double wall_seconds(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + ts.tv_nsec / 1e9;
 }

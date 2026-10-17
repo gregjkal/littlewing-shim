@@ -71,18 +71,18 @@ static struct {
     unsigned minutes;  /* whole minutes of the clock logged since the anchor */
     bool pending;      /* the screen changed and isn't drawn yet */
     double drawn, polled;
+    /* An unpaced stretch (going or skipping): when it began on both clocks,
+       what the mixer had rendered by then, and what its output work has
+       cost so far, in seconds of wall clock (log_stretch). */
+    double stretch_wall, stretch_mixer, stretch_hd, stretch_poll, stretch_draw;
+    uint64_t stretch_us;
+    unsigned stretch_presents;
     char text[256]; /* the window's title */
 } W;
 
 void watch_reset(void) { memset(&W, 0, sizeof W); }
 
 bool watch_on(void) { return W.on; }
-
-static double wall(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec + ts.tv_nsec / 1e9;
-}
 
 static void sleep_for(double seconds) {
     struct timespec ts = {(time_t)seconds, (long)((seconds - (double)(time_t)seconds) * 1e9)};
@@ -158,7 +158,7 @@ static void flash(const char *fmt, ...) {
 static void draw(void) {
     display_present();
     W.pending = false;
-    W.drawn = wall();
+    W.drawn = wall_seconds();
 }
 
 bool watch_draws(double since, double lag, int speed, bool going) {
@@ -173,19 +173,26 @@ void watch_present(bool dirty) {
     W.pending |= dirty;
     if (!W.pending)
         return;
+    bool unpaced = W.going || W.skipping;
+    if (dirty && unpaced)
+        W.stretch_presents++;
     int speed = speeds[W.speed];
-    double now = wall();
+    double now = wall_seconds();
     double lag = W.paused || !speed
                      ? 0
                      : now - (W.anchor_wall + (double)(W.clock_us - W.anchor_us) / 1e6 / speed);
     if (!W.skipping && watch_draws(now - W.drawn, lag, speed, W.going)) {
         draw();
+        if (unpaced)
+            W.stretch_draw += W.drawn - now;
     } else if (dirty && hd_scale()) { /* the HD copy kept in step, as when every frame is drawn */
         qd_pixels px;
         qd_palette pal;
         int w, h;
         qd_screen(&px, &pal);
         hd_frame(&px, &w, &h);
+        if (unpaced)
+            W.stretch_hd += wall_seconds() - now;
     }
 }
 
@@ -206,7 +213,7 @@ static bool sound_on(void) {
 
 /* The wall clock and the replay's clock line up from now. */
 static void anchor(void) {
-    W.anchor_wall = W.paced_wall = wall();
+    W.anchor_wall = W.paced_wall = wall_seconds();
     W.anchor_us = W.clock_us;
     W.minutes = 0;
     sound_monitor(sound_on());
@@ -223,12 +230,36 @@ static void log_run(const char *what) {
             clip_format_time(now_tick(), b, sizeof b), took, (took - game) * 1000);
 }
 
+/* ---- unpaced stretches: going to a time, or leaving out what isn't play ---- */
+
+/* One begins now. */
+static void begin_stretch(void) {
+    W.stretch_wall = wall_seconds();
+    W.stretch_us = W.clock_us;
+    W.stretch_mixer = sound_render_seconds();
+    W.stretch_hd = W.stretch_poll = W.stretch_draw = 0;
+    W.stretch_presents = 0;
+}
+
+/* It ends: logs how fast it went, and what each kind of output work cost
+   (the numbers the seek engine is sized by; #59). */
+static void log_stretch(const char *what) {
+    double took = wall_seconds() - W.stretch_wall, game = (double)(W.clock_us - W.stretch_us) / 1e6;
+    if (took <= 0 || game <= 0)
+        return;
+    log_msg("watch: %s: %.1f s of the game's clock in %.2f s on the wall clock (%.1fx); "
+            "%u presents; HD sync %.2f s, mixer %.2f s, polling %.2f s, drawing %.2f s",
+            what, game, took, game / took, W.stretch_presents, W.stretch_hd,
+            sound_render_seconds() - W.stretch_mixer, W.stretch_poll, W.stretch_draw);
+}
+
 /* Going or skipping: the window stays live, a few times a second. */
 static void poll_now_and_then(void) {
-    if (wall() - W.polled >= GOING_DRAW_GAP / 4) {
-        W.polled = wall();
+    if (wall_seconds() - W.polled >= GOING_DRAW_GAP / 4) {
+        W.polled = wall_seconds();
         display_poll();
         update_title();
+        W.stretch_poll += wall_seconds() - W.polled;
     }
 }
 
@@ -244,8 +275,10 @@ static void pace(uint64_t clock_us) {
             return;
         }
         W.going = W.skipping = false;
-        char t[32];
-        log_msg("watch: reached %s", clip_format_time(W.from, t, sizeof t));
+        char t[32], what[64];
+        snprintf(what, sizeof what, "went to %s", clip_format_time(W.from, t, sizeof t));
+        log_stretch(what);
+        log_msg("watch: reached %s", t);
         anchor();
         update_title();
         return;
@@ -257,6 +290,7 @@ static void pace(uint64_t clock_us) {
             log_run("the last stretch");
             log_msg("watch: leaving out what isn't play from %s", clip_format_time(now_tick(), t, sizeof t));
             sound_monitor(false);
+            begin_stretch();
         }
         W.clock_us = clock_us;
         poll_now_and_then();
@@ -265,6 +299,7 @@ static void pace(uint64_t clock_us) {
     if (W.skipping) { /* play again: paced from here */
         W.skipping = false;
         W.clock_us = clock_us;
+        log_stretch("left out what isn't play");
         anchor();
     }
     for (;;) {
@@ -275,7 +310,7 @@ static void pace(uint64_t clock_us) {
             continue;
         }
         int speed = speeds[W.speed];
-        double now = wall();
+        double now = wall_seconds();
         if (!speed) {
             W.anchor_wall = now;
             W.anchor_us = clock_us;
@@ -301,7 +336,7 @@ static void pace(uint64_t clock_us) {
         }
     }
     W.clock_us = clock_us;
-    W.paced_wall = wall();
+    W.paced_wall = wall_seconds();
     if (speeds[W.speed] == 1 && (W.clock_us - W.anchor_us) / 60000000 > W.minutes) {
         W.minutes++;
         log_run("a minute");
@@ -323,7 +358,10 @@ static void set_speed(int i) {
 /* Goes back to tick: restarts the program, which goes there. */
 static _Noreturn void go_back(uint32_t tick) {
     char v[32], t[32];
-    log_run("the last stretch");
+    if (W.going || W.skipping)
+        log_stretch("the last stretch, unpaced");
+    else
+        log_run("the last stretch");
     log_msg("watch: back to %s: restarting", clip_format_time(tick, t, sizeof t));
     snprintf(v, sizeof v, "%u", tick);
     setenv("LOONY_WATCH_FROM", v, 1);
@@ -363,9 +401,18 @@ static void step_by(int64_t step) {
     char t[32];
     log_msg("watch: going to %s", clip_format_time(tick, t, sizeof t));
     W.from = tick;
+    bool was_going = W.going;
     W.going = tick > now_tick();
-    if (!W.going)
+    if (!W.going) { /* landed on now: the stretch ends here */
+        if (was_going && !W.skipping) {
+            char what[64];
+            snprintf(what, sizeof what, "went to %s", t);
+            log_stretch(what);
+        }
         anchor();
+    } else if (!was_going && !W.skipping) {
+        begin_stretch();
+    }
     sound_monitor(sound_on());
 }
 
@@ -458,7 +505,7 @@ static void export_ended(int status) {
 static void tend_export(void) {
     if (!export_running())
         return;
-    double now = wall();
+    double now = wall_seconds();
     if (now - W.export_polled < EXPORT_POLL_GAP)
         return;
     W.export_polled = now;
@@ -491,7 +538,7 @@ void watch_export(bool marks) {
         return;
     }
     log_msg("watch: exporting the %s of %s", export_what(kind), W.replay);
-    W.export_polled = wall();
+    W.export_polled = wall_seconds();
     update_title();
 }
 
@@ -659,7 +706,9 @@ bool watch_open(char *err, size_t errlen) {
 }
 
 static void log_at_exit(void) {
-    if (!W.paused && !W.going && !W.skipping && !W.at_end) /* logged already */
+    if (W.going || W.skipping)
+        log_stretch("the last stretch, unpaced");
+    else if (!W.paused && !W.at_end) /* logged already */
         log_run("the last stretch");
 }
 
@@ -686,12 +735,20 @@ void watch_start(const char *title, void (*restart)(void)) {
     if (W.going)
         log_msg("watch: going to %s", clip_format_time(W.from, t, sizeof t));
     anchor();
+    if (W.going)
+        begin_stretch();
     update_title();
 }
 
 void watch_hold(void) {
     if (!W.started || W.at_end)
         return;
+    if (W.going || W.skipping)
+        log_stretch("the stretch to the end, unpaced");
+    else
+        log_run("the last stretch");
+    W.at_end = true;
+    W.going = W.skipping = false;
     const char *video = getenv("SDL_VIDEO_DRIVER");
     if (video && strcmp(video, "dummy") == 0) { /* headless: nobody to close the window */
         if (export_running())
@@ -700,10 +757,6 @@ void watch_hold(void) {
             idle();
         return;
     }
-    if (!W.skipping) /* else logged as it began */
-        log_run("the last stretch");
-    W.at_end = true;
-    W.going = W.skipping = false;
     sound_monitor(false);
     char t[32];
     log_msg("watch: the end, at %s: close the window to quit", clip_format_time(now_tick(), t, sizeof t));

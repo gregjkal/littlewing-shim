@@ -116,6 +116,12 @@ TEST(cpu_floating_point_is_enabled) {
     CHECK(cpu_fpr(1) == 6.5);
 }
 
+/* A saved context holds at least the 32 GPRs and 32 FPRs. */
+TEST(cpu_context_size_covers_the_registers) {
+    fresh_machine();
+    CHECK(cpu_context_size() >= 32 * 4 + 32 * 8);
+}
+
 TEST(cpu_save_restore_round_trip) {
     fresh_machine();
     cpu_set_gpr(3, 1);

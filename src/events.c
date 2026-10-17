@@ -2,7 +2,6 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #include "cpu.h"
 #include "guest_mem.h"
@@ -85,12 +84,6 @@ static struct {
     void (*replay_key)(int scancode, bool down, bool repeat);
     bool warned_full;
 } E;
-
-static double wall_seconds(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec + ts.tv_nsec / 1e9;
-}
 
 static double now_seconds(void) { return misc_seconds(); }
 

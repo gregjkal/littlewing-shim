@@ -64,6 +64,10 @@ void sound_set_tap(sound_tap_fn fn);
    iteration. */
 void sound_pump(void);
 
+/* Clock-driven: the wall-clock seconds spent rendering since sound_init
+   (watch.h measures the mixer's share of an unpaced replay with it). */
+double sound_render_seconds(void);
+
 /* Registers NewSndCallBackUPP, SndNewChannel, SndDisposeChannel,
    SndDoCommand, SndDoImmediate and SndChannelStatus. */
 void sound_register(void);

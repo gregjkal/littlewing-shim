@@ -1,4 +1,5 @@
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
 
 /* Why cpu_run() stopped. */
@@ -38,6 +39,10 @@ cpu_stop cpu_run(uint32_t pc);
 /* Snapshot of all registers. cpu_restore() restores and frees it. */
 cpu_context *cpu_save(void);
 void cpu_restore(cpu_context *ctx);
+
+/* The bytes a saved context takes (what a snapshot of the emulator would
+   hold for the CPU; measure.h). */
+size_t cpu_context_size(void);
 
 /* Calls fn for every guest write that touches [begin, end] (inclusive), with
    the CPU's registers (including pc) current. NULL removes the watch.

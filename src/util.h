@@ -28,6 +28,9 @@ bool make_dirs(const char *path);
 
 uint32_t fnv1a32(const void *data, size_t len);
 
+/* The wall clock in seconds from an arbitrary start (CLOCK_MONOTONIC). */
+double wall_seconds(void);
+
 /* A Mac four-character code, e.g. FOURCC('P','I','C','T'). */
 #define FOURCC(a, b, c, d) \
     (((uint32_t)(uint8_t)(a) << 24) | ((uint32_t)(uint8_t)(b) << 16) | \
