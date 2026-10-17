@@ -1096,7 +1096,7 @@ TEST(run_a_watched_replay_logs_the_seek_engines_measurements) {
     CHECK_EQ(status, 0);
     CHECK_CONTAINS(out[1], "watch: going to 10:00");
     CHECK_CONTAINS(out[1], "watch: the stretch to the end, unpaced: ");
-    CHECK_CONTAINS(out[1], " presents; HD sync ");
+    CHECK_CONTAINS(out[1], " presents; mixer ");
     CHECK_CONTAINS(out[1], "loony: replay: reached the end of the recording");
     CHECK_CONTAINS(out[1], "s of the game's clock in ");
     CHECK_CONTAINS(out[1], "measure: guest memory: ");
