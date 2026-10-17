@@ -1147,12 +1147,12 @@ TEST(run_a_watched_replay_logs_the_seek_engines_measurements) {
     CHECK(!strstr(out[1], "replay: desync"));
 }
 
+static const char *hd_from; /* the tick run_loony_replaying_hd goes to */
+
 /* Replays the recording in HD with the script loaded: headless (watching
    nothing, so the HD copy is synced on every present), or watching it going
    to hd_from (watch_from), so the copy is synced only at the frames drawn
    on the way (four a second of wall clock) and at arrival. */
-static const char *hd_from;
-
 static void run_loony_replaying_hd(void *watching) {
     unsetenv("LOONY_AUTO_ALERTS");
     setenv("LOONY_REPLAY", replay_file, 1);
