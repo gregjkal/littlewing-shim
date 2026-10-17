@@ -74,6 +74,10 @@ uint8_t *gm_host_base(void) {
     return mem;
 }
 
+size_t gm_host_size(void) {
+    return mem ? mem_size : 0;
+}
+
 int gm_regions(const gm_region **out) {
     *out = regions;
     return nregions;

@@ -124,6 +124,23 @@ TEST(hd_draws_pixels_changed_behind_its_back_as_blocks) {
     free(px.base);
 }
 
+/* The copies' bytes: the HD pixels, the 1x reference copy and a change
+   note a row, for each buffer with a copy; none once HD is off. */
+TEST(hd_counts_its_copies_and_their_bytes) {
+    hd_configure(4, NULL, NULL);
+    qd_pixels px = buffer(16, 8, 8);
+    int count = -1;
+    CHECK_EQ(hd_copies_bytes(&count), 0);
+    CHECK_EQ(count, 0);
+    CHECK(shows_blocks(&px));
+    CHECK_EQ(hd_copies_bytes(&count), 16 * 4 * 8 * 4 * 4 + 16 * 8 + 8 * 4);
+    CHECK_EQ(count, 1);
+    hd_configure(0, NULL, NULL);
+    CHECK_EQ(hd_copies_bytes(&count), 0);
+    CHECK_EQ(count, 0);
+    free(px.base);
+}
+
 TEST(hd_copies_within_one_buffer_when_they_overlap) {
     hd_configure(2, NULL, NULL);
     qd_pixels px = buffer(4, 5, 16);

@@ -115,6 +115,18 @@ void hd_init(const char *game_id, const char *exe_path) {
 
 int hd_scale(void) { return H.scale; }
 
+size_t hd_copies_bytes(int *count) {
+    size_t bytes = 0;
+    for (int i = 0; i < H.ntwins; i++) {
+        const twin *t = H.twins[i];
+        size_t n1 = (size_t)t->row_bytes * (size_t)rect_h(t->bounds);
+        bytes += (size_t)rect_w(t->bounds) * H.scale * (size_t)rect_h(t->bounds) * H.scale * 4;
+        bytes += n1 + (t->orig ? n1 : 0) + sizeof *t->changed * (size_t)rect_h(t->bounds);
+    }
+    *count = H.ntwins;
+    return bytes;
+}
+
 void hd_forget(const uint8_t *base) {
     for (int i = 0; i < H.ntwins; i++)
         if (H.twins[i]->base == base) {

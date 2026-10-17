@@ -29,7 +29,8 @@
    speed. When it falls more than WATCH_MAX_LAG behind (HD at 8x, or the
    window held still), it carries on from there rather than racing to catch
    up. At 1x, each minute of the game's time logs how long it took on the
-   wall clock.
+   wall clock. Each unpaced stretch (going to a time, or leaving out what
+   isn't play) logs how fast it went and what its output work cost.
 
    Clips go into the list next to the replay (clip_list_path: game.clips
    beside game.lwreplay), one "<start>-<end>" a line as LOONY_CLIP takes
