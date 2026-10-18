@@ -25,7 +25,6 @@ static struct {
     uint32_t code_base, code_len;
     hist_entry hist[HISTORY];
     uint32_t hist_count;
-    int depth;
     uint64_t depth_counts[TRAP_DEPTH_COUNTS]; /* trap entries at each depth */
     bool trace_imports;
     bool trace_calls;
@@ -35,11 +34,16 @@ static struct {
 } T;
 MEASURE_STATE(T)
 
-/* Outside T, which Spike A copies back whole: the context each guest_call
-   level saved and the function it called, at [depth - 1], and the trap
-   entry hook. */
+/* Outside T, which the spikes copy back whole, since they describe the host
+   stack: the guest_call depth, and for each level, at [depth - 1], the
+   context it saved, the function it called, and the trap it is dispatching
+   with where that returns to; then the trap entry hook. */
+static int depth;
 static cpu_context *saved[TRAP_MAX_DEPTH];
 static uint32_t called[TRAP_MAX_DEPTH];
+static struct {
+    uint32_t index, resume;
+} level[TRAP_MAX_DEPTH];
 static trap_entry_fn on_entry;
 
 const char *trap_format_addr(uint32_t a, char buf[static 32]) {
@@ -92,6 +96,7 @@ void trap_shutdown(void) {
     gm_set_fault_handler(NULL);
     free(T.handlers);
     memset(&T, 0, sizeof T);
+    depth = 0;
 }
 
 void trap_register(const char *name, trap_handler fn) {
@@ -111,14 +116,23 @@ int32_t trap_find(const char *name) {
 
 bool trap_has_handler(uint32_t index) { return index < T.n && T.handlers[index]; }
 
-int trap_depth(void) { return T.depth; }
+int trap_depth(void) { return depth; }
 
-cpu_context *trap_saved_context(int depth) {
-    return depth >= 1 && depth <= T.depth ? saved[depth - 1] : NULL;
+cpu_context *trap_saved_context(int d) { return d >= 1 && d <= depth ? saved[d - 1] : NULL; }
+
+uint32_t trap_call_target(int d) { return d >= 1 && d <= depth ? called[d - 1] : 0; }
+
+bool trap_level(int d, uint32_t *index, uint32_t *resume) {
+    if (d < 1 || d > depth)
+        return false;
+    *index = level[d - 1].index;
+    *resume = level[d - 1].resume;
+    return true;
 }
 
-uint32_t trap_call_target(int depth) {
-    return depth >= 1 && depth <= T.depth ? called[depth - 1] : 0;
+void trap_unwind(void) {
+    while (depth > 0)
+        cpu_context_free(saved[--depth]);
 }
 
 void trap_on_entry(trap_entry_fn fn) { on_entry = fn; }
@@ -135,7 +149,7 @@ const char *trap_import_name(uint32_t index) {
 static void report_state(void) {
     char a[32], b[32];
     fprintf(stderr, "  pc %s  lr %s  ctr 0x%08x  depth %d\n", trap_format_addr(cpu_pc(), a),
-            trap_format_addr(cpu_lr(), b), cpu_ctr(), T.depth);
+            trap_format_addr(cpu_lr(), b), cpu_ctr(), depth);
     for (int r = 0; r < 32; r += 4)
         fprintf(stderr, "  r%-2d 0x%08x  r%-2d 0x%08x  r%-2d 0x%08x  r%-2d 0x%08x\n", r,
                 cpu_gpr(r), r + 1, cpu_gpr(r + 1), r + 2, cpu_gpr(r + 2), r + 3, cpu_gpr(r + 3));
@@ -179,6 +193,69 @@ static const hist_entry *record(uint32_t index) {
     return h;
 }
 
+/* Runs import index's handler, the guest having stopped at its trap with
+   resume in the link register, and returns where the guest goes on. */
+static uint32_t dispatch_trap(uint32_t index, uint32_t resume) {
+    T.depth_counts[depth < TRAP_DEPTH_COUNTS ? depth : TRAP_DEPTH_COUNTS - 1]++;
+    const hist_entry *h = record(index);
+    level[depth - 1].index = index;
+    level[depth - 1].resume = resume;
+    if (!T.handlers[index]) {
+        if (!T.stub_all)
+            trap_crash("unimplemented import %s", T.names[index]);
+        char a[32];
+        fprintf(stderr, "loony: stub: #%u %s(0x%08x, 0x%08x, 0x%08x, 0x%08x) from %s\n",
+                T.hist_count - 1, T.names[index], h->a[0], h->a[1], h->a[2], h->a[3],
+                trap_format_addr(h->lr, a));
+        trap_return(0);
+        return resume;
+    }
+    if (T.trace_imports) {
+        char a[32];
+        fprintf(stderr, "loony: trace: #%u %s(0x%08x, 0x%08x, 0x%08x, 0x%08x) from %s\n",
+                T.hist_count - 1, T.names[index], h->a[0], h->a[1], h->a[2], h->a[3],
+                trap_format_addr(h->lr, a));
+    }
+    T.handlers[index]();
+    if (T.trace_imports)
+        fprintf(stderr, "loony: trace:   -> 0x%08x\n", cpu_gpr(3));
+    return resume;
+}
+
+/* Runs the guest from pc, dispatching each trap it stops at, until it
+   returns to GUEST_RETURN_MAGIC. */
+static void run_until_return(uint32_t pc) {
+    for (;;) {
+        cpu_stop s = cpu_run(pc);
+        if (s.kind == CPU_STOP_RETURN)
+            return;
+        if (s.kind == CPU_STOP_FAULT) {
+            char a[32];
+            trap_crash("guest fault: %s (pc %s)", s.detail, trap_format_addr(s.pc, a));
+        }
+        uint32_t index = (s.addr - GUEST_TRAP_BASE) / 4;
+        if (index >= T.n)
+            trap_crash("jump to unused trap address 0x%08x", s.addr);
+        if (on_entry)
+            index = on_entry(index); /* may have put the CPU back to an earlier entry */
+        pc = dispatch_trap(index, cpu_lr());
+    }
+}
+
+/* The guest_call at the current depth returns: the guest's r3, with the
+   CPU put back as ctx holds it. */
+static uint32_t leave(uint32_t code, cpu_context *ctx) {
+    uint32_t result = cpu_gpr(3);
+    if (T.trace_calls) {
+        char a[32];
+        fprintf(stderr, "loony: trace: return 0x%08x from %s depth %d\n", result,
+                trap_format_addr(code, a), depth);
+    }
+    depth--;
+    cpu_restore(ctx);
+    return result;
+}
+
 uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
     if (nargs < 0 || nargs > 8)
         fatal("guest_call: bad argument count %d", nargs);
@@ -186,7 +263,7 @@ uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
        through a pointer, and has no TOC: r2 is left as it is. */
     uint32_t code = T.direct_calls ? tvector : gm_r32(tvector);
     uint32_t toc = T.direct_calls ? cpu_gpr(2) : gm_r32(tvector + 4);
-    if (T.depth == TRAP_MAX_DEPTH)
+    if (depth == TRAP_MAX_DEPTH)
         trap_crash("guest calls nested more than %d deep", TRAP_MAX_DEPTH);
     cpu_context *ctx = cpu_save();
 
@@ -204,62 +281,34 @@ uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
         cpu_set_gpr(3 + i, args[i]);
     cpu_set_lr(GUEST_RETURN_MAGIC);
 
-    called[T.depth] = code;
-    saved[T.depth++] = ctx;
+    called[depth] = code;
+    saved[depth++] = ctx;
     if (T.trace_calls) {
         char a[32];
         fprintf(stderr, "loony: trace: call %s(", trap_format_addr(code, a));
         for (int i = 0; i < nargs; i++)
             fprintf(stderr, "%s0x%08x", i ? ", " : "", args[i]);
-        fprintf(stderr, ") depth %d\n", T.depth);
+        fprintf(stderr, ") depth %d\n", depth);
     }
-    uint32_t pc = code;
-    for (;;) {
-        cpu_stop s = cpu_run(pc);
-        if (s.kind == CPU_STOP_RETURN)
-            break;
-        if (s.kind == CPU_STOP_FAULT) {
-            char a[32];
-            trap_crash("guest fault: %s (pc %s)", s.detail, trap_format_addr(s.pc, a));
-        }
-        uint32_t index = (s.addr - GUEST_TRAP_BASE) / 4;
-        if (index >= T.n)
-            trap_crash("jump to unused trap address 0x%08x", s.addr);
-        if (on_entry)
-            index = on_entry(index); /* may have put the CPU back to an earlier entry */
-        T.depth_counts[T.depth < TRAP_DEPTH_COUNTS ? T.depth : TRAP_DEPTH_COUNTS - 1]++;
-        const hist_entry *h = record(index);
-        uint32_t resume = cpu_lr();
-        if (!T.handlers[index]) {
-            if (!T.stub_all)
-                trap_crash("unimplemented import %s", T.names[index]);
-            char a[32];
-            fprintf(stderr, "loony: stub: #%u %s(0x%08x, 0x%08x, 0x%08x, 0x%08x) from %s\n",
-                    T.hist_count - 1, T.names[index], h->a[0], h->a[1], h->a[2], h->a[3],
-                    trap_format_addr(h->lr, a));
-            trap_return(0);
-            pc = resume;
-            continue;
-        }
-        if (T.trace_imports) {
-            char a[32];
-            fprintf(stderr, "loony: trace: #%u %s(0x%08x, 0x%08x, 0x%08x, 0x%08x) from %s\n",
-                    T.hist_count - 1, T.names[index], h->a[0], h->a[1], h->a[2], h->a[3],
-                    trap_format_addr(h->lr, a));
-        }
-        T.handlers[index]();
-        if (T.trace_imports)
-            fprintf(stderr, "loony: trace:   -> 0x%08x\n", cpu_gpr(3));
-        pc = resume;
-    }
-    uint32_t result = cpu_gpr(3);
+    run_until_return(code);
+    return leave(code, ctx);
+}
+
+uint32_t guest_resume(uint32_t code, const cpu_context *outer, const cpu_context *cpu,
+                      uint32_t index, uint32_t resume) {
+    if (depth == TRAP_MAX_DEPTH)
+        trap_crash("guest calls nested more than %d deep", TRAP_MAX_DEPTH);
+    if (index >= T.n)
+        trap_crash("guest_resume: no import #%u", index);
+    cpu_context *ctx = cpu_context_clone(outer);
+    called[depth] = code;
+    saved[depth++] = ctx;
     if (T.trace_calls) {
         char a[32];
-        fprintf(stderr, "loony: trace: return 0x%08x from %s depth %d\n", result,
-                trap_format_addr(code, a), T.depth);
+        fprintf(stderr, "loony: trace: resume %s at #%u %s depth %d\n",
+                trap_format_addr(code, a), index, T.names[index], depth);
     }
-    T.depth--;
-
-    cpu_restore(ctx);
-    return result;
+    cpu_load(cpu);
+    run_until_return(dispatch_trap(index, resume));
+    return leave(code, ctx);
 }

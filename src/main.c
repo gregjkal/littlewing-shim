@@ -187,6 +187,7 @@ static void restart_self(const char *why) {
    asked to quit or something failed, the preferences are saved and the
    process restarts itself to show the picker again. */
 static void back_to_picker(void) {
+    measure_game_ended(); /* Spike B may go back into the game first */
     watch_hold();
     if (!return_to_picker || events_quit_requested() || util_failed())
         return;
@@ -455,7 +456,9 @@ int main(int argc, char **argv) {
             guest_call(img.init_addrs[i], 0, NULL);
         uint32_t args[4] = {1};
         libc_main_args(&args[1], &args[2], &args[3]);
-        uint32_t status = guest_call(img.main_addr, 4, args);
+        volatile uint32_t status = 0;
+        if (setjmp(measure_unwound) == 0) /* Spike B's way back from inside a trap */
+            status = guest_call(img.main_addr, 4, args);
         back_to_picker();
         log_msg("main returned %d", (int32_t)status);
         return 0;
@@ -473,7 +476,8 @@ int main(int argc, char **argv) {
     if (img.init_tvector)
         guest_call(img.init_tvector, 0, NULL);
     play_init(game->id, img.code_base, gm_r32(img.main_tvector + 4));
-    guest_call(img.main_tvector, 0, NULL);
+    if (setjmp(measure_unwound) == 0) /* Spike B's way back from inside a trap */
+        guest_call(img.main_tvector, 0, NULL);
     back_to_picker();
     log_msg("main returned");
     return 0;
