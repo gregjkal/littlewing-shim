@@ -113,8 +113,6 @@ TEST(export_child_env_drops_the_viewers_settings) {
                          "LOONY_WATCH_SPEED=2",
                          "LOONY_WATCH_PAUSED=1",
                          "LOONY_WATCH_IN=60",
-                         "LOONY_WATCH_EXPORT=1 2 0 0",
-                         "LOONY_WATCH_EXPORT_SAID=wrote /a",
                          "LOONY_SCRIPT=/tmp/keys",
                          "LOONY_SCREENSHOT=/tmp/shot.png",
                          "LOONY_FULLSCREEN=1",
@@ -132,10 +130,10 @@ TEST(export_child_env_drops_the_viewers_settings) {
     CHECK(out != NULL);
     if (!out)
         return;
-    static const char *const gone[] = {"LOONY_WATCH",      "LOONY_WATCH_FROM",   "LOONY_WATCH_SPEED",
-                                       "LOONY_WATCH_PAUSED", "LOONY_WATCH_IN",   "LOONY_WATCH_EXPORT",
-                                       "LOONY_WATCH_EXPORT_SAID", "LOONY_SCRIPT", "LOONY_SCREENSHOT",
-                                       "LOONY_FULLSCREEN", "LOONY_DATA_DIR",     "LOONY_CLIP_OUT"};
+    static const char *const gone[] = {"LOONY_WATCH",        "LOONY_WATCH_FROM", "LOONY_WATCH_SPEED",
+                                       "LOONY_WATCH_PAUSED", "LOONY_WATCH_IN",   "LOONY_SCRIPT",
+                                       "LOONY_SCREENSHOT",   "LOONY_FULLSCREEN", "LOONY_DATA_DIR",
+                                       "LOONY_CLIP_OUT"};
     for (size_t i = 0; i < sizeof gone / sizeof gone[0]; i++)
         CHECK_STR(entry(out, gone[i]), "(none)");
     CHECK_STR(entry(out, "PATH"), "/usr/bin");
@@ -210,98 +208,5 @@ TEST(export_cancel_stops_it) {
     CHECK_EQ(wait_for_export(), 128 + SIGTERM);
     export_reset();
     CHECK(!export_stop(0.1, NULL)); /* none running */
-    test_remove_tree(dir);
-}
-
-/* A line read only in part when the viewer restarts is ended by the read
-   after it, in the restarted viewer. */
-TEST(export_ends_a_half_read_line_after_a_restart) {
-    char dir[1024], path[1100], err[256] = "";
-    fake_export("echo 'seek 1 10'; printf 'wrote /d'; sleep 1; echo '.mp4'; exec sleep 30", dir,
-                sizeof dir, path, sizeof path);
-    export_reset();
-    CHECK(export_start(path, EXPORT_CLIPS, "/r/game.lwreplay", err, sizeof err));
-    int status = -1;
-    struct timespec gap = {0, 10 * 1000000};
-    for (int i = 0; i < 500 && !export_now()->partial_len; i++) {
-        export_poll(&status);
-        nanosleep(&gap, NULL);
-    }
-    CHECK_EQ(export_now()->partial_len, 8);
-    export_pass_on();
-    const char *said = getenv("LOONY_WATCH_EXPORT_SAID");
-    CHECK(said && strlen(said) >= 8 && !strcmp(said + strlen(said) - 8, "wrote /d"));
-    const char *v = getenv("LOONY_WATCH_EXPORT");
-    int pid = 0, fd = -1, kind = -1, cancelled = -1;
-    CHECK(v && sscanf(v, "%d %d %d %d", &pid, &fd, &kind, &cancelled) == 4);
-    int saved = dup(fd);
-    export_reset();
-    dup2(saved, fd);
-    close(saved);
-    CHECK(export_take_up(err, sizeof err));
-    for (int i = 0; i < 500 && !export_now()->nwrote; i++) {
-        export_poll(&status);
-        nanosleep(&gap, NULL);
-    }
-    CHECK_EQ(export_now()->nwrote, 1);
-    if (export_now()->nwrote)
-        CHECK_STR(export_now()->wrote[0], "/d.mp4");
-    export_cancel();
-    CHECK_EQ(wait_for_export(), 128 + SIGTERM);
-    export_reset();
-    test_remove_tree(dir);
-}
-
-/* What the viewer passes on through its restart, it takes up again: the
-   same process, its pipe, and what it said. */
-TEST(export_goes_on_through_a_restart) {
-    char dir[1024], path[1100], err[256] = "";
-    fake_export("echo 'skipped /a.mp4'; echo 'clip 1 2 60 60'; echo 'wrote /b.mp4'; echo 'seek 5 10'\n"
-                "sleep 5; echo 'clip 2 2 60 60'; echo 'wrote /c.mp4'",
-                dir, sizeof dir, path, sizeof path);
-    export_reset();
-    CHECK(export_start(path, EXPORT_MARKS, "/r/game.lwreplay", err, sizeof err));
-    int status = -1;
-    struct timespec gap = {0, 10 * 1000000};
-    for (int i = 0; i < 500 && export_now()->phase != EXPORT_SEEKING; i++) {
-        export_poll(&status);
-        nanosleep(&gap, NULL);
-    }
-    CHECK_EQ(export_now()->phase, EXPORT_SEEKING);
-    export_pass_on();
-    const char *v = getenv("LOONY_WATCH_EXPORT");
-    int pid = 0, fd = -1, kind = -1, cancelled = -1;
-    CHECK(v && sscanf(v, "%d %d %d %d", &pid, &fd, &kind, &cancelled) == 4);
-    CHECK_EQ(kind, EXPORT_MARKS);
-    CHECK_EQ(cancelled, 0);
-    CHECK(fd >= 0 && !(fcntl(fd, F_GETFD) & FD_CLOEXEC)); /* outlives the exec */
-    /* As the exec would: forgets it, but keeps the pipe. */
-    int saved = dup(fd);
-    export_reset();
-    dup2(saved, fd);
-    close(saved);
-    CHECK(export_take_up(err, sizeof err));
-    CHECK(getenv("LOONY_WATCH_EXPORT") == NULL);
-    CHECK(getenv("LOONY_WATCH_EXPORT_SAID") == NULL);
-    CHECK(export_running());
-    CHECK_EQ(export_running_kind(), EXPORT_MARKS);
-    CHECK(fcntl(fd, F_GETFD) & FD_CLOEXEC);
-    char t[128];
-    export_title(export_now(), t, sizeof t);
-    CHECK_STR(t, ", exporting, finding clip 2 of 2, 50%");
-    /* It hasn't read its stdin (the tests' own): end it the other way. */
-    export_cancel();
-    CHECK_EQ(wait_for_export(), 128 + SIGTERM);
-    CHECK_EQ(export_now()->nwrote, 1);
-    CHECK_EQ(export_now()->nskipped, 1);
-    export_reset();
-    /* Wrong, or not a child: refused, and cleared. */
-    setenv("LOONY_WATCH_EXPORT", "nonsense", 1);
-    CHECK(!export_take_up(err, sizeof err));
-    CHECK(getenv("LOONY_WATCH_EXPORT") == NULL);
-    setenv("LOONY_WATCH_EXPORT", "1 -1 0 0", 1); /* launchd */
-    CHECK(!export_take_up(err, sizeof err));
-    CHECK(!export_running());
-    CHECK(export_take_up(err, sizeof err)); /* unset: nothing to take up */
     test_remove_tree(dir);
 }

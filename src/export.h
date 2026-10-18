@@ -92,16 +92,5 @@ bool export_cancelled(void);
    (with *status as export_poll gives it). */
 bool export_stop(double seconds, int *status);
 
-/* Before the viewer restarts itself (exec): puts the running export in
-   LOONY_WATCH_EXPORT ("<pid> <fd> <kind> <cancelled>") and what it has said
-   in LOONY_WATCH_EXPORT_SAID (as its lines), and lets the pipe's fd outlive
-   the exec. Does nothing, and clears them, when none is running. */
-void export_pass_on(void);
-
-/* After the restart: takes up the export export_pass_on passed on, and
-   clears the variables. False, with err, if they are set but wrong, or
-   name no child of this process. */
-bool export_take_up(char *err, size_t errlen);
-
 /* For tests: forgets the export (without stopping it). */
 void export_reset(void);
