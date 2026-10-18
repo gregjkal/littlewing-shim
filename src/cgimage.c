@@ -6,7 +6,7 @@
 #include <string.h>
 
 #include "cf.h"
-#include "measure.h"
+#include "snapshot.h"
 #include "trap.h"
 #include "util.h"
 
@@ -22,7 +22,7 @@ typedef struct {
 static struct {
     cg_obj objs[MAX_OBJECTS];
 } G;
-MEASURE_STATE(G)
+SNAPSHOT_STATE(G)
 
 bool cgimage_decode_png_over(const char *path, uint8_t r, uint8_t g, uint8_t b, cgimage_pixels *out,
                             char *err, size_t errlen) {

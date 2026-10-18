@@ -14,7 +14,7 @@
 
 #include "files.h"
 #include "game.h"
-#include "measure.h"
+#include "snapshot.h"
 #include "plist.h"
 #include "util.h"
 
@@ -111,7 +111,7 @@ static struct {
     void (*pace)(uint64_t clock_us);
     void (*end)(void);
 } R;
-MEASURE_STATE(R)
+SNAPSHOT_STATE(R)
 
 bool replay_recording(void) { return R.mode == RECORDING; }
 bool replay_playing(void) { return R.mode == PLAYING; }
@@ -1143,6 +1143,8 @@ uint64_t replay_clock(uint64_t host_us) {
     }
     return R.clock_ms * 1000;
 }
+
+uint64_t replay_now_us(void) { return R.clock_ms * 1000; }
 
 /* A record at this step: into the file being written, and (but for what a
    replay doesn't need) into the session the next game's file starts with. */

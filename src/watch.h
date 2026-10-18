@@ -21,9 +21,8 @@
    one export at a time, and the title says how far it has got. Once it is
    done, Finder shows the clips it wrote (or, when every clip was there
    already, those), next to the recording. The Replay menu (menu.h) exports
-   the clips or the marks, and cancels. Going back takes the export through
-   the restart (LOONY_WATCH_EXPORT and LOONY_WATCH_EXPORT_SAID, export.h);
-   quitting stops it, which removes its unfinished file.
+   the clips or the marks, and cancels. Quitting stops it, which removes its
+   unfinished file.
 
    Pacing: the replay's clock never runs ahead of the wall clock times the
    speed. When it falls more than WATCH_MAX_LAG behind (HD at 8x, or the
@@ -36,15 +35,21 @@
    beside game.lwreplay), one "<start>-<end>" a line as LOONY_CLIP takes
    them, and LOONY_CLIP=clips renders them (clip.h).
 
-   A replay only runs forward: going back restarts the program, which
-   replays from the start without pacing to the time wanted, and going ahead
-   does the same without the restart. LOONY_WATCH_FROM (ticks) is that time,
+   Going to a time: the replay keeps snapshots of the emulator as it plays
+   (seek.h). Going back puts back the last one before the time wanted, and
+   the replay goes on from there to the time without pacing; going ahead
+   does the same when there is a snapshot on the way (after going back), and
+   otherwise just goes on without pacing. Until the seek is served, at the
+   replay's next trap entry where one can be, nothing waits: a pause or the
+   pacing let the replay run. The pause, the speed and a clip's start stay
+   as they were. LOONY_WATCH_FROM (ticks) is a time to start at,
    LOONY_WATCH_SPEED (1, 2, 4, 8 or 0 for as fast as it can) the speed,
    LOONY_WATCH_PAUSED=1 pauses there, and LOONY_WATCH_IN (ticks) is a clip's
-   start not yet ended; the restart sets them, and drops LOONY_SCRIPT, whose
-   actions would come again. At the
-   replay's end, or when the game quits, the last frame stays up until the
-   window is closed (unless SDL_VIDEO_DRIVER=dummy, where it exits once an
+   start not yet ended. A LOONY_SCRIPT's actions go by the replay's clock, so
+   after going back the next one comes when the clock reaches it again.
+   At the replay's end, or when the game quits, the last frame stays up
+   until the window is closed or a key goes back (with SDL_VIDEO_DRIVER=dummy
+   the script's actions left come at once instead, and then it exits once an
    export has finished). */
 
 #define WATCH_MAX_LAG 0.1 /* seconds */
@@ -59,10 +64,9 @@ bool watch_open(char *err, size_t errlen);
 /* True when a replay is being watched. */
 bool watch_on(void);
 
-/* Once the window and sound are set up: starts watching, with the game's
-   title for the window's. restart, called to go back once the environment
-   for it is set, restarts the program; it doesn't return. */
-void watch_start(const char *title, void (*restart)(void));
+/* Once the window and sound are set up: starts watching, and taking
+   snapshots (seek_start), with the game's title for the window's. */
+void watch_start(const char *title);
 
 /* A key from the host, which the game doesn't see (events_host_key on a
    replay). */
@@ -89,8 +93,9 @@ void watch_stop_export(void);
 void watch_present(bool dirty);
 
 /* The replay reached its end, or the game quit: keeps the window up until
-   it is closed, or a key goes back. Returns at once unless watching, and
-   when SDL_VIDEO_DRIVER=dummy once no export is running. */
+   it is closed, or a key goes back into the game (seek_serve_here, which
+   doesn't return). Returns at once unless watching, and when
+   SDL_VIDEO_DRIVER=dummy once no export is running. */
 void watch_hold(void);
 
 /* For tests: forget everything. */

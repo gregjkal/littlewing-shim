@@ -3,7 +3,7 @@
 #include <string.h>
 
 #include "guest_mem.h"
-#include "measure.h"
+#include "snapshot.h"
 #include "trap.h"
 #include "util.h"
 
@@ -24,7 +24,7 @@
 #define MIN_SPLIT 32u /* header + 16 bytes */
 
 static int16_t last_error;
-MEASURE_STATE(last_error)
+SNAPSHOT_STATE(last_error)
 
 static uint32_t hdr(uint32_t p) { return p - MM_HEADER_SIZE; }
 static uint32_t magic(uint32_t p) { return gm_r32(hdr(p)); }
