@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include "guest_mem.h"
+#include "measure.h"
 #include "trap.h"
 #include "util.h"
 
@@ -55,6 +56,7 @@ static struct {
     int nrefs;
     bool warned_no_data;
 } F;
+MEASURE_STATE(F)
 
 /* Unicode code points for Mac Roman 0x80-0xFF. */
 static const uint16_t mac_roman[128] = {

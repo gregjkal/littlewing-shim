@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "guest_mem.h"
+#include "measure.h"
 #include "memmgr.h"
 #include "misc.h"
 #include "mixer.h"
@@ -36,6 +37,7 @@ static struct {
     int volume;
     sound_tap_fn tap;
 } SND = {.volume = SOUND_DEFAULT_VOLUME};
+MEASURE_STATE(SND)
 
 /* The audio thread holds the stream's lock while it renders. */
 static void lock(void) {

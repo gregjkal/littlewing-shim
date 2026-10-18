@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "measure.h"
+#include "util.h"
+
 #define CHUNK 512 /* frames mixed per pass */
 
 typedef struct {
@@ -219,6 +222,44 @@ void mix_render(int16_t *out, uint32_t frames) {
         frames -= n;
     }
 }
+
+/* Spike A's copy of the mixer (measure.h): the channels with every sound
+   they own copied too, since a sound that ends is freed. */
+static mix_sound *clone_sound(const mix_sound *s) {
+    if (!s)
+        return NULL;
+    mix_sound *c = mix_sound_new(s->frames, s->nch, s->rate);
+    if (!c)
+        fatal("out of memory");
+    memcpy(c->samples, s->samples, (size_t)s->frames * (size_t)s->nch * sizeof *s->samples);
+    return c;
+}
+
+static void *spike_save(void) {
+    typeof(X) *copy = malloc(sizeof X);
+    if (!copy)
+        fatal("out of memory");
+    memcpy(copy, &X, sizeof X);
+    for (int i = 0; i < MIX_CHANNELS; i++) {
+        channel *c = &copy->ch[i];
+        c->voice = clone_sound(c->voice);
+        for (int k = 0; k < c->count; k++) {
+            mix_cmd *m = &c->queue[(c->head + k) % MIX_QUEUE_LEN];
+            m->sound = clone_sound(m->sound);
+        }
+    }
+    return copy;
+}
+
+static void spike_load(void *copy) {
+    for (int i = 0; i < MIX_CHANNELS; i++) {
+        free_queue(&X.ch[i]);
+        stop(&X.ch[i]);
+    }
+    memcpy(&X, copy, sizeof X); /* its sounds are X's now */
+    free(copy);
+}
+MEASURE_STATE_WITH(X, spike_save, spike_load)
 
 bool mix_take_callback(mix_callback *cb) {
     if (X.cb_count == 0)

@@ -44,6 +44,16 @@ void cpu_restore(cpu_context *ctx);
    hold for the CPU; measure.h). */
 size_t cpu_context_size(void);
 
+/* For Spike A (measure.h): a copy of ctx, freed by cpu_restore() or
+   cpu_context_free(); overwriting dst with src's registers; loading ctx's
+   registers into the CPU, keeping ctx; and dropping every translated block,
+   for after guest memory changed behind the CPU's back. */
+cpu_context *cpu_context_clone(const cpu_context *ctx);
+void cpu_context_copy(cpu_context *dst, const cpu_context *src);
+void cpu_context_free(cpu_context *ctx);
+void cpu_load(const cpu_context *ctx);
+void cpu_flush_translations(void);
+
 /* Calls fn for every guest write that touches [begin, end] (inclusive), with
    the CPU's registers (including pc) current. NULL removes the watch.
    cpu_init() clears it. */

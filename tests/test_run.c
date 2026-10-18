@@ -1147,6 +1147,57 @@ TEST(run_a_watched_replay_logs_the_seek_engines_measurements) {
     CHECK(!strstr(out[1], "replay: desync"));
 }
 
+static const char *spike_a; /* LOONY_SPIKE_A for run_loony_replaying_spike_a */
+
+static void run_loony_replaying_spike_a(void *unused) {
+    setenv("LOONY_SPIKE_A", spike_a, 1);
+    run_loony_replaying(unused);
+}
+
+/* Spike A (measure.h): a replay that captures the emulator, runs on 10 or
+   15 s, and puts it all back, then replays the rest, re-running those
+   seconds, with every frame check matching. In the opening and twice in a
+   game. */
+TEST(run_spike_a_restores_a_game_in_place) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_SLOW();
+    char rec_dir[1024], play_dir[1024];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    /* A game from the menu, as run_a_recorded_game_replays_exactly starts
+       one, then the flippers every half second until a minute in. */
+    char script[8192] = "1720 down esc\n1724 up esc\n1800 down esc\n1804 up esc\n"
+                        "1900 down return\n1906 up return\n2100 down return\n2190 up return\n";
+    for (int t = 2300; t < 3800; t += 30) {
+        size_t len = strlen(script);
+        snprintf(script + len, sizeof script - len, "%d down %s\n%d up %s\n", t,
+                 t % 60 ? "z" : "slash", t + 8, t % 60 ? "z" : "slash");
+    }
+    strcat(script, "3900 quit\n");
+    /* The opening, in the event loop timer's callback; then the game, which
+       runs in an event handler, from two places. */
+    const char *spikes[3] = {"10,25", "40,50", "45,55"};
+    char out[4][32768];
+    int rec_status = record_for_clips(rec_dir, script, out[0], sizeof out[0]);
+    int status[3];
+    for (int i = 0; i < 3; i++) {
+        spike_a = spikes[i];
+        snprintf(run_data, sizeof run_data, "%s/data-%d", play_dir, i);
+        status[i] = test_run_child(run_loony_replaying_spike_a, NULL, out[i + 1], sizeof out[i + 1]);
+    }
+    run_data[0] = '\0';
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    for (int i = 0; i < 3; i++) {
+        CHECK_EQ(status[i], 0);
+        CHECK_CONTAINS(out[i + 1], "spike A: captured at ");
+        CHECK_CONTAINS(out[i + 1], "spike A: restored at ");
+        CHECK_CONTAINS(out[i + 1], "loony: replay: reached the end of the recording");
+        CHECK(!strstr(out[i + 1], "replay: desync"));
+    }
+}
+
 /* The file the first clip in rec_dir/game.clips is exported to, or "". */
 static void first_clip_file(const char *rec_dir, char *out, size_t cap) {
     char list[1100], err[256];
