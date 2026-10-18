@@ -11,6 +11,7 @@
 
 #include "cpu.h"
 #include "guest_mem.h"
+#include "measure.h"
 #include "replay.h"
 #include "trap.h"
 #include "util.h"
@@ -39,8 +40,10 @@ static struct {
     misc_url_fn open_url;
     void (*exit_hook)(void);
 } M;
+MEASURE_STATE(M)
 
 static uint32_t system_version = MISC_SYSTEM_VERSION_PEF; /* Gestalt('sysv') */
+MEASURE_STATE(system_version)
 
 extern char **environ;
 

@@ -225,3 +225,37 @@ void cpu_restore(cpu_context *ctx) {
 }
 
 size_t cpu_context_size(void) { return uc_context_size(uc); }
+
+/* The copies go through the CPU, so only Unicorn's public calls touch a
+   context: load src, save it where it goes, and put the CPU back. */
+void cpu_context_copy(cpu_context *dst, const cpu_context *src) {
+    uc_context *live;
+    check(uc_context_alloc(uc, &live), "context alloc");
+    check(uc_context_save(uc, live), "context save");
+    check(uc_context_restore(uc, src->uc_ctx), "context restore");
+    check(uc_context_save(uc, dst->uc_ctx), "context save");
+    check(uc_context_restore(uc, live), "context restore");
+    uc_context_free(live);
+}
+
+cpu_context *cpu_context_clone(const cpu_context *ctx) {
+    cpu_context *copy = cpu_save();
+    cpu_context_copy(copy, ctx);
+    return copy;
+}
+
+void cpu_context_free(cpu_context *ctx) {
+    if (ctx) {
+        uc_context_free(ctx->uc_ctx);
+        free(ctx);
+    }
+}
+
+void cpu_load(const cpu_context *ctx) {
+    check(uc_context_restore(uc, ctx->uc_ctx), "context restore");
+}
+
+void cpu_flush_translations(void) {
+    check(uc_ctl_flush_tb(uc), "flush translations");
+    check(uc_ctl_flush_tlb(uc), "flush TLB");
+}

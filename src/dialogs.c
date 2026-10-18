@@ -12,6 +12,7 @@
 #include "font.h"
 #include "guest_mem.h"
 #include "keymap.h"
+#include "measure.h"
 #include "memmgr.h"
 #include "misc.h"
 #include "nib.h"
@@ -114,6 +115,7 @@ static struct {
     char *nibs[NIB_MAX]; /* open IBNibRefs: objects.xib's text */
     size_t nib_len[NIB_MAX];
 } G;
+MEASURE_STATE(G)
 
 static void window_changed(uint32_t window, qd_window_change change, uint32_t arg);
 

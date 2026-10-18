@@ -51,6 +51,21 @@ bool trap_has_handler(uint32_t index);
 #define TRAP_DEPTH_COUNTS 8
 size_t trap_depth_counts(const uint64_t **counts);
 
+/* For Spike A (measure.h). trap_depth: the guest_call depth now (0 outside
+   any). For the guest_call at depth, 1 to trap_depth(): the CPU context it
+   saved on entry and restores on return, which the spike may overwrite, and
+   the guest code address it called; NULL and 0 at any other depth.
+   trap_on_entry: a hook run at every trap entry, before the entry is counted
+   or recorded, with the import's index. It returns the index to dispatch,
+   and the handler returns to the link register as the hook leaves it. NULL
+   removes it. */
+#define TRAP_MAX_DEPTH 32
+int trap_depth(void);
+cpu_context *trap_saved_context(int depth);
+uint32_t trap_call_target(int depth);
+typedef uint32_t (*trap_entry_fn)(uint32_t index);
+void trap_on_entry(trap_entry_fn fn);
+
 /* Prints a crash report (message, registers, depth, recent imports) and exits 2. */
 _Noreturn void trap_crash(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 

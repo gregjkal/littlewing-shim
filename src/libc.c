@@ -9,6 +9,7 @@
 #include <xlocale.h>
 
 #include "guest_mem.h"
+#include "measure.h"
 #include "memmgr.h"
 #include "misc.h"
 #include "trap.h"
@@ -35,6 +36,7 @@ static struct {
     } keymgr[KEYMGR_KEYS];
     int nkeymgr;
 } L;
+MEASURE_STATE(L)
 
 static uint32_t new_object(uint32_t size) {
     uint32_t p = mm_new_ptr(size, true);
@@ -183,6 +185,7 @@ static void h_strcat(void) {
 static struct {
     uint32_t base, size, cmp;
 } Q;
+MEASURE_STATE(Q)
 
 static bool before_or_equal(uint32_t i, uint32_t j) {
     uint32_t args[2] = {Q.base + i * Q.size, Q.base + j * Q.size};

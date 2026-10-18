@@ -6,6 +6,7 @@
 #include "cpu.h"
 #include "guest_mem.h"
 #include "keymap.h"
+#include "measure.h"
 #include "memmgr.h"
 #include "misc.h"
 #include "play.h"
@@ -84,6 +85,7 @@ static struct {
     void (*replay_key)(int scancode, bool down, bool repeat);
     bool warned_full;
 } E;
+MEASURE_STATE(E)
 
 static double now_seconds(void) { return misc_seconds(); }
 

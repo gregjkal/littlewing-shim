@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "guest_mem.h"
+#include "measure.h"
 #include "util.h"
 
 #define HISTORY 64
@@ -32,6 +33,14 @@ static struct {
     bool direct_calls;
     uint8_t lowmem_seen[GUEST_LOWMEM_SIZE / 8]; /* one bit per address already logged */
 } T;
+MEASURE_STATE(T)
+
+/* Outside T, which Spike A copies back whole: the context each guest_call
+   level saved and the function it called, at [depth - 1], and the trap
+   entry hook. */
+static cpu_context *saved[TRAP_MAX_DEPTH];
+static uint32_t called[TRAP_MAX_DEPTH];
+static trap_entry_fn on_entry;
 
 const char *trap_format_addr(uint32_t a, char buf[static 32]) {
     if (T.code_len && a >= T.code_base && a - T.code_base < T.code_len)
@@ -102,6 +111,18 @@ int32_t trap_find(const char *name) {
 
 bool trap_has_handler(uint32_t index) { return index < T.n && T.handlers[index]; }
 
+int trap_depth(void) { return T.depth; }
+
+cpu_context *trap_saved_context(int depth) {
+    return depth >= 1 && depth <= T.depth ? saved[depth - 1] : NULL;
+}
+
+uint32_t trap_call_target(int depth) {
+    return depth >= 1 && depth <= T.depth ? called[depth - 1] : 0;
+}
+
+void trap_on_entry(trap_entry_fn fn) { on_entry = fn; }
+
 size_t trap_depth_counts(const uint64_t **counts) {
     *counts = T.depth_counts;
     return TRAP_DEPTH_COUNTS;
@@ -165,7 +186,9 @@ uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
        through a pointer, and has no TOC: r2 is left as it is. */
     uint32_t code = T.direct_calls ? tvector : gm_r32(tvector);
     uint32_t toc = T.direct_calls ? cpu_gpr(2) : gm_r32(tvector + 4);
-    cpu_context *saved = cpu_save();
+    if (T.depth == TRAP_MAX_DEPTH)
+        trap_crash("guest calls nested more than %d deep", TRAP_MAX_DEPTH);
+    cpu_context *ctx = cpu_save();
 
     uint32_t old_sp = cpu_gpr(1);
     if (old_sp < GUEST_STACK_BASE || old_sp > GUEST_STACK_TOP)
@@ -181,7 +204,8 @@ uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
         cpu_set_gpr(3 + i, args[i]);
     cpu_set_lr(GUEST_RETURN_MAGIC);
 
-    T.depth++;
+    called[T.depth] = code;
+    saved[T.depth++] = ctx;
     if (T.trace_calls) {
         char a[32];
         fprintf(stderr, "loony: trace: call %s(", trap_format_addr(code, a));
@@ -201,6 +225,8 @@ uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
         uint32_t index = (s.addr - GUEST_TRAP_BASE) / 4;
         if (index >= T.n)
             trap_crash("jump to unused trap address 0x%08x", s.addr);
+        if (on_entry)
+            index = on_entry(index); /* may have put the CPU back to an earlier entry */
         T.depth_counts[T.depth < TRAP_DEPTH_COUNTS ? T.depth : TRAP_DEPTH_COUNTS - 1]++;
         const hist_entry *h = record(index);
         uint32_t resume = cpu_lr();
@@ -234,6 +260,6 @@ uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
     }
     T.depth--;
 
-    cpu_restore(saved);
+    cpu_restore(ctx);
     return result;
 }

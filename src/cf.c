@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "guest_mem.h"
+#include "measure.h"
 #include "memmgr.h"
 #include "plist.h"
 #include "trap.h"
@@ -44,6 +45,7 @@ static struct {
     uint32_t nconsts, consts_cap;
     uint32_t main_bundle;
 } C;
+MEASURE_STATE(C)
 
 static char *bundle_path; /* cf_set_bundle's; survives cf_init */
 

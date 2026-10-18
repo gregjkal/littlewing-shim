@@ -8,6 +8,7 @@
 #include "cpu.h"
 #include "guest_mem.h"
 #include "loader.h"
+#include "measure.h"
 #include "memmgr.h"
 #include "trap.h"
 #include "util.h"
@@ -26,6 +27,7 @@ static const char *const vtable_names[3] = {
 static struct {
     uint32_t vtables[3];
 } X;
+MEASURE_STATE(X)
 
 void cxxrt_init(void) {
     for (int i = 0; i < 3; i++) {
