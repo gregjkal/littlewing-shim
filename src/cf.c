@@ -39,82 +39,61 @@ static struct {
     uint32_t app_var;   /* Mach-O: the kCFPreferencesCurrentApplication variable */
     uint32_t class_ref; /* Mach-O: __CFConstantStringClassReference */
     struct {
-        uint32_t addr;
         char *text;
+        uint32_t addr;
     } *consts; /* constant strings read so far */
     uint32_t nconsts, consts_cap;
     uint32_t main_bundle;
 } C;
 
-/* A snapshot's copy (snapshot.h): C with its arrays and every string in
-   them copied too, since releasing an object frees its string and a new
-   one can move the array. */
-static char *dup_string(const char *s) {
-    if (!s)
-        return NULL;
-    char *c = strdup(s);
-    if (!c)
-        fatal("out of memory");
-    return c;
+/* A snapshot's walk (snapshot.h): C with its arrays and every string in
+   them, since releasing an object frees its string and a new one can move
+   an array. An array's slots past its count are zeros in a snapshot. */
+static void free_owned(void) {
+    for (uint32_t i = 0; i < C.nobjs; i++)
+        free(C.objs[i].str);
+    for (uint32_t i = 0; i < C.nprefs; i++)
+        free(C.prefs[i].key);
+    for (uint32_t i = 0; i < C.nconsts; i++)
+        free(C.consts[i].text);
+    free(C.objs);
+    free(C.prefs);
+    free(C.prefs_path);
+    free(C.consts);
 }
 
-static void *dup_array(const void *p, size_t n, size_t size) {
-    if (!p)
-        return NULL;
-    void *c = malloc(n ? n * size : 1);
-    if (!c)
-        fatal("out of memory");
-    memcpy(c, p, n * size);
-    return c;
+static void snap_walk(snapshot_walker *w) {
+    if (snapshot_loading(w))
+        free_owned();
+    snapshot_bytes(w, &C, sizeof C);
+    SNAPSHOT_OWNED(w, C.objs, C.cap);
+    for (uint32_t i = 0; i < C.cap; i++) {
+        if (i < C.nobjs)
+            snapshot_string(w, &C.objs[i].str);
+        else
+            SNAPSHOT_REBUILT(w, C.objs[i]);
+    }
+    SNAPSHOT_OWNED(w, C.prefs, C.prefs_cap);
+    for (uint32_t i = 0; i < C.prefs_cap; i++) {
+        if (i < C.nprefs) {
+            snapshot_string(w, &C.prefs[i].key);
+            SNAPSHOT_PADDING(w, C.prefs[i], value);
+        } else {
+            SNAPSHOT_REBUILT(w, C.prefs[i]);
+        }
+    }
+    snapshot_string(w, &C.prefs_path);
+    SNAPSHOT_OWNED(w, C.consts, C.consts_cap);
+    for (uint32_t i = 0; i < C.consts_cap; i++) {
+        if (i < C.nconsts) {
+            snapshot_string(w, &C.consts[i].text);
+            SNAPSHOT_PADDING(w, C.consts[i], addr);
+        } else {
+            SNAPSHOT_REBUILT(w, C.consts[i]);
+        }
+    }
 }
-
-/* Gives c copies of what it holds. */
-static void clone_owned(typeof(C) *c) {
-    c->objs = dup_array(c->objs, c->cap, sizeof *c->objs);
-    for (uint32_t i = 0; i < c->nobjs; i++)
-        c->objs[i].str = dup_string(c->objs[i].str);
-    c->prefs = dup_array(c->prefs, c->prefs_cap, sizeof *c->prefs);
-    for (uint32_t i = 0; i < c->nprefs; i++)
-        c->prefs[i].key = dup_string(c->prefs[i].key);
-    c->prefs_path = dup_string(c->prefs_path);
-    c->consts = dup_array(c->consts, c->consts_cap, sizeof *c->consts);
-    for (uint32_t i = 0; i < c->nconsts; i++)
-        c->consts[i].text = dup_string(c->consts[i].text);
-}
-
-static void free_owned(typeof(C) *c) {
-    for (uint32_t i = 0; i < c->nobjs; i++)
-        free(c->objs[i].str);
-    for (uint32_t i = 0; i < c->nprefs; i++)
-        free(c->prefs[i].key);
-    for (uint32_t i = 0; i < c->nconsts; i++)
-        free(c->consts[i].text);
-    free(c->objs);
-    free(c->prefs);
-    free(c->prefs_path);
-    free(c->consts);
-}
-
-static void *snap_save(void) {
-    typeof(C) *copy = malloc(sizeof C);
-    if (!copy)
-        fatal("out of memory");
-    memcpy(copy, &C, sizeof C);
-    clone_owned(copy);
-    return copy;
-}
-
-static void snap_load(const void *copy) {
-    free_owned(&C);
-    memcpy(&C, copy, sizeof C);
-    clone_owned(&C); /* the copy keeps its own */
-}
-
-static void snap_drop(void *copy) {
-    free_owned(copy);
-    free(copy);
-}
-SNAPSHOT_STATE_WITH(C, snap_save, snap_load, snap_drop)
+SNAPSHOT_STATE_WALK(C, snap_walk)
 
 static char *bundle_path; /* cf_set_bundle's; survives cf_init */
 

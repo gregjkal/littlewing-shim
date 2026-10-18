@@ -37,7 +37,13 @@ static struct {
     bool direct;          /* qd_set_direct_drawing */
     bool window_sized;    /* CreateNewWindow has sized the screen */
 } Q;
-SNAPSHOT_STATE(Q)
+
+/* A snapshot's walk (snapshot.h): dialogs' hook is the host's. */
+static void snap_walk(snapshot_walker *w) {
+    snapshot_bytes(w, &Q, sizeof Q);
+    SNAPSHOT_HOST(w, Q.window_hook);
+}
+SNAPSHOT_STATE_WALK(Q, snap_walk)
 
 /* ---- guest structure helpers ---- */
 

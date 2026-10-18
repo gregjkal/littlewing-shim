@@ -255,6 +255,36 @@ void cpu_load(const cpu_context *ctx) {
     check(uc_context_restore(uc, ctx->uc_ctx), "context restore");
 }
 
+bool cpu_context_same(const cpu_context *a, const cpu_context *b, char *what, size_t cap) {
+    static const struct {
+        int id;
+        const char *name;
+    } named[] = {{UC_PPC_REG_PC, "pc"},   {UC_PPC_REG_LR, "lr"},   {UC_PPC_REG_CTR, "ctr"},
+                 {UC_PPC_REG_CR, "cr"},   {UC_PPC_REG_XER, "xer"}, {UC_PPC_REG_MSR, "msr"},
+                 {UC_PPC_REG_FPSCR, "fpscr"}};
+    int n = 64 + (int)(sizeof named / sizeof named[0]);
+    for (int i = 0; i < n; i++) {
+        int id = i < 32 ? UC_PPC_REG_0 + i : i < 64 ? UC_PPC_REG_FPR0 + i - 32 : named[i - 64].id;
+        uint64_t va = 0, vb = 0;
+        check(uc_context_reg_read(a->uc_ctx, id, &va), "context read");
+        check(uc_context_reg_read(b->uc_ctx, id, &vb), "context read");
+        if (i < 32 || i >= 64) { /* 32 bits */
+            va = (uint32_t)va;
+            vb = (uint32_t)vb;
+        }
+        if (va == vb)
+            continue;
+        char name[8];
+        if (i < 64)
+            snprintf(name, sizeof name, "%s%d", i < 32 ? "r" : "f", i % 32);
+        snprintf(what, cap, "%s 0x%0*llx, not 0x%0*llx", i < 64 ? name : named[i - 64].name,
+                 i >= 32 && i < 64 ? 16 : 8, (unsigned long long)va, i >= 32 && i < 64 ? 16 : 8,
+                 (unsigned long long)vb);
+        return false;
+    }
+    return true;
+}
+
 void cpu_flush_translations(void) {
     check(uc_ctl_flush_tb(uc), "flush translations");
     check(uc_ctl_flush_tlb(uc), "flush TLB");

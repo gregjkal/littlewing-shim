@@ -58,7 +58,8 @@ size_t trap_depth_counts(const uint64_t **counts);
    overwrites, and the guest code address it called; NULL and 0 at any other
    depth.
    trap_on_entry: a hook run at every trap entry, before the entry is counted
-   or recorded, with the import's index. It returns the index to dispatch,
+   by depth or recorded (but after trap_entries counts it), with the
+   import's index. It returns the index to dispatch,
    and the handler returns to the link register as the hook leaves it. NULL
    removes it. */
 #define TRAP_MAX_DEPTH 32
@@ -67,6 +68,12 @@ cpu_context *trap_saved_context(int depth);
 uint32_t trap_call_target(int depth);
 typedef uint32_t (*trap_entry_fn)(uint32_t index);
 void trap_on_entry(trap_entry_fn fn);
+
+/* How many traps the guest has entered, on the game's timeline: a snapshot
+   puts the count back. The entry the hook is running for is counted
+   already, and guest_resume's dispatch is no new entry. So the count names
+   one trap entry of a replay, the same however the replay got there. */
+uint64_t trap_entries(void);
 
 /* trap_level: the trap the guest_call at depth is dispatching (or last
    dispatched) and where the guest goes on after it; false at a depth with

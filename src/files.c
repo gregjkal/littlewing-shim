@@ -56,7 +56,6 @@ static struct {
     int nrefs;
     bool warned_no_data;
 } F;
-SNAPSHOT_STATE(F)
 
 /* Unicode code points for Mac Roman 0x80-0xFF. */
 static const uint16_t mac_roman[128] = {
@@ -208,6 +207,33 @@ static bool exists(const char *path, bool want_dir) {
     struct stat st;
     return stat(path, &st) == 0 && (want_dir ? S_ISDIR(st.st_mode) : S_ISREG(st.st_mode));
 }
+
+/* A snapshot's walk (snapshot.h): an open file is its name, the folder it
+   is open in and its mark, and loading reopens it there, since closing a
+   file, or the first write that copies it to the data folder, replaces
+   its FILE. What a file holds isn't in a snapshot: a write stays. */
+static void snap_walk(snapshot_walker *w) {
+    if (snapshot_loading(w))
+        for (int i = 0; i < MAX_FILES; i++)
+            if (F.files[i].f)
+                fclose(F.files[i].f);
+    snapshot_bytes(w, &F, sizeof F);
+    for (int i = 0; i < MAX_FILES; i++) {
+        open_file *o = &F.files[i];
+        int64_t mark = !snapshot_loading(w) && o->f ? (int64_t)ftell(o->f) : -1;
+        SNAPSHOT_REBUILT(w, o->f);
+        snapshot_bytes(w, &mark, sizeof mark);
+        if (!snapshot_loading(w) || mark < 0)
+            continue;
+        char path[PATH_CAP];
+        under(o->in_data ? F.data_dir : F.game_dir, o->rel, path, sizeof path);
+        o->f = fopen(path, o->in_data && o->writable ? "r+b" : "rb");
+        if (!o->f || fseek(o->f, (long)mark, SEEK_SET) != 0)
+            fatal("snapshot: can't open %s again at %lld: %s", path, (long long)mark,
+                  strerror(errno));
+    }
+}
+SNAPSHOT_STATE_WALK(F, snap_walk)
 
 /* Where rel is on the host: in the data folder if it's there (returns
    true), otherwise in the game folder, whether or not it exists. */

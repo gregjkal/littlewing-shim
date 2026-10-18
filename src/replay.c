@@ -111,7 +111,25 @@ static struct {
     void (*pace)(uint64_t clock_us);
     void (*end)(void);
 } R;
-SNAPSHOT_STATE(R)
+
+/* A snapshot's walk (snapshot.h): the cursor, the step and the counts are
+   the replay's; the file, what was parsed out of it, the recording's
+   buffers and the viewer's hooks are the host's, and stay as they are. */
+static void snap_walk(snapshot_walker *w) {
+    snapshot_bytes(w, &R, sizeof R);
+    SNAPSHOT_HOST(w, R.header);
+    SNAPSHOT_HOST(w, R.session);
+    SNAPSHOT_HOST(w, R.out);
+    SNAPSHOT_HOST(w, R.started_wall);
+    SNAPSHOT_HOST(w, R.data);
+    SNAPSHOT_HOST(w, R.in.data);
+    SNAPSHOT_HOST(w, R.h.prefs);
+    SNAPSHOT_HOST(w, R.mark_ticks);
+    SNAPSHOT_HOST(w, R.spans);
+    SNAPSHOT_HOST(w, R.pace);
+    SNAPSHOT_HOST(w, R.end);
+}
+SNAPSHOT_STATE_WALK(R, snap_walk)
 
 bool replay_recording(void) { return R.mode == RECORDING; }
 bool replay_playing(void) { return R.mode == PLAYING; }
