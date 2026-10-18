@@ -93,6 +93,30 @@ The two 150 s runs are `run_spike_b_goes_back_into_a_game_from_exit_to_shell` an
 - **Timing.** A capture took 0.45 to 1.0 ms; a re-entry's memory restore 0.3 to 0.77 ms, of which the mapping was 0.09 to 0.45 ms. Debug build, with sanitizers, up to nine replays sharing the machine.
 - **Not covered.** A seek from between games into a game while the replay is still running (the same re-entry, started from a seek instead of the end), HD on, the viewer, and the other two games.
 
+## The seek controller, 2026-10-18 (#44, PR #73)
+
+PR 1 of #44's build order is merged: going back in the viewer puts back a snapshot instead of restarting the program. While watching, src/seek.c takes a snapshot (src/snapshot.c, grown out of the spikes' code) at the first depth-2 trap entry every 5 s of the replay's clock, in either of the two frames the run loop calls the game from: a handler it dispatched an event to, or a timer its own pump fired. A seek (`seek_to`, newest wins, with a generation counter) is served at the next depth-2 trap entry through the trap entry hook: the last snapshot at or before the time wanted goes back in place when the live frame matches (`snapshot_fits`), and otherwise the replay unwinds to `main` with a longjmp and re-enters as Spike B did, now into a timer's callback as well as a dispatch. A pending seek ends every wait the viewer has (pacing, the pause, the end hold), so the replay reaches that entry unpaced; `misc_wait` already returns at once during a replay, so the modal dialog's loop spins at full speed too. From the snapshot the viewer replays to the time unpaced, with the pause, the speed, a clip's start and a running export kept.
+
+The store keeps at most 120 snapshots in the clock's order, about 0.9 MB each as copy-on-write regions, and thins out the one whose neighbours are closest when the cap is passed, so the oldest end up 10 s apart, then 20. Outside play only the latest of each stretch is kept, since every time the viewer goes to is in play. After a back seek into a thinned region, snapshots are taken again at 5 s spacing and the thinning runs again; harmless, bounded by the cap.
+
+| | |
+|---|---|
+| A capture | 0.24 to 0.34 ms |
+| A restore in place | 0.20 ms, then 1.2 s of game time replayed in 0.02 s |
+| A re-entry from ExitToShell after the end | 0.21 ms, then 4.7 s replayed in 0.05 s |
+| Peak footprint, snapshots on and off | 115.1 and 96.8 MB for 21 kept, so about 105 MB at the cap |
+| Replay speed | 10.7x either way |
+
+Release build, HD off, headless, on a 170 s recording of one game.
+
+- **The walker's inventory grew.** Besides the mixer and the Resource Manager (Spike A), dialogs (saved screens and nibs) and Core Foundation (its object array and every string) needed real save, load and drop functions, since a crude copy would hand back freed pointers after a dialog closed or an object was released. Sound keeps its host fields (streams, volume, WAV output, the tap) across a restore. The script's state left the inventory: a script's keys follow the replay's clock, so after going back the next one comes when the clock reaches it again. `load` no longer consumes the copy, so a snapshot can be put back any number of times. The rule is now in CLAUDE.md: guest-visible module state is registered with `SNAPSHOT_STATE`, with save, load and drop when it owns heap objects that come and go.
+- **The unwind step exists.** `trap_unwind` clears the per-level arrays and `events_unwind` the frame in progress and a resume not taken up, as Spike B said they must.
+- **The screen redraws from the viewer's own flag**, not QuickDraw's dirty flag, which would shift the frame checks.
+- **Still copied crudely:** files.c's open files and cgimage's images. Neither changes during a Loony replay. PR 2's walker takes them.
+- **HD after a restore:** HD's copies of offscreen buffers keep what they had after the capture until their next use, when `hd_copy` syncs the source copy from its 1x pixels before copying from it. The remaining question is which art that sync picks for the changed pixels, which is #44's done-when 6, in PR 2, and worth one run by hand in HD before the next release.
+- **Done when.** 2 and 7 are tested: `run_a_watched_game_goes_back` seeks back three times in place inside a game, then from between games while the replay runs (the case Spike B left untried) and from ExitToShell after the end, and `run_a_watched_game_goes_back_from_the_end_of_the_recording` from a recording cut off between games; each reaches the end with every frame check matching. 1 is unmeasured for want of a 14-minute recording, but bounded: at the cap, snapshots that old are 10 s apart, and 10 s replayed in about 0.13 s here without HD. 5, a seek while paused in the name-entry dialog, is a hand check, since the demo disables high scores. 3, 4 and 6 are PR 2's.
+- **Not bound yet:** #34's Left and 0 to 9, which wait for #33's key table.
+
 ## Method
 
 I profiled the subject first, at commit c63f43a, through eight structural lenses: state capture, save/load symmetry, storage and budget, seek algorithm, determinism and verification, threading and process model, invalidation, and messes. The references were chosen for the engine problem, not the UI. Each one captures emulator or player state and seeks by restoring it, or is the strongest example of a capture technique LittleWing might use. Parallel dives read each reference at a pinned commit, organized by the same eight lenses, and cited every behavior to the file and lines that implement it. Each dive opened every range it cited. Nothing in any reference was built or run. Synthesis mapped shared patterns to named subject deficits and ranked them by deficit severity, then how many references agree, then cost.
