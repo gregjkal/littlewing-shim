@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "keymap.h"
+#include "measure.h"
 #include "util.h"
 
 #define MAX_ACTIONS 1000000
@@ -13,6 +14,7 @@ static struct {
     script_action *a;
     int n, cap, next;
 } SC;
+MEASURE_STATE(SC)
 
 static bool parse(const char *text, char *err, size_t errlen) {
     int line_no = 0;
