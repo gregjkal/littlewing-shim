@@ -87,6 +87,18 @@ static struct {
 } E;
 MEASURE_STATE(E)
 
+/* Outside E, which the spikes copy back whole, since they describe the host
+   stack (events.h, Spike B): the run loop's dispatch in progress and
+   whether its handler is running, and the dispatch the next run loop
+   resumes, with the call that stands for the handler's guest call. */
+static ev_frame *loop_frame;
+static bool loop_in_handler;
+static struct {
+    bool on;
+    ev_frame frame;
+    uint32_t (*call)(void);
+} resume_at;
+
 static double now_seconds(void) { return misc_seconds(); }
 
 /* ---- event objects and the queue ---- */
@@ -375,45 +387,98 @@ static bool handles(const ev_handler *h, const ev_event *e) {
     return false;
 }
 
-/* Runs the handlers on target for event idx, newest first. */
-static int32_t run_handlers(uint32_t target, int idx) {
-    for (int i = E.nhandlers - 1; i >= 0; i--) {
+/* Runs the handlers on target for event idx, newest first. With f (the run
+   loop's dispatch), notes in it the handler running and the loop depth
+   call_out hides; resuming, goes straight back into handler f->handler,
+   through the resume call, and on from there. */
+static int32_t run_handlers(uint32_t target, int idx, ev_frame *f, bool resuming) {
+    for (int i = resuming ? f->handler : E.nhandlers - 1; i >= 0; i--) {
         const ev_handler *h = &E.handlers[i];
-        if (h->target != target || !handles(h, &E.events[idx]))
-            continue;
-        uint32_t args[3] = {TAG_NEXT_HANDLER, event_ref(idx), h->user_data};
-        int32_t r = (int32_t)call_out(h->handler, 3, args);
+        int32_t r;
+        if (resuming) {
+            resuming = false;
+            loop_in_handler = true;
+            E.loop_depth = 0; /* as call_out has it */
+            r = (int32_t)resume_at.call();
+            E.loop_depth = f->loop_depth;
+            loop_in_handler = false;
+        } else {
+            if (h->target != target || !handles(h, &E.events[idx]))
+                continue;
+            uint32_t args[3] = {TAG_NEXT_HANDLER, event_ref(idx), h->user_data};
+            if (!f) {
+                r = (int32_t)call_out(h->handler, 3, args);
+            } else {
+                f->handler = i;
+                f->loop_depth = E.loop_depth;
+                loop_in_handler = true;
+                r = (int32_t)call_out(h->handler, 3, args);
+                loop_in_handler = false;
+            }
+        }
         if (r != EV_NOT_HANDLED_ERR)
             return r;
     }
     return EV_NOT_HANDLED_ERR;
 }
 
-static int32_t dispatch(int idx, uint32_t target) {
+/* Sends event idx to target's chain. With f, the run loop's dispatch: notes
+   its frames in f for events_loop_frame, or resuming, rebuilds them from f
+   instead of starting. */
+static int32_t dispatch_framed(int idx, uint32_t target, ev_frame *f, bool resuming) {
     uint32_t chain[2];
-    int n = 0;
-    if (target == EV_DISPATCHER_TARGET) {
-        if (E.focus_window && E.events[idx].cls == EV_CLASS_KEYBOARD)
-            chain[n++] = E.focus_window;
-        chain[n++] = EV_APPLICATION_TARGET;
-    } else if (is_window_target(target)) {
-        chain[n++] = target;
-        chain[n++] = EV_APPLICATION_TARGET;
-    } else if (target == EV_APPLICATION_TARGET) {
-        chain[n++] = EV_APPLICATION_TARGET;
+    int n = 0, from = 0;
+    if (resuming) {
+        memcpy(chain, f->chain, sizeof chain);
+        n = f->nchain;
+        from = f->link;
     } else {
-        trap_crash("SendEventToEventTarget: 0x%08x is not an event target", target);
+        if (target == EV_DISPATCHER_TARGET) {
+            if (E.focus_window && E.events[idx].cls == EV_CLASS_KEYBOARD)
+                chain[n++] = E.focus_window;
+            chain[n++] = EV_APPLICATION_TARGET;
+        } else if (is_window_target(target)) {
+            chain[n++] = target;
+            chain[n++] = EV_APPLICATION_TARGET;
+        } else if (target == EV_APPLICATION_TARGET) {
+            chain[n++] = EV_APPLICATION_TARGET;
+        } else {
+            trap_crash("SendEventToEventTarget: 0x%08x is not an event target", target);
+        }
+        E.events[idx].refs++; /* handlers may release their own references */
+        if (f) {
+            f->slot = idx;
+            memcpy(f->chain, chain, sizeof chain);
+            f->nchain = n;
+        }
     }
-    E.events[idx].refs++; /* handlers may release their own references */
     int32_t r = EV_NOT_HANDLED_ERR;
-    for (int i = 0; i < n && r == EV_NOT_HANDLED_ERR; i++)
-        r = run_handlers(chain[i], idx);
+    for (int i = from; i < n && r == EV_NOT_HANDLED_ERR; i++) {
+        if (f)
+            f->link = i;
+        r = run_handlers(chain[i], idx, f, resuming && i == from);
+    }
     if (r == EV_NOT_HANDLED_ERR && E.events[idx].cls == EV_CLASS_APPLE_EVENT) {
         handle_apple_event(); /* the standard application handler's job */
         r = 0;
     }
     release(&E.events[idx]);
     return r;
+}
+
+static int32_t dispatch(int idx, uint32_t target) { return dispatch_framed(idx, target, NULL, false); }
+
+bool events_loop_frame(ev_frame *f) {
+    if (!loop_frame || !loop_in_handler)
+        return false;
+    *f = *loop_frame;
+    return true;
+}
+
+void events_resume_loop(const ev_frame *f, uint32_t (*call)(void)) {
+    resume_at.on = true;
+    resume_at.frame = *f;
+    resume_at.call = call;
 }
 
 /* ---- timers ---- */
@@ -727,16 +792,30 @@ static void h_remove_event_loop_timer(void) {
 
 /* Fires timers and dispatches queued events to the dispatcher target until
    QuitApplicationEventLoop. */
+static void loop_dispatch(int idx, ev_frame *f, bool resuming) {
+    loop_frame = f;
+    dispatch_framed(idx, EV_DISPATCHER_TARGET, f, resuming);
+    loop_frame = NULL;
+    release(&E.events[idx]);
+}
+
 static void h_run_application_event_loop(void) {
-    E.quit = false;
-    E.loop_depth++;
+    ev_frame f = {0};
+    bool resuming = resume_at.on; /* back into a dispatch, mid-loop (Spike B) */
+    resume_at.on = false;
+    if (resuming) {
+        f = resume_at.frame;
+        loop_dispatch(f.slot, &f, true);
+    } else {
+        E.quit = false;
+        E.loop_depth++;
+    }
     while (!E.quit) {
-        events_pump();
-        while (E.qcount > 0 && !E.quit) {
-            int idx = dequeue_at(0);
-            dispatch(idx, EV_DISPATCHER_TARGET);
-            release(&E.events[idx]);
-        }
+        if (!resuming)
+            events_pump();
+        resuming = false;
+        while (E.qcount > 0 && !E.quit)
+            loop_dispatch(dequeue_at(0), &f, false);
         if (!E.quit)
             wait_until_next_timer();
     }

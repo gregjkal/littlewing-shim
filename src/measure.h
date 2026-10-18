@@ -1,4 +1,5 @@
 #pragma once
+#include <setjmp.h>
 #include <stddef.h>
 
 /* Measurements for the replay seek engine (#44, docs/littlewing-shim-steal-
@@ -23,10 +24,33 @@
    dispatches the trap it captured, as if the run had been at N all along.
    The replay's frame checks then say whether the restore was exact. It logs
    what it captured and what each step took. Throwaway: the walker replaces
-   it. */
+   it.
 
-/* After hd_init: reads the environment. */
+   Spike B (#44, "Spike B, exactly"): with LOONY_SPIKE_B=<N>, seconds of the
+   game's clock, a replay captures the emulator as Spike A does at the first
+   depth-2 trap entry past N inside a handler the run loop dispatched an
+   event to (where Loony's games run), with the frames above it: the trap
+   depth 1 is in (RunApplicationEventLoop) and the run loop's dispatch
+   (events_loop_frame). It lets the replay run to its end: the game's main
+   returning, ExitToShell (where Loony's quit ends), or the end of the
+   recording inside a trap (replay_set_end). Inside a trap, it longjmps to
+   measure_unwound, which main set before its guest call. Then, with no
+   guest call left on the host stack, it puts memory and the module blocks
+   back, rebuilds depth 1 at its trap with guest_resume, has the run loop
+   go back into its dispatch (events_resume_loop), rebuilds depth 2 at the
+   captured trap, and the replay runs to its end a second time, its frame
+   checks saying whether the re-entry was exact. Headless only: a watched
+   replay's viewer takes over the replay's end. Throwaway too. */
+
+/* After hd_init and replay_start: reads the environment. */
 void measure_init(void);
+
+/* Spike B: main's way back from inside a trap, and what main calls when
+   the game ended, its main returning or ExitToShell (the exit hook), and
+   again where the longjmp lands. With a capture, inside a trap it longjmps;
+   in main it re-enters the game, returning once the game ends again. */
+extern jmp_buf measure_unwound;
+void measure_game_ended(void);
 
 /* The event pump's present: runs the spike when its time comes. */
 void measure_present(void);
