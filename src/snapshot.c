@@ -2,6 +2,7 @@
 
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -511,7 +512,8 @@ snapshot *snapshot_take(uint32_t index) {
 void snapshot_free(snapshot *s) {
     if (!s)
         return;
-    mach_vm_deallocate(mach_task_self(), s->mem, gm_host_size());
+    if (s->mem)
+        mach_vm_deallocate(mach_task_self(), s->mem, gm_host_size());
     cpu_context_free(s->cpu);
     for (int d = 0; d < DEPTH; d++)
         cpu_context_free(s->level[d].saved);
@@ -529,8 +531,8 @@ bool snapshot_fits(const snapshot *s) {
 
 /* The host pages of region r that differ between the guest mapping and
    s's copy, and the guest address where the first does. A page neither
-   side holds (mincore) is zeros on both, and isn't read, since reading it
-   would make it resident. */
+   side holds (mincore: in memory, or compressed or swapped out) is zeros
+   on both, and isn't read, since reading it would make it resident. */
 static size_t differing_pages(const snapshot *s, const gm_region *r, uint32_t *first) {
     size_t page = vm_page_size;
     uintptr_t live = (uintptr_t)gm_host_base(), copy = (uintptr_t)s->mem;
@@ -543,7 +545,7 @@ static size_t differing_pages(const snapshot *s, const gm_region *r, uint32_t *f
         mincore((void *)(copy + begin), end - begin, in_copy) != 0)
         memset(in_live, MINCORE_INCORE, npages); /* compare every page */
     for (size_t k = 0; k < npages; k++) {
-        if (!((in_live[k] | in_copy[k]) & MINCORE_INCORE))
+        if (!((in_live[k] | in_copy[k]) & (MINCORE_INCORE | MINCORE_PAGED_OUT)))
             continue;
         size_t a = begin + k * page, b = a + page;
         if (a < r->base)
@@ -663,4 +665,262 @@ void snapshot_reenter(const snapshot *s, void (*after)(void)) {
     /* guest_resume copies both contexts before any guest code runs. */
     guest_resume(s->level[0].called, s->level[0].saved, s->level[1].saved, s->level[0].index,
                  s->level[0].resume);
+}
+
+/* ---- on disk (#46) ---- */
+
+#define CODEC_MAGIC 0x4C57736Bu /* 'LWsk' */
+#define CODEC_VERSION 1u
+
+typedef struct {
+    uint8_t *p;
+    size_t len, cap;
+} out_buf;
+
+static void out_add(out_buf *o, const void *p, size_t n) {
+    o->p = grow(o->p, &o->cap, o->len + n, 1);
+    memcpy(o->p + o->len, p, n);
+    o->len += n;
+}
+
+static void out_le(out_buf *o, uint64_t v, int bytes) {
+    uint8_t b[8];
+    for (int i = 0; i < bytes; i++)
+        b[i] = (uint8_t)(v >> (8 * i));
+    out_add(o, b, (size_t)bytes);
+}
+
+static void out_regs(out_buf *o, const cpu_context *ctx) {
+    uint64_t regs[CPU_REGS];
+    cpu_context_regs(ctx, regs);
+    for (int i = 0; i < CPU_REGS; i++)
+        out_le(o, regs[i], 8);
+}
+
+/* Where page k of the guest mapping is, in s's copy. */
+static uint8_t *page_of(const snapshot *s, size_t k) {
+    return (uint8_t *)(uintptr_t)s->mem + k * vm_page_size;
+}
+
+uint8_t *snapshot_encode(const snapshot *s, const snapshot *base, const snapshot_range *same,
+                         size_t nsame, size_t *len) {
+    out_buf o = {0};
+    out_le(&o, CODEC_MAGIC, 4);
+    out_le(&o, CODEC_VERSION, 4);
+    out_le(&o, vm_page_size, 4);
+    out_le(&o, gm_host_size(), 8);
+    out_le(&o, s->clock_us, 8);
+    out_regs(&o, s->cpu);
+    for (int d = 0; d < DEPTH; d++) {
+        out_regs(&o, s->level[d].saved);
+        out_le(&o, s->level[d].called, 4);
+        out_le(&o, s->level[d].index, 4);
+        out_le(&o, s->level[d].resume, 4);
+    }
+    const ev_frame *f = &s->frame;
+    int32_t frame[8] = {f->timer, f->slot, (int32_t)f->chain[0], (int32_t)f->chain[1],
+                        f->nchain, f->link, f->handler, f->loop_depth};
+    for (int i = 0; i < 8; i++)
+        out_le(&o, (uint32_t)frame[i], 4);
+    out_le(&o, s->state_len, 8);
+    out_add(&o, s->state, s->state_len);
+
+    size_t page = vm_page_size, npages = gm_host_size() / page;
+    if (gm_host_size() % page)
+        fatal("snapshot: the guest mapping (%zu bytes) isn't whole pages", gm_host_size());
+    char *in_s = malloc(npages), *in_base = malloc(npages);
+    uint8_t *buf = malloc(page);
+    if (!in_s || !in_base || !buf)
+        fatal("out of memory");
+    if (mincore((void *)(uintptr_t)s->mem, npages * page, in_s) != 0 ||
+        mincore((void *)(uintptr_t)base->mem, npages * page, in_base) != 0)
+        memset(in_s, MINCORE_INCORE, npages); /* every page, then */
+    size_t count_at = o.len;
+    uint32_t count = 0;
+    out_le(&o, 0, 4);
+    for (size_t k = 0; k < npages; k++) {
+        if (!((in_s[k] | in_base[k]) & (MINCORE_INCORE | MINCORE_PAGED_OUT)))
+            continue; /* zeros on both sides */
+        const uint8_t *b = page_of(base, k);
+        memcpy(buf, page_of(s, k), page);
+        uint64_t lo = (uint64_t)k * page, hi = lo + page;
+        for (size_t r = 0; r < nsame; r++) {
+            uint64_t a = same[r].addr, e = a + same[r].len;
+            if (e <= lo || a >= hi)
+                continue;
+            if (a < lo)
+                a = lo;
+            if (e > hi)
+                e = hi;
+            memcpy(buf + (a - lo), b + (a - lo), (size_t)(e - a));
+        }
+        if (memcmp(buf, b, page) == 0)
+            continue;
+        for (size_t i = 0; i < page; i++)
+            buf[i] ^= b[i];
+        out_le(&o, k, 4);
+        out_add(&o, buf, page);
+        count++;
+    }
+    for (int i = 0; i < 4; i++)
+        o.p[count_at + (size_t)i] = (uint8_t)(count >> (8 * i));
+    free(in_s);
+    free(in_base);
+    free(buf);
+    *len = o.len;
+    return o.p;
+}
+
+bool snapshot_changed_holds(const snapshot *s, const snapshot *base, const char *text) {
+    size_t n = strlen(text), page = vm_page_size, size = gm_host_size(), npages = size / page;
+    if (!n || n > 255)
+        return false;
+    char forms[3][256];
+    for (size_t i = 0; i <= n; i++) {
+        forms[0][i] = text[i];
+        forms[1][i] = (char)toupper((unsigned char)text[i]);
+        forms[2][i] = (char)tolower((unsigned char)text[i]);
+    }
+    char *in_s = malloc(npages), *in_base = malloc(npages);
+    if (!in_s || !in_base)
+        fatal("out of memory");
+    if (mincore((void *)(uintptr_t)s->mem, npages * page, in_s) != 0 ||
+        mincore((void *)(uintptr_t)base->mem, npages * page, in_base) != 0)
+        memset(in_s, MINCORE_INCORE, npages);
+    const uint8_t *m = (const uint8_t *)(uintptr_t)s->mem, *b = (const uint8_t *)(uintptr_t)base->mem;
+    bool found = false;
+    for (size_t k = 0; k < npages && !found; k++) {
+        if (!((in_s[k] | in_base[k]) & (MINCORE_INCORE | MINCORE_PAGED_OUT)) ||
+            memcmp(m + k * page, b + k * page, page) == 0)
+            continue;
+        /* An occurrence starting in this page, and a byte of it that changed. */
+        size_t from = k * page, to = from + page + n - 1 < size ? from + page + n - 1 : size;
+        for (int f = 0; f < 3 && !found; f++) {
+            const uint8_t *at = m + from, *end = m + to;
+            while (!found && at < end && (at = memmem(at, (size_t)(end - at), forms[f], n))) {
+                if ((size_t)(at - m) >= from + page)
+                    break;
+                found = memcmp(at, b + (at - m), n) != 0;
+                at++;
+            }
+        }
+    }
+    free(in_s);
+    free(in_base);
+    return found;
+}
+
+/* A place in an encoded snapshot. */
+typedef struct {
+    const uint8_t *p;
+    size_t len, at;
+    bool bad;
+} in_buf;
+
+static uint64_t in_le(in_buf *in, int bytes) {
+    if (in->bad || (size_t)bytes > in->len - in->at) {
+        in->bad = true;
+        return 0;
+    }
+    uint64_t v = 0;
+    for (int i = 0; i < bytes; i++)
+        v |= (uint64_t)in->p[in->at + (size_t)i] << (8 * i);
+    in->at += (size_t)bytes;
+    return v;
+}
+
+static const uint8_t *in_bytes(in_buf *in, size_t n) {
+    if (in->bad || n > in->len - in->at) {
+        in->bad = true;
+        return NULL;
+    }
+    const uint8_t *p = in->p + in->at;
+    in->at += n;
+    return p;
+}
+
+static cpu_context *in_regs(in_buf *in) {
+    uint64_t regs[CPU_REGS];
+    for (int i = 0; i < CPU_REGS; i++)
+        regs[i] = in_le(in, 8);
+    return in->bad ? NULL : cpu_context_with_regs(regs);
+}
+
+snapshot *snapshot_decode(const uint8_t *data, size_t len, char *err, size_t errlen) {
+    in_buf in = {data, len, 0, false};
+    if (in_le(&in, 4) != CODEC_MAGIC || in_le(&in, 4) != CODEC_VERSION) {
+        snprintf(err, errlen, "it isn't a snapshot this version reads");
+        return NULL;
+    }
+    uint64_t page = in_le(&in, 4), size = in_le(&in, 8);
+    if (!in.bad && (page != vm_page_size || size != gm_host_size())) {
+        snprintf(err, errlen, "its guest mapping is %llu bytes in pages of %llu, not %zu in %zu",
+                 (unsigned long long)size, (unsigned long long)page, gm_host_size(),
+                 (size_t)vm_page_size);
+        return NULL;
+    }
+    snapshot *s = calloc(1, sizeof *s);
+    if (!s)
+        fatal("out of memory");
+    s->clock_us = in_le(&in, 8);
+    s->cpu = in_regs(&in);
+    for (int d = 0; d < DEPTH; d++) {
+        s->level[d].saved = in_regs(&in);
+        s->level[d].called = (uint32_t)in_le(&in, 4);
+        s->level[d].index = (uint32_t)in_le(&in, 4);
+        s->level[d].resume = (uint32_t)in_le(&in, 4);
+    }
+    int32_t frame[8];
+    for (int i = 0; i < 8; i++)
+        frame[i] = (int32_t)(uint32_t)in_le(&in, 4);
+    s->frame = (ev_frame){.timer = frame[0], .slot = frame[1], .chain = {(uint32_t)frame[2],
+                          (uint32_t)frame[3]}, .nchain = frame[4], .link = frame[5],
+                          .handler = frame[6], .loop_depth = frame[7]};
+    uint64_t state_len = in_le(&in, 8);
+    const uint8_t *state = in_bytes(&in, (size_t)state_len);
+    if (state) {
+        if (!(s->state = malloc(state_len ? (size_t)state_len : 1)))
+            fatal("out of memory");
+        memcpy(s->state, state, (size_t)state_len);
+        s->state_len = (size_t)state_len;
+    }
+    uint64_t count = in_le(&in, 4);
+    if (in.bad || s->frame.nchain < 0 || s->frame.nchain > 2) {
+        snprintf(err, errlen, "it is damaged");
+        snapshot_free(s);
+        return NULL;
+    }
+    /* The guest mapping as it is (the baseline's), then the pages that
+       differ from it. */
+    kern_return_t kr = mach_vm_allocate(mach_task_self(), &s->mem, gm_host_size(), VM_FLAGS_ANYWHERE);
+    if (kr == KERN_SUCCESS)
+        kr = vm_copy(mach_task_self(), (vm_address_t)(uintptr_t)gm_host_base(), gm_host_size(),
+                     (vm_address_t)s->mem);
+    if (kr != KERN_SUCCESS)
+        fatal("snapshot: can't copy the guest mapping: %s", mach_error_string(kr));
+    size_t npages = gm_host_size() / vm_page_size;
+    for (uint64_t i = 0; i < count; i++) {
+        uint64_t k = in_le(&in, 4);
+        const uint8_t *x = in_bytes(&in, vm_page_size);
+        if (!x || k >= npages) {
+            snprintf(err, errlen, "its page %llu is damaged", (unsigned long long)i);
+            snapshot_free(s);
+            return NULL;
+        }
+        uint8_t *p = page_of(s, (size_t)k);
+        for (size_t b = 0; b < vm_page_size; b++)
+            p[b] ^= x[b];
+    }
+    if (in.at != in.len) {
+        snprintf(err, errlen, "it has %zu bytes past its last page", in.len - in.at);
+        snapshot_free(s);
+        return NULL;
+    }
+    return s;
+}
+
+void snapshot_poke(snapshot *s, uint32_t addr, const void *p, size_t len) {
+    if (addr > gm_host_size() || len > gm_host_size() - addr)
+        fatal("snapshot: writing %zu bytes at 0x%08x, outside the guest mapping", len, addr);
+    memcpy((uint8_t *)(uintptr_t)s->mem + addr, p, len);
 }

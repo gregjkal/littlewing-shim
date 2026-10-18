@@ -156,6 +156,7 @@ void trap_unwind(void) {
 }
 
 void trap_on_entry(trap_entry_fn fn) { on_entry = fn; }
+trap_entry_fn trap_entry_hook(void) { return on_entry; }
 
 uint64_t trap_entries(void) { return T.entries; }
 

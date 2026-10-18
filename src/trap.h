@@ -61,13 +61,15 @@ size_t trap_depth_counts(const uint64_t **counts);
    by depth or recorded (but after trap_entries counts it), with the
    import's index. It returns the index to dispatch,
    and the handler returns to the link register as the hook leaves it. NULL
-   removes it. */
+   removes it. trap_entry_hook is the hook set, for one that runs another
+   after it. */
 #define TRAP_MAX_DEPTH 32
 int trap_depth(void);
 cpu_context *trap_saved_context(int depth);
 uint32_t trap_call_target(int depth);
 typedef uint32_t (*trap_entry_fn)(uint32_t index);
 void trap_on_entry(trap_entry_fn fn);
+trap_entry_fn trap_entry_hook(void);
 
 /* How many traps the guest has entered, on the game's timeline: a snapshot
    puts the count back. The entry the hook is running for is counted

@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "events.h"
+
 /* Dialog Manager: Alert, StopAlert and ParamText; GetNewDialog,
    ModalDialog, GetDialogItem, GetDialogItemText and DisposeDialog.
 
@@ -56,6 +58,10 @@ void dialogs_init(void);
 /* The text Alert would show for ALRT id, items joined with " | ". Empty if
    the alert doesn't exist. */
 void dialogs_alert_text(int16_t id, char *out, size_t cap);
+
+/* The modal sink an open dialog sets (events_set_modal), for a snapshot
+   put back to set again (events.c). */
+const ev_modal_sink *dialogs_modal_sink(void);
 
 /* Registers the Dialog Manager imports. */
 void dialogs_register(void);

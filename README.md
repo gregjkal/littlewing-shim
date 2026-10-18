@@ -350,7 +350,24 @@ recorded".
 
 A replay can only start at launch, so a game's file also carries what came
 before the game in that launch: the opening, the menus and any earlier
-games, without their marks. Watching replays that part first (below).
+games, without their marks. The first replay of a game (watching it or
+exporting from it) replays that part, unseen, and keeps a
+snapshot of the game's start in the file, about 150 KB; every replay
+after that goes to the game's start from it a quarter of a second after
+launch, however late in the session the game came. The snapshot holds
+what changed since a point shortly after launch that every replay of the
+file reaches by itself, less the game's own sounds and art, which come
+from your copy of the game, and never your registration. It is the whole
+emulator, the game's code included, so LittleWing only uses the ones it
+took itself: each is signed with a key made at first use,
+`littlewing-shim/snapshot.key` beside the games' save folders. One from
+another Mac, or taken by another build of LittleWing, or one that doesn't
+fit (another copy of the game, a damaged file), is ignored with a line in
+the log saying why: the replay plays from launch and takes it again. A game that starts within
+20 seconds of launch gets none, and neither does a recording still being
+written. Taking it rewrites the file in place, keeping its last write's
+time, which is how a game is matched to its high score (below).
+`LOONY_GAMESTART=0` neither uses a snapshot nor takes one.
 
 At launch, the last three games are kept, and so is every game where you
 pressed Cmd-S (renamed `...-marked.lwreplay` at the first press), every
@@ -360,9 +377,10 @@ matched to a score by time: the score's timestamp falls between the start
 in the file's name and its last write. The others are deleted then, so the
 games of a session stay until the next launch.
 `LOONY_RECORD=game.lwreplay` records the whole session into a file of your
-choosing instead, and `LOONY_RECORD=0` records nothing. Only format 5, the
-one with a file per game, plays: recordings from the prototype's earlier
-builds are refused. The date a replay sees is the recording's:
+choosing instead, and `LOONY_RECORD=0` records nothing. Formats 5 and 6
+play (6 is 5 with room for the snapshot of the game's start, and is what
+this version writes): recordings from the prototype's earlier builds are
+refused. The date a replay sees is the recording's:
 a high score keeps its timestamp. `LOONY_REPLAY` plays a recording back
 headless, frame for frame and faster than real time, from those preferences
 in a folder of its own:
@@ -521,6 +539,10 @@ it. A replay that isn't watched takes snapshots too while verifying, so
 its frames and sound can be compared with one that takes none. The log's
 last `seek: verify:` line counts the snapshots checked each way. It costs
 little time but more memory, about 15 MB a snapshot instead of 1.
+Verifying, a replay of a file with a snapshot of the game's start doesn't
+use it: it decodes it shortly after launch, plays from launch, and compares
+it with the emulator where it was taken, the game's sounds and art put back
+from the game included (`gamestart: verify:` in the log).
 
 #### Exporting from the viewer
 
@@ -573,7 +595,9 @@ set the score, and watching it starts at that game (above).
 
 The shared file leaves your registration out. The app writes a copy with
 the e-mail address and key code emptied, and the original recording stays
-as it is. The high-score names and anything typed during play are in the
+as it is. The copy leaves the recording's snapshot of the game's start
+out (above), so its first replay on another Mac plays from launch, and
+keeps a snapshot of its own in it. The high-score names and anything typed during play are in the
 copy. A game played before Loony Labyrinth was registered can't be shared:
 the replay would start differently.
 
@@ -594,8 +618,9 @@ frames still match the recording. Without one, the app says so and doesn't
 play it. The replay also needs the same version of LittleWing, or it may
 desync. From a terminal, `LOONY_REPLAY_LICENSE` names the preferences to
 take the registration from; by default they're your own copy's, in
-`littlewing-shim/loony-labyrinth/prefs.plist`. Shared files are format 5,
-like recordings, with a flag that says the registration is out.
+`littlewing-shim/loony-labyrinth/prefs.plist`. Shared files are format 6,
+like recordings, with a flag that says the registration is out. Watching
+one keeps a snapshot of the game's start in it, as for your own.
 
 While recording, the game's clock moves in whole milliseconds. When the
 game spins on `TickCount` waiting for the next tick, it sleeps instead, and

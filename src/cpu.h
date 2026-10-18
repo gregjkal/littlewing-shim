@@ -61,6 +61,14 @@ void cpu_flush_translations(void);
    context is the emulator's, not the machine's. */
 bool cpu_context_same(const cpu_context *a, const cpu_context *b, char *what, size_t cap);
 
+/* For a snapshot kept in a recording (snapshot.h), which another process
+   puts back: a context as those registers alone, in that order, each in
+   64 bits (the 32-bit ones in the low half); and a context of the CPU as
+   it is now with regs written into it, freed with cpu_context_free. */
+#define CPU_REGS 71
+void cpu_context_regs(const cpu_context *ctx, uint64_t regs[CPU_REGS]);
+cpu_context *cpu_context_with_regs(const uint64_t regs[CPU_REGS]);
+
 /* Calls fn for every guest write that touches [begin, end] (inclusive), with
    the CPU's registers (including pc) current. NULL removes the watch.
    cpu_init() clears it. */

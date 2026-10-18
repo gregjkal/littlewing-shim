@@ -1,5 +1,6 @@
 #pragma once
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /* Core Foundation subset: CFString and CFNumber objects and CFPreferences.
@@ -28,6 +29,18 @@ void cf_init(void);
    game starts with no preferences. A file that can't be read (permissions,
    an I/O error) is left alone and the preferences aren't saved. */
 void cf_load_prefs(const char *path);
+
+/* For snapshots kept in a recording (snapshot.h, gamestart.h): the
+   preferences whose values must never be in one, the license (replay.h).
+   From the next cf_load_prefs, a string object equal to one of their
+   values as loaded is walked as which key it is, and putting back a
+   snapshot gives it that key's value as this process loaded it.
+   cf_kept_out(i) is key i's value as loaded, or NULL (none, or not a
+   string), for i below cf_kept_out_count(), the keys' number. Kept across
+   cf_init(). */
+void cf_keep_out_of_snapshots(const char *const *keys, size_t n);
+const char *cf_kept_out(size_t i);
+size_t cf_kept_out_count(void);
 
 /* Writes the preferences to the file named by cf_load_prefs. False (logged)
    if that fails. True, doing nothing, if there's no file. A key whose value

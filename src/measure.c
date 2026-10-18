@@ -10,11 +10,9 @@
 #include <unistd.h>
 
 #include "cpu.h"
-#include "events.h"
 #include "guest_mem.h"
 #include "hd.h"
 #include "misc.h"
-#include "replay.h"
 #include "trap.h"
 #include "util.h"
 
@@ -22,14 +20,7 @@ static struct {
     bool on;
     double cow_at; /* seconds of the game's clock, or -1 */
     bool cow_done;
-    const char *delta_dir; /* LOONY_MEASURE_DELTA, or NULL */
-    uint64_t baseline_at_us; /* LOONY_MEASURE_DELTA_AT, in us */
-    bool baseline_done;
 } MS;
-
-static double process_start; /* wall_seconds() before main */
-
-__attribute__((constructor)) static void note_process_start(void) { process_start = wall_seconds(); }
 
 static double mb(size_t bytes) { return (double)bytes / (1024 * 1024); }
 
@@ -157,73 +148,6 @@ static void cow_spike(void) {
     free(vec);
 }
 
-/* The delta spike (measure.h): writes the resident pages to the folder's
-   name, and returns how many. With check_rest, also counts the pages
-   mincore leaves out that hold something, which reads them. */
-static size_t write_pages(const char *name, bool check_rest) {
-    size_t npages, page;
-    char *vec = resident_pages(&npages, &page);
-    if (!vec)
-        fatal("measure: can't tell which guest pages are resident");
-    char path[1024];
-    snprintf(path, sizeof path, "%s/%s", MS.delta_dir, name);
-    FILE *f = fopen(path, "wb");
-    if (!f)
-        fatal("measure: can't write %s", path);
-    const uint8_t *base = gm_host_base();
-    size_t n = 0, missed = 0;
-    for (size_t i = 0; i < npages; i++) {
-        uint64_t off = (uint64_t)i * page;
-        if (vec[i] & MINCORE_INCORE) {
-            uint8_t le[8];
-            for (int b = 0; b < 8; b++)
-                le[b] = (uint8_t)(off >> (8 * b));
-            if (fwrite(le, 1, 8, f) != 8 || fwrite(base + off, 1, page, f) != page)
-                fatal("measure: can't write %s", path);
-            n++;
-        } else if (check_rest) {
-            for (size_t k = 0; k < page && off + k < gm_host_size(); k++)
-                if (base[off + k]) {
-                    missed++;
-                    break;
-                }
-        }
-    }
-    if (fclose(f) != 0)
-        fatal("measure: can't write %s", path);
-    free(vec);
-    if (check_rest)
-        log_msg("measure: delta: %zu pages mincore leaves out hold something", missed);
-    return n;
-}
-
-/* The delta spike's trap entry hook: the baseline, then the game's start. */
-static uint32_t delta_entry(uint32_t index) {
-    ev_frame f;
-    uint32_t loop_index, loop_resume;
-    if (trap_depth() != 2 || !trap_level(1, &loop_index, &loop_resume) ||
-        strcmp(trap_import_name(loop_index), "RunApplicationEventLoop") != 0 ||
-        !events_loop_frame(&f))
-        return index;
-    const replay_span *spans;
-    bool start = MS.baseline_done && f.timer < 0 && replay_play_spans(&spans) &&
-                 replay_now_us() >= spans[0].on_us;
-    if (MS.baseline_done ? !start : f.timer < 0 || replay_now_us() < MS.baseline_at_us)
-        return index;
-    double t0 = wall_seconds();
-    const char *name = start ? "start.pages" : "baseline.pages";
-    size_t n = write_pages(name, start);
-    log_msg("measure: delta: %s at %.3f s of the replay's clock, trap entry %llu, %.3f s after "
-            "the process started: %zu pages of %d bytes (written in %.1f ms)",
-            name, (double)replay_now_us() / 1e6, (unsigned long long)trap_entries(),
-            t0 - process_start, n, getpagesize(), (wall_seconds() - t0) * 1000);
-    if (!start) {
-        MS.baseline_done = true;
-        return index;
-    }
-    exit(0);
-}
-
 void measure_init(void) {
     const char *on = getenv("LOONY_MEASURE"), *cow = getenv("LOONY_MEASURE_COW");
     MS.on = on && strcmp(on, "1") == 0;
@@ -239,17 +163,6 @@ void measure_init(void) {
     }
     if (MS.on)
         atexit(log_sizes);
-    const char *delta = getenv("LOONY_MEASURE_DELTA");
-    MS.delta_dir = delta && *delta ? delta : NULL;
-    MS.baseline_done = false;
-    const char *at = getenv("LOONY_MEASURE_DELTA_AT");
-    MS.baseline_at_us = at && *at ? (uint64_t)(strtod(at, NULL) * 1e6) : 0;
-    if (MS.delta_dir) {
-        if (replay_playing())
-            trap_on_entry(delta_entry);
-        else
-            log_msg("measure: LOONY_MEASURE_DELTA is for a replay; nothing measured");
-    }
 }
 
 void measure_present(void) {

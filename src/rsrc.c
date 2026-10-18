@@ -155,6 +155,8 @@ rsrc_entry *rsrc_find_named(uint32_t type, const char *name) {
     return NULL;
 }
 
+rsrc_entry *rsrc_at(uint32_t i) { return i < R.n ? &R.entries[i] : NULL; }
+
 rsrc_entry *rsrc_find_handle(uint32_t h) {
     if (!h)
         return NULL;

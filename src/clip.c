@@ -11,6 +11,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "gamestart.h"
 #include "hd.h"
 #include "misc.h"
 #include "mixer.h"
@@ -54,7 +55,6 @@ static struct {
     uint64_t total;    /* of the clip's frames */
     int percent;       /* of them, as the last progress line said */
     double seek_said;  /* when the last seek line was, or below 0 */
-    uint64_t rendered; /* sound frames the mixer has rendered since launch */
     /* Sound in the clip that came before the file was opened (the pump
        renders sound before it presents). */
     int16_t *early;
@@ -659,9 +659,8 @@ void clip_present(bool dirty) {
 
 /* The clip being made takes its sound; the first one without a file yet
    (this one, or the next) keeps it until the file opens. */
-void clip_sound(const int16_t *samples, uint32_t frames) {
-    uint64_t a = C.rendered, b = a + frames;
-    C.rendered = b;
+void clip_sound(const int16_t *samples, uint32_t frames, uint64_t at) {
+    uint64_t a = at, b = a + frames;
     if (!C.on || C.finished)
         return;
     for (size_t i = C.cur; i < C.npieces && i <= C.cur + (C.mp4 != NULL); i++) {
@@ -1005,6 +1004,9 @@ bool clip_open(char *err, size_t errlen) {
         }
     }
     begin_piece(0);
+    /* A snapshot of the game's start past the first tick of the first
+       clip would leave out what comes before it (gamestart.h). */
+    gamestart_limit(C.start ? ((uint64_t)C.start * 1000000 + 59) / 60 - 1 : 0);
     C.on = true;
     C.seek_said = -1;
     clock_gettime(CLOCK_MONOTONIC, &C.t0);

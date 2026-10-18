@@ -38,6 +38,8 @@ static struct {
     uint64_t from_us;   /* and where the replay's clock was when it unwound */
     int unwound;        /* and from what depth */
     double unwound_wall;
+    snapshot *adopting; /* seek_enter's, while it is put back */
+    snapshot *start;    /* seek_enter's, kept while the store isn't started */
 } K;
 
 static double secs(uint64_t us) { return (double)us / 1e6; }
@@ -163,7 +165,37 @@ static void take(uint32_t index, uint64_t now) {
         thin();
 }
 
+/* After seek_enter's snapshot is put back: the store starts from it. */
+static void adopted(void) {
+    snapshot *s = K.adopting;
+    K.adopting = NULL;
+    uint64_t clock = replay_now_us();
+    while (K.n)
+        drop(K.n - 1);
+    if (K.on) {
+        uint64_t next_on;
+        bool in_play = replay_in_play(clock, &next_on);
+        K.e[0] = (entry){s, clock, trap_entries(), in_play, in_play ? 0 : next_on};
+        K.n = 1;
+    } else {
+        snapshot_free(K.start);
+        K.start = s;
+    }
+    K.due_us = clock + SEEK_SPACING_US;
+    K.check = -1;
+    log_msg("seek: put back the snapshot at %.3f s from main, from %.3f s (%d guest call%s "
+            "unwound), in %.2f ms",
+            secs(clock), secs(K.from_us), K.unwound, K.unwound == 1 ? "" : "s",
+            (wall_seconds() - K.unwound_wall) * 1000);
+    if (K.landed && !K.pending) /* a seek waiting will say where it lands */
+        K.landed(clock, true, K.generation);
+}
+
 static void after_reentry(void) {
+    if (K.adopting) {
+        adopted();
+        return;
+    }
     uint64_t clock = replay_now_us();
     K.due_us = clock + SEEK_SPACING_US;
     check_after(K.entering_at);
@@ -290,6 +322,15 @@ void seek_serve_here(void) {
     unwind_to(i, now);
 }
 
+void seek_enter(snapshot *s) {
+    K.adopting = K.entering = s;
+    K.entering_at = -1;
+    K.from_us = replay_now_us();
+    K.unwound = trap_depth();
+    K.unwound_wall = wall_seconds();
+    longjmp(seek_unwound, 1);
+}
+
 void seek_reenter(void) {
     snapshot *s = K.entering;
     K.entering = NULL;
@@ -301,6 +342,7 @@ void seek_reenter(void) {
 void seek_reset(void) {
     while (K.n)
         drop(K.n - 1);
+    snapshot_free(K.start);
     if (K.on)
         trap_on_entry(NULL);
     memset(&K, 0, sizeof K);

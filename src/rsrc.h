@@ -39,6 +39,8 @@ rsrc_entry *rsrc_find_named(uint32_t type, const char *name);
 /* The entry whose loaded handle is h, or NULL. */
 rsrc_entry *rsrc_find_handle(uint32_t h);
 const uint8_t *rsrc_data(const rsrc_entry *e);
+/* Entry i, 0 to rsrc_total() - 1, in the fork's order. */
+rsrc_entry *rsrc_at(uint32_t i);
 
 /* Registers the Resource Manager imports. Requires rsrc_open() and mm_init(). */
 void rsrc_register(void);
