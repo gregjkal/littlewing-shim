@@ -472,8 +472,8 @@ LOONY_REPLAY=game.lwreplay LOONY_CLIP=clips ./build-release/loony
 | Esc | Cancel the export |
 
 Watching starts where the game does. First it replays what came before the
-game, silent and as fast as it can, about 70 times real time, drawing a few
-frames a second; the title counts through it ("replaying what came before
+game, silent and as fast as it can, about 9 times real time in HD and 18
+without, drawing a few frames a second; the title counts through it ("replaying what came before
 the game, 0:40 of 2:10"). Starting from a saved state instead would skip that wait
 ([#46](https://github.com/gregjkal/littlewing-shim/issues/46)). The same goes
 for what isn't play inside the game, the pause menu and time the window

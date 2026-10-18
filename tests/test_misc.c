@@ -232,7 +232,7 @@ static void fixed_teardown(void) {
 
 /* On the virtual clock Delay visits every tick and 200 polls move it a tick,
    so the counts are exact. On the real clock a sleep that overshoots by a
-   tick on a busy machine skips one, and the count came out short in CI. */
+   tick on a busy machine skips one, and the count came out short in CI (#61). */
 TEST(misc_delay_and_tick_count_run_the_idle_hook) {
     fixed_setup();
     idle_calls = 0;
