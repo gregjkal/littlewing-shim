@@ -40,7 +40,17 @@ static struct {
     misc_url_fn open_url;
     void (*exit_hook)(void);
 } M;
-SNAPSHOT_STATE(M)
+
+/* A snapshot's walk (snapshot.h): the host's clock at launch and the
+   shim's hooks are the host's. */
+static void snap_walk(snapshot_walker *w) {
+    snapshot_bytes(w, &M, sizeof M);
+    SNAPSHOT_HOST(w, M.start);
+    SNAPSHOT_HOST(w, M.idle);
+    SNAPSHOT_HOST(w, M.open_url);
+    SNAPSHOT_HOST(w, M.exit_hook);
+}
+SNAPSHOT_STATE_WALK(M, snap_walk)
 
 static uint32_t system_version = MISC_SYSTEM_VERSION_PEF; /* Gestalt('sysv') */
 SNAPSHOT_STATE(system_version)

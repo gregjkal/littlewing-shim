@@ -26,13 +26,30 @@ static struct {
     hist_entry hist[HISTORY];
     uint32_t hist_count;
     uint64_t depth_counts[TRAP_DEPTH_COUNTS]; /* trap entries at each depth */
+    uint64_t entries;                         /* the guest's trap entries (trap_entries) */
     bool trace_imports;
     bool trace_calls;
     bool stub_all;
     bool direct_calls;
     uint8_t lowmem_seen[GUEST_LOWMEM_SIZE / 8]; /* one bit per address already logged */
 } T;
-SNAPSHOT_STATE(T)
+
+/* A snapshot's walk (snapshot.h): the import table and its handlers, the
+   history a crash report prints, the counts, the logging and what has been
+   logged are the host's. */
+static void snap_walk(snapshot_walker *w) {
+    snapshot_bytes(w, &T, sizeof T);
+    SNAPSHOT_HOST(w, T.names);
+    SNAPSHOT_HOST(w, T.handlers);
+    SNAPSHOT_HOST(w, T.hist);
+    SNAPSHOT_HOST(w, T.hist_count);
+    SNAPSHOT_HOST(w, T.depth_counts);
+    SNAPSHOT_HOST(w, T.trace_imports);
+    SNAPSHOT_HOST(w, T.trace_calls);
+    SNAPSHOT_HOST(w, T.stub_all);
+    SNAPSHOT_HOST(w, T.lowmem_seen);
+}
+SNAPSHOT_STATE_WALK(T, snap_walk)
 
 /* Outside T, which a snapshot copies back whole, since they describe the
    host stack: the guest_call depth, and for each level, at [depth - 1], the
@@ -140,6 +157,8 @@ void trap_unwind(void) {
 
 void trap_on_entry(trap_entry_fn fn) { on_entry = fn; }
 
+uint64_t trap_entries(void) { return T.entries; }
+
 size_t trap_depth_counts(const uint64_t **counts) {
     *counts = T.depth_counts;
     return TRAP_DEPTH_COUNTS;
@@ -239,6 +258,7 @@ static void run_until_return(uint32_t pc) {
         uint32_t index = (s.addr - GUEST_TRAP_BASE) / 4;
         if (index >= T.n)
             trap_crash("jump to unused trap address 0x%08x", s.addr);
+        T.entries++;
         if (on_entry)
             index = on_entry(index); /* may have put the CPU back to an earlier entry */
         pc = dispatch_trap(index, cpu_lr());

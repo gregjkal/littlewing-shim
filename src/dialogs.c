@@ -116,58 +116,27 @@ static struct {
     size_t nib_len[NIB_MAX];
 } G;
 
-/* A snapshot's copy (snapshot.h): G with the screens saved under its
-   dialogs and its nibs' text copied too, since closing a dialog or a nib
-   frees them. */
-static void *dup_bytes(const void *p, size_t len) {
-    uint8_t *c = malloc(len + 1);
-    if (!c)
-        fatal("out of memory");
-    memcpy(c, p, len);
-    c[len] = 0;
-    return c;
-}
-
-/* Gives g copies of the screens and nibs it holds. */
-static void clone_owned(typeof(G) *g) {
+/* A snapshot's walk (snapshot.h): G with the screens saved under its
+   dialogs and its nibs' text (read_file's, with a NUL after it), since
+   closing a dialog or a nib frees them. front points into G itself. */
+static void snap_walk(snapshot_walker *w) {
+    if (snapshot_loading(w)) {
+        for (int i = 0; i < DLG_MAX; i++)
+            free(G.d[i].saved);
+        for (int i = 0; i < NIB_MAX; i++)
+            free(G.nibs[i]);
+    }
+    snapshot_bytes(w, &G, sizeof G);
     for (int i = 0; i < DLG_MAX; i++) {
-        dialog *d = &g->d[i];
-        if (d->saved)
-            d->saved = dup_bytes(d->saved, (size_t)rect_w(d->saved_r) * (size_t)(d->saved_depth / 8) *
-                                               (size_t)rect_h(d->saved_r));
+        dialog *d = &G.d[i];
+        SNAPSHOT_OWNED(w, d->saved,
+                       (size_t)rect_w(d->saved_r) * (size_t)(d->saved_depth / 8) *
+                           (size_t)rect_h(d->saved_r));
     }
     for (int i = 0; i < NIB_MAX; i++)
-        if (g->nibs[i])
-            g->nibs[i] = dup_bytes(g->nibs[i], g->nib_len[i]);
+        SNAPSHOT_OWNED(w, G.nibs[i], G.nib_len[i] + 1);
 }
-
-static void free_owned(typeof(G) *g) {
-    for (int i = 0; i < DLG_MAX; i++)
-        free(g->d[i].saved);
-    for (int i = 0; i < NIB_MAX; i++)
-        free(g->nibs[i]);
-}
-
-static void *snap_save(void) {
-    typeof(G) *copy = malloc(sizeof G);
-    if (!copy)
-        fatal("out of memory");
-    memcpy(copy, &G, sizeof G);
-    clone_owned(copy);
-    return copy;
-}
-
-static void snap_load(const void *copy) {
-    free_owned(&G);
-    memcpy(&G, copy, sizeof G);
-    clone_owned(&G); /* the copy keeps its own */
-}
-
-static void snap_drop(void *copy) {
-    free_owned(copy);
-    free(copy);
-}
-SNAPSHOT_STATE_WITH(G, snap_save, snap_load, snap_drop)
+SNAPSHOT_STATE_WALK(G, snap_walk)
 
 static void window_changed(uint32_t window, qd_window_change change, uint32_t arg);
 

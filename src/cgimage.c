@@ -22,7 +22,23 @@ typedef struct {
 static struct {
     cg_obj objs[MAX_OBJECTS];
 } G;
-SNAPSHOT_STATE(G)
+
+/* A snapshot's walk (snapshot.h): each provider's path and each image's
+   pixels, since releasing one frees them. A free slot holds nothing. */
+static void snap_walk(snapshot_walker *w) {
+    if (snapshot_loading(w))
+        for (int i = 0; i < MAX_OBJECTS; i++) {
+            free(G.objs[i].path);
+            free(G.objs[i].px.xrgb);
+        }
+    snapshot_bytes(w, &G, sizeof G);
+    for (int i = 0; i < MAX_OBJECTS; i++) {
+        cg_obj *o = &G.objs[i];
+        snapshot_string(w, &o->path);
+        SNAPSHOT_OWNED(w, o->px.xrgb, (size_t)o->px.width * (size_t)o->px.height * 4);
+    }
+}
+SNAPSHOT_STATE_WALK(G, snap_walk)
 
 bool cgimage_decode_png_over(const char *path, uint8_t r, uint8_t g, uint8_t b, cgimage_pixels *out,
                             char *err, size_t errlen) {

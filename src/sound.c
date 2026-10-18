@@ -38,32 +38,21 @@ static struct {
     sound_tap_fn tap;
 } SND = {.volume = SOUND_DEFAULT_VOLUME};
 
-/* A snapshot's copy (snapshot.h): SND, but putting it back keeps what is
-   the host's and not the game's: the streams, the volume, a recording of
-   the output, the tap, and the wall clock spent rendering. */
-static void *snap_save(void) {
-    typeof(SND) *copy = malloc(sizeof SND);
-    if (!copy)
-        fatal("out of memory");
-    memcpy(copy, &SND, sizeof SND);
-    return copy;
+/* A snapshot's walk (snapshot.h): what is the host's and not the game's
+   stays as it is: the streams, the volume, a recording of the output, the
+   tap, and the wall clock spent rendering. */
+static void snap_walk(snapshot_walker *w) {
+    snapshot_bytes(w, &SND, sizeof SND);
+    SNAPSHOT_HOST(w, SND.stream);
+    SNAPSHOT_HOST(w, SND.monitor);
+    SNAPSHOT_HOST(w, SND.monitor_on);
+    SNAPSHOT_HOST(w, SND.render_seconds);
+    SNAPSHOT_HOST(w, SND.wav);
+    SNAPSHOT_HOST(w, SND.recording);
+    SNAPSHOT_HOST(w, SND.volume);
+    SNAPSHOT_HOST(w, SND.tap);
 }
-
-static void snap_load(const void *copy) {
-    typeof(SND) host = SND;
-    memcpy(&SND, copy, sizeof SND);
-    SND.stream = host.stream;
-    SND.monitor = host.monitor;
-    SND.monitor_on = host.monitor_on;
-    SND.render_seconds = host.render_seconds;
-    SND.wav = host.wav;
-    SND.recording = host.recording;
-    SND.volume = host.volume;
-    SND.tap = host.tap;
-}
-
-static void snap_drop(void *copy) { free(copy); }
-SNAPSHOT_STATE_WITH(SND, snap_save, snap_load, snap_drop)
+SNAPSHOT_STATE_WALK(SND, snap_walk)
 
 /* The audio thread holds the stream's lock while it renders. */
 static void lock(void) {

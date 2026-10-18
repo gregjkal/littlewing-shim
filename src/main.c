@@ -406,11 +406,14 @@ int main(int argc, char **argv) {
     display_set_input(&input);
     display_set_vsync(!misc_fixed_clock() && !replay_playing());
     sound_start_output();
+    seek_init();
     if (watch_on()) {
         events_set_replay_key(watch_key);
         watch_start(game->title);
         menu_add_replay();
         menu_note_recent(getenv("LOONY_REPLAY")); /* for File > Open Recent */
+    } else if (replay_playing() && seek_verifying()) {
+        seek_start(NULL); /* snapshots to verify, and no seeks */
     }
     const char *script = getenv("LOONY_SCRIPT");
     if (script && *script && !script_load(script, err, sizeof err)) {

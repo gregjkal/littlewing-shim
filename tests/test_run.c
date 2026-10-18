@@ -1189,13 +1189,29 @@ static int record_one_game(const char *rec_dir, bool quit, char *out, size_t cap
 }
 
 /* Watches the recording as fast as it can, with keys, in a data folder of
-   its own in play_dir: its status. */
+   its own in play_dir, verifying its snapshots (seek.h): its status. */
 static int watch_fastest(const char *keys, const char *play_dir, char *out, size_t cap) {
     double seconds;
     watch_speed = "0";
+    setenv("LOONY_SNAPSHOT_VERIFY", "1", 1);
     int status = watch_recording(keys, play_dir, out, cap, &seconds);
+    unsetenv("LOONY_SNAPSHOT_VERIFY");
     watch_speed = NULL;
     return status;
+}
+
+/* How many snapshots out's last verify line says were compared again
+   after going back; -1 if there is none. */
+static int verified_again(const char *out) {
+    const char *line = NULL;
+    for (const char *p = out; (p = strstr(p, "seek: verify: ")) && strstr(p, " snapshots the same ");
+         p++)
+        line = p;
+    int taken, again;
+    if (!line || sscanf(line, "seek: verify: %d snapshots the same put back where they were taken, %d",
+                        &taken, &again) != 2)
+        return -1;
+    return again;
 }
 
 /* How many frames the first end of the recording in out says were
@@ -1225,7 +1241,8 @@ static bool went_back_from_main(const char *out, const char *how) {
    script's actions left come at once there) unwind to main and go back into
    the game from there. Each time the game plays on, ends by itself, hands
    back to the event loop, and the replay reaches its end with every frame
-   check matching, as a straight replay's do. */
+   check matching, as a straight replay's do. Verifying, each snapshot it
+   comes to again after going back is what the emulator is there. */
 TEST(run_a_watched_game_goes_back) {
     SKIP_UNLESS_GAME();
     SKIP_UNLESS_SLOW();
@@ -1256,6 +1273,8 @@ TEST(run_a_watched_game_goes_back) {
     CHECK(went_back_from_main(out[2], "was taken in another frame, unwinding to main"));
     CHECK(went_back_from_main(out[3], "where the replay has ended: unwinding to main"));
     CHECK_EQ(count_of(out[3], "loony: ExitToShell\n"), 2); /* the end, and the end again */
+    for (int i = 1; i <= 3; i++)
+        CHECK(verified_again(out[i]) > 0);
 }
 
 /* Going back from the end of a recording that ends inside a trap of the
@@ -1275,6 +1294,128 @@ TEST(run_a_watched_game_goes_back_from_the_end_of_the_recording) {
     CHECK_EQ(status, 0);
     CHECK_EQ(count_of(out[1], "loony: replay: exiting where the recording stopped"), 1);
     CHECK(went_back_from_main(out[1], "where the replay has ended: unwinding to main"));
+    CHECK(verified_again(out[1]) > 0);
+}
+
+static void run_loony_replaying_with_sound(void *wav) {
+    setenv("LOONY_WAV", wav, 1);
+    run_loony_replaying(NULL);
+}
+
+/* Replays the recording headless, not watched, in a data folder of its
+   own in play_dir/name: its status; its last frame's and its sound's
+   hashes in *shot and *wav. */
+static int replay_hashed(const char *play_dir, const char *name, char *out, size_t cap, uint32_t *shot,
+                         uint32_t *wav) {
+    char wav_file[1100];
+    snprintf(run_data, sizeof run_data, "%s/data-%s", play_dir, name);
+    snprintf(replay_shot, sizeof replay_shot, "%s/%s.png", play_dir, name);
+    snprintf(wav_file, sizeof wav_file, "%s/%s.wav", play_dir, name);
+    int status = test_run_child(run_loony_replaying_with_sound, wav_file, out, cap);
+    run_data[0] = '\0';
+    size_t len = 0;
+    uint8_t *png = read_file(replay_shot, &len), *sound = NULL;
+    *shot = png ? fnv1a32(png, len) : 0;
+    free(png);
+    sound = read_file(wav_file, &len);
+    *wav = sound ? fnv1a32(sound, len) : 0;
+    free(sound);
+    return status;
+}
+
+/* A replay that takes snapshots, and puts each back the moment it is
+   taken (LOONY_SNAPSHOT_VERIFY), plays exactly as one that takes none: the
+   same frame checks, the same last frame, the same sound. A capture or a
+   restore that changed anything the game sees would show here. */
+TEST(run_a_replay_with_snapshots_plays_as_one_without) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_SLOW();
+    char rec_dir[1024], play_dir[1024];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    static char out[3][65536];
+    int rec_status = record_one_game(rec_dir, true, out[0], sizeof out[0]);
+    uint32_t shot[2], wav[2];
+    int status[2];
+    status[0] = replay_hashed(play_dir, "without", out[1], sizeof out[1], &shot[0], &wav[0]);
+    setenv("LOONY_SNAPSHOT_VERIFY", "1", 1);
+    status[1] = replay_hashed(play_dir, "with", out[2], sizeof out[2], &shot[1], &wav[1]);
+    unsetenv("LOONY_SNAPSHOT_VERIFY");
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(status[0], 0);
+    CHECK_EQ(status[1], 0);
+    CHECK(!strstr(out[1], "seek: snapshot at"));
+    CHECK(count_of(out[2], ", verified (") >= 30); /* every 5 s of 170 */
+    CHECK_EQ(verified_again(out[2]), 0);
+    for (int i = 1; i <= 2; i++) {
+        CHECK_CONTAINS(out[i], "loony: replay: reached the end of the recording");
+        CHECK(!strstr(out[i], "replay: desync"));
+    }
+    CHECK_EQ(frames_checked(out[2]), frames_checked(out[1]));
+    CHECK(frames_checked(out[1]) > 250);
+    CHECK(shot[0] != 0);
+    CHECK_EQ(shot[1], shot[0]);
+    CHECK(wav[0] != 0);
+    CHECK_EQ(wav[1], wav[0]);
+}
+
+/* The size of the PNG at path, and its hash in *hash; 0 if there is none. */
+static uint32_t png_width(const char *path, uint32_t *hash) {
+    size_t len = 0;
+    uint8_t *png = read_file(path, &len);
+    uint32_t w = png && len > 24 ? rd_be32(png + 16) : 0;
+    *hash = png ? fnv1a32(png, len) : 0;
+    free(png);
+    return w;
+}
+
+/* In HD, the picture after going back is the straight run's at the same
+   tick: in the game, where the snapshot goes back in place and HD keeps
+   its copies (Spike C), and at the end again after going back from the
+   end, where it goes back from main. */
+TEST(run_a_watched_game_in_hd_looks_the_same_after_going_back) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_SLOW();
+    char rec_dir[1024], play_dir[1024];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    static char out[4][65536];
+    int rec_status = record_one_game(rec_dir, true, out[0], sizeof out[0]);
+    char shots[4][1100], keys[3][2600];
+    for (int i = 0; i < 4; i++)
+        snprintf(shots[i], sizeof shots[i], "%s/shot%d.png", play_dir, i);
+    /* Straight; back in the game; back from the end. */
+    snprintf(keys[0], sizeof keys[0], "4600 screenshot %s\n10400 screenshot %s\n", shots[0], shots[1]);
+    snprintf(keys[1], sizeof keys[1], "4500 down j\n4504 up j\n4600 screenshot %s\n", shots[2]);
+    snprintf(keys[2], sizeof keys[2], "10300 down j\n10301 up j\n10400 screenshot %s\n", shots[3]);
+    setenv("LOONY_HD", LOONY_SRC_DIR "/hd-art/loony-labyrinth", 1);
+    int status[3];
+    for (int i = 0; i < 3; i++) {
+        char dir[1100];
+        snprintf(dir, sizeof dir, "%s/%d", play_dir, i);
+        mkdir(dir, 0700);
+        status[i] = watch_fastest(keys[i], dir, out[i + 1], sizeof out[i + 1]);
+    }
+    unsetenv("LOONY_HD");
+    uint32_t hash[4], width[4];
+    for (int i = 0; i < 4; i++)
+        width[i] = png_width(shots[i], &hash[i]);
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    for (int i = 0; i < 3; i++) {
+        CHECK_EQ(status[i], 0);
+        CHECK(!strstr(out[i + 1], "replay: desync"));
+    }
+    for (int i = 0; i < 4; i++)
+        CHECK_EQ(width[i], 3200);
+    CHECK_CONTAINS(out[2], "in place, in ");
+    CHECK(went_back_from_main(out[3], "where the replay has ended: unwinding to main"));
+    CHECK(hash[0] != hash[1]);
+    CHECK_EQ(hash[2], hash[0]); /* 4600, after going back in the game */
+    CHECK_EQ(hash[3], hash[1]); /* the end, after going back from it */
 }
 
 /* The file the first clip in rec_dir/game.clips is exported to, or "". */

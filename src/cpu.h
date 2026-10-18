@@ -1,4 +1,5 @@
 #pragma once
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -53,6 +54,12 @@ void cpu_context_copy(cpu_context *dst, const cpu_context *src);
 void cpu_context_free(cpu_context *ctx);
 void cpu_load(const cpu_context *ctx);
 void cpu_flush_translations(void);
+
+/* Whether a and b hold the same registers (the general and floating-point
+   ones, pc, lr, ctr, cr, xer, msr and fpscr); if not, the first that
+   differs, in what ("r3 0x00000001, not 0x00000002"). The rest of a saved
+   context is the emulator's, not the machine's. */
+bool cpu_context_same(const cpu_context *a, const cpu_context *b, char *what, size_t cap);
 
 /* Calls fn for every guest write that touches [begin, end] (inclusive), with
    the CPU's registers (including pc) current. NULL removes the watch.
