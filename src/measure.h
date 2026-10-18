@@ -12,7 +12,19 @@
    copy-on-write spike, which copies the guest mapping with mach_vm_remap
    and with vm_copy, times each copy, then times the page faults the live
    side pays on its first write to each resident page afterwards, and logs
-   the numbers. The spike changes nothing the game sees. */
+   the numbers. The spike changes nothing the game sees.
+
+   With LOONY_MEASURE_DELTA=<folder>, on a replay that seeks nothing (#46,
+   step 1): at the baseline, the first depth-2 trap entry inside the run
+   loop's timer callback after launch, and at the game's start, the first
+   depth-2 trap entry inside a handler the run loop dispatched to once the
+   replay's first span of play has begun, writes every resident page of the
+   guest mapping (mincore) to baseline.pages and start.pages in the folder,
+   each page as its offset (8 bytes, little-endian) and its bytes. Logs the
+   time each took to reach from the process's start and the replay's clock
+   there, checks at the game's start that no page mincore leaves out holds
+   anything but zeros, and exits. LOONY_MEASURE_DELTA_AT=<seconds> moves the
+   baseline to the first such entry once the replay's clock passes that. */
 
 /* After hd_init and replay_start: reads the environment. */
 void measure_init(void);
