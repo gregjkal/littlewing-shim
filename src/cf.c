@@ -7,7 +7,7 @@
 #include <unistd.h>
 
 #include "guest_mem.h"
-#include "measure.h"
+#include "snapshot.h"
 #include "memmgr.h"
 #include "plist.h"
 #include "trap.h"
@@ -45,7 +45,76 @@ static struct {
     uint32_t nconsts, consts_cap;
     uint32_t main_bundle;
 } C;
-MEASURE_STATE(C)
+
+/* A snapshot's copy (snapshot.h): C with its arrays and every string in
+   them copied too, since releasing an object frees its string and a new
+   one can move the array. */
+static char *dup_string(const char *s) {
+    if (!s)
+        return NULL;
+    char *c = strdup(s);
+    if (!c)
+        fatal("out of memory");
+    return c;
+}
+
+static void *dup_array(const void *p, size_t n, size_t size) {
+    if (!p)
+        return NULL;
+    void *c = malloc(n ? n * size : 1);
+    if (!c)
+        fatal("out of memory");
+    memcpy(c, p, n * size);
+    return c;
+}
+
+/* Gives c copies of what it holds. */
+static void clone_owned(typeof(C) *c) {
+    c->objs = dup_array(c->objs, c->cap, sizeof *c->objs);
+    for (uint32_t i = 0; i < c->nobjs; i++)
+        c->objs[i].str = dup_string(c->objs[i].str);
+    c->prefs = dup_array(c->prefs, c->prefs_cap, sizeof *c->prefs);
+    for (uint32_t i = 0; i < c->nprefs; i++)
+        c->prefs[i].key = dup_string(c->prefs[i].key);
+    c->prefs_path = dup_string(c->prefs_path);
+    c->consts = dup_array(c->consts, c->consts_cap, sizeof *c->consts);
+    for (uint32_t i = 0; i < c->nconsts; i++)
+        c->consts[i].text = dup_string(c->consts[i].text);
+}
+
+static void free_owned(typeof(C) *c) {
+    for (uint32_t i = 0; i < c->nobjs; i++)
+        free(c->objs[i].str);
+    for (uint32_t i = 0; i < c->nprefs; i++)
+        free(c->prefs[i].key);
+    for (uint32_t i = 0; i < c->nconsts; i++)
+        free(c->consts[i].text);
+    free(c->objs);
+    free(c->prefs);
+    free(c->prefs_path);
+    free(c->consts);
+}
+
+static void *snap_save(void) {
+    typeof(C) *copy = malloc(sizeof C);
+    if (!copy)
+        fatal("out of memory");
+    memcpy(copy, &C, sizeof C);
+    clone_owned(copy);
+    return copy;
+}
+
+static void snap_load(const void *copy) {
+    free_owned(&C);
+    memcpy(&C, copy, sizeof C);
+    clone_owned(&C); /* the copy keeps its own */
+}
+
+static void snap_drop(void *copy) {
+    free_owned(copy);
+    free(copy);
+}
+SNAPSHOT_STATE_WITH(C, snap_save, snap_load, snap_drop)
 
 static char *bundle_path; /* cf_set_bundle's; survives cf_init */
 

@@ -40,11 +40,11 @@ cpu_stop cpu_run(uint32_t pc);
 cpu_context *cpu_save(void);
 void cpu_restore(cpu_context *ctx);
 
-/* The bytes a saved context takes (what a snapshot of the emulator would
-   hold for the CPU; measure.h). */
+/* The bytes a saved context takes (what a snapshot of the emulator holds
+   for the CPU; snapshot.h). */
 size_t cpu_context_size(void);
 
-/* For Spike A (measure.h): a copy of ctx, freed by cpu_restore() or
+/* For snapshots (snapshot.h): a copy of ctx, freed by cpu_restore() or
    cpu_context_free(); overwriting dst with src's registers; loading ctx's
    registers into the CPU, keeping ctx; and dropping every translated block,
    for after guest memory changed behind the CPU's back. */

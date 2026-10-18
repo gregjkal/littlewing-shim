@@ -972,7 +972,7 @@ static void child_watch(void *unused) {
         fprintf(stderr, "%s\n", err);
         _exit(1);
     }
-    watch_start("Game", NULL);
+    watch_start("Game");
     for (;;) { /* exits at the recording's end */
         replay_clock(0);
         while (replay_take_play())

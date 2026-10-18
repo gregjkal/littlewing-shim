@@ -7,7 +7,7 @@
 #include <string.h>
 
 #include "guest_mem.h"
-#include "measure.h"
+#include "snapshot.h"
 #include "util.h"
 
 #define HISTORY 64
@@ -32,10 +32,10 @@ static struct {
     bool direct_calls;
     uint8_t lowmem_seen[GUEST_LOWMEM_SIZE / 8]; /* one bit per address already logged */
 } T;
-MEASURE_STATE(T)
+SNAPSHOT_STATE(T)
 
-/* Outside T, which the spikes copy back whole, since they describe the host
-   stack: the guest_call depth, and for each level, at [depth - 1], the
+/* Outside T, which a snapshot copies back whole, since they describe the
+   host stack: the guest_call depth, and for each level, at [depth - 1], the
    context it saved, the function it called, and the trap it is dispatching
    with where that returns to; then the trap entry hook. */
 static int depth;
@@ -133,6 +133,9 @@ bool trap_level(int d, uint32_t *index, uint32_t *resume) {
 void trap_unwind(void) {
     while (depth > 0)
         cpu_context_free(saved[--depth]);
+    memset(saved, 0, sizeof saved);
+    memset(called, 0, sizeof called);
+    memset(level, 0, sizeof level);
 }
 
 void trap_on_entry(trap_entry_fn fn) { on_entry = fn; }

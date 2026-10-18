@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "measure.h"
+#include "snapshot.h"
 #include "util.h"
 
 #define CHUNK 512 /* frames mixed per pass */
@@ -223,8 +223,8 @@ void mix_render(int16_t *out, uint32_t frames) {
     }
 }
 
-/* Spike A's copy of the mixer (measure.h): the channels with every sound
-   they own copied too, since a sound that ends is freed. */
+/* A snapshot's copy of the mixer (snapshot.h): the channels with every
+   sound they own copied too, since a sound that ends is freed. */
 static mix_sound *clone_sound(const mix_sound *s) {
     if (!s)
         return NULL;
@@ -235,31 +235,45 @@ static mix_sound *clone_sound(const mix_sound *s) {
     return c;
 }
 
-static void *spike_save(void) {
-    typeof(X) *copy = malloc(sizeof X);
-    if (!copy)
-        fatal("out of memory");
-    memcpy(copy, &X, sizeof X);
+/* Gives each of x's channels copies of the sounds it holds. */
+static void clone_sounds(typeof(X) *x) {
     for (int i = 0; i < MIX_CHANNELS; i++) {
-        channel *c = &copy->ch[i];
+        channel *c = &x->ch[i];
         c->voice = clone_sound(c->voice);
         for (int k = 0; k < c->count; k++) {
             mix_cmd *m = &c->queue[(c->head + k) % MIX_QUEUE_LEN];
             m->sound = clone_sound(m->sound);
         }
     }
+}
+
+static void free_sounds(typeof(X) *x) {
+    for (int i = 0; i < MIX_CHANNELS; i++) {
+        free_queue(&x->ch[i]);
+        stop(&x->ch[i]);
+    }
+}
+
+static void *snap_save(void) {
+    typeof(X) *copy = malloc(sizeof X);
+    if (!copy)
+        fatal("out of memory");
+    memcpy(copy, &X, sizeof X);
+    clone_sounds(copy);
     return copy;
 }
 
-static void spike_load(void *copy) {
-    for (int i = 0; i < MIX_CHANNELS; i++) {
-        free_queue(&X.ch[i]);
-        stop(&X.ch[i]);
-    }
-    memcpy(&X, copy, sizeof X); /* its sounds are X's now */
+static void snap_load(const void *copy) {
+    free_sounds(&X);
+    memcpy(&X, copy, sizeof X);
+    clone_sounds(&X); /* the copy keeps its own */
+}
+
+static void snap_drop(void *copy) {
+    free_sounds(copy);
     free(copy);
 }
-MEASURE_STATE_WITH(X, spike_save, spike_load)
+SNAPSHOT_STATE_WITH(X, snap_save, snap_load, snap_drop)
 
 bool mix_take_callback(mix_callback *cb) {
     if (X.cb_count == 0)

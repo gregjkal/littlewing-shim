@@ -45,16 +45,17 @@ bool trap_has_handler(uint32_t index);
 
 /* How many traps the guest has entered at each guest_call depth since
    trap_init: counts[1] at depth 1 (the game's own code, called from main),
-   counts[2] inside a callback a handler ran (Loony's event loop timer, where
-   its games run; measure.h), and so on, the last count holding every deeper
+   counts[2] inside a callback a handler ran (Loony's event loop timer and
+   its event handlers, where snapshots are taken; snapshot.h), and so on, the last count holding every deeper
    entry. counts[0] is unused. Returns how many counts there are. */
 #define TRAP_DEPTH_COUNTS 8
 size_t trap_depth_counts(const uint64_t **counts);
 
-/* For Spike A (measure.h). trap_depth: the guest_call depth now (0 outside
-   any). For the guest_call at depth, 1 to trap_depth(): the CPU context it
-   saved on entry and restores on return, which the spike may overwrite, and
-   the guest code address it called; NULL and 0 at any other depth.
+/* For snapshots (snapshot.h). trap_depth: the guest_call depth now (0
+   outside any). For the guest_call at depth, 1 to trap_depth(): the CPU
+   context it saved on entry and restores on return, which a restore
+   overwrites, and the guest code address it called; NULL and 0 at any other
+   depth.
    trap_on_entry: a hook run at every trap entry, before the entry is counted
    or recorded, with the import's index. It returns the index to dispatch,
    and the handler returns to the link register as the hook leaves it. NULL
@@ -66,10 +67,10 @@ uint32_t trap_call_target(int depth);
 typedef uint32_t (*trap_entry_fn)(uint32_t index);
 void trap_on_entry(trap_entry_fn fn);
 
-/* For Spike B (measure.h). trap_level: the trap the guest_call at depth is
-   dispatching (or last dispatched) and where the guest goes on after it;
-   false at a depth with no guest_call. trap_unwind: after a longjmp out of
-   every guest_call, frees the contexts they saved and sets the depth to 0.
+/* trap_level: the trap the guest_call at depth is dispatching (or last
+   dispatched) and where the guest goes on after it; false at a depth with
+   no guest_call. trap_unwind: after a longjmp out of every guest_call,
+   frees the contexts they saved and forgets the levels, with the depth 0.
    guest_resume: a guest_call that rebuilds a level instead of starting a
    call. It takes the level as a snapshot held it: the function it called,
    outer (the context it saved, which it restores on return, copied), and

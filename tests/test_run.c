@@ -5,6 +5,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -862,6 +863,8 @@ TEST(run_an_export_stopped_by_a_signal_leaves_nothing_behind) {
     CHECK_EQ(hidden_after, 0);
 }
 
+static const char *watch_speed; /* LOONY_WATCH_SPEED for run_loony_watching, unless NULL */
+
 static void run_loony_watching(void *unused) {
     (void)unused;
     unsetenv("LOONY_AUTO_ALERTS");
@@ -869,6 +872,8 @@ static void run_loony_watching(void *unused) {
     setenv("LOONY_DATA_DIR", run_data, 1);
     setenv("LOONY_WATCH", "1", 1);
     setenv("LOONY_SCRIPT", script_path, 1);
+    if (watch_speed)
+        setenv("LOONY_WATCH_SPEED", watch_speed, 1);
     execl(LOONY_BIN, "loony", (char *)NULL);
     _exit(127);
 }
@@ -1023,9 +1028,9 @@ TEST(run_a_listed_recording_plays_from_its_mark) {
     recordings_forget();
 }
 
-/* L goes ahead without pacing; J goes back by restarting the program,
-   which keeps the speed, and plays on from there to the end without a
-   desync. */
+/* L goes ahead without pacing; J goes back by putting back a snapshot in
+   place (seek.h), without a restart, keeping the speed, and plays on from
+   there to the end without a desync. */
 TEST(run_a_watched_replay_goes_ahead_and_back) {
     SKIP_UNLESS_GAME();
     char rec_dir[1024], play_dir[1024];
@@ -1049,19 +1054,20 @@ TEST(run_a_watched_replay_goes_ahead_and_back) {
     CHECK(ahead_seconds < 5.0); /* not paced past 0:01 */
     CHECK_EQ(back_status, 0);
     CHECK_CONTAINS(out[2], "watch: 2x");
-    CHECK_CONTAINS(out[2], "watch: back to 0:00: restarting");
-    const char *restarted = strstr(out[2], "loony: watch: restarting the replay");
-    CHECK(restarted);
-    if (restarted) {
-        CHECK_CONTAINS(restarted, "watch: at 2x;");
-        CHECK_CONTAINS(restarted, "loony: replay: reached the end of the recording");
-        CHECK(!strstr(restarted, "back to 0:00")); /* the script's J doesn't come again */
+    const char *back = strstr(out[2], "watch: back to 0:00\n");
+    CHECK(back);
+    if (back) {
+        CHECK_CONTAINS(back, "in place, in ");
+        CHECK_CONTAINS(back, "watch: reached 0:00");
+        CHECK_CONTAINS(back, "loony: replay: reached the end of the recording");
+        CHECK(!strstr(back + 1, "watch: back to")); /* the script's J doesn't come again */
     }
+    CHECK(!strstr(out[2], "restarting"));
     CHECK(!strstr(out[2], "replay: desync"));
 }
 
 /* J while going: the unpaced stretch so far is logged as such, not as a
-   paced one, before the restart. */
+   paced one, before the seek. */
 TEST(run_a_watched_replay_logs_the_stretch_when_it_goes_back_while_going) {
     SKIP_UNLESS_GAME();
     char rec_dir[1024], play_dir[1024];
@@ -1078,8 +1084,8 @@ TEST(run_a_watched_replay_logs_the_stretch_when_it_goes_back_while_going) {
     CHECK_EQ(status, 0);
     CHECK_CONTAINS(out[1], "watch: going to 0:11");
     CHECK_CONTAINS(out[1], "watch: the last stretch, unpaced: ");
-    const char *back = strstr(out[1], "watch: back to 0:01: restarting");
-    const char *paced = strstr(out[1], "at 1x, took"); /* the run after the restart */
+    const char *back = strstr(out[1], "watch: back to 0:01\n");
+    const char *paced = strstr(out[1], "at 1x, took"); /* the run after the seek */
     CHECK(back);
     CHECK(!paced || paced > back); /* the going wasn't logged as a paced stretch */
     CHECK_CONTAINS(out[1], "loony: replay: reached the end of the recording");
@@ -1147,72 +1153,14 @@ TEST(run_a_watched_replay_logs_the_seek_engines_measurements) {
     CHECK(!strstr(out[1], "replay: desync"));
 }
 
-static const char *spike_a; /* LOONY_SPIKE_A for run_loony_replaying_spike_a */
-
-static void run_loony_replaying_spike_a(void *unused) {
-    setenv("LOONY_SPIKE_A", spike_a, 1);
-    run_loony_replaying(unused);
-}
-
-/* Spike A (measure.h): a replay that captures the emulator, runs on 10 or
-   15 s, and puts it all back, then replays the rest, re-running those
-   seconds, with every frame check matching. In the opening and twice in a
-   game. */
-TEST(run_spike_a_restores_a_game_in_place) {
-    SKIP_UNLESS_GAME();
-    SKIP_UNLESS_SLOW();
-    char rec_dir[1024], play_dir[1024];
-    test_tmp_dir(rec_dir, sizeof rec_dir);
-    test_tmp_dir(play_dir, sizeof play_dir);
-    /* A game from the menu, as run_a_recorded_game_replays_exactly starts
-       one, then the flippers every half second until a minute in. */
-    char script[8192] = "1720 down esc\n1724 up esc\n1800 down esc\n1804 up esc\n"
-                        "1900 down return\n1906 up return\n2100 down return\n2190 up return\n";
-    for (int t = 2300; t < 3800; t += 30) {
-        size_t len = strlen(script);
-        snprintf(script + len, sizeof script - len, "%d down %s\n%d up %s\n", t,
-                 t % 60 ? "z" : "slash", t + 8, t % 60 ? "z" : "slash");
-    }
-    strcat(script, "3900 quit\n");
-    /* The opening, in the event loop timer's callback; then the game, which
-       runs in an event handler, from two places. */
-    const char *spikes[3] = {"10,25", "40,50", "45,55"};
-    char out[4][32768];
-    int rec_status = record_for_clips(rec_dir, script, out[0], sizeof out[0]);
-    int status[3];
-    for (int i = 0; i < 3; i++) {
-        spike_a = spikes[i];
-        snprintf(run_data, sizeof run_data, "%s/data-%d", play_dir, i);
-        status[i] = test_run_child(run_loony_replaying_spike_a, NULL, out[i + 1], sizeof out[i + 1]);
-    }
-    run_data[0] = '\0';
-    test_remove_tree(rec_dir);
-    test_remove_tree(play_dir);
-    CHECK_EQ(rec_status, 0);
-    for (int i = 0; i < 3; i++) {
-        CHECK_EQ(status[i], 0);
-        CHECK_CONTAINS(out[i + 1], "spike A: captured at ");
-        CHECK_CONTAINS(out[i + 1], "spike A: restored at ");
-        CHECK_CONTAINS(out[i + 1], "loony: replay: reached the end of the recording");
-        CHECK(!strstr(out[i + 1], "replay: desync"));
-    }
-}
-
-static void run_loony_replaying_spike_b(void *unused) {
-    setenv("LOONY_SPIKE_B", "45", 1);
-    run_loony_replaying(unused);
-}
-
-/* Spike B (measure.h) on a recording of one game from the menu, with the
-   soak script's keys until tick 7000 and none after, so the game ends by
-   itself (at tick 8750 or so) and the recording ends between games at
-   tick 10200: by quitting (quit) or with LOONY_EXIT_AFTER. The replay
-   captures at 45 s, inside the game, and goes back there from the end.
-   out[0] is the recording's log, out[1] the replay's; status likewise. */
-static void spike_b_round_trip(bool quit, char out[2][32768], int status[2]) {
-    char rec_dir[1024], play_dir[1024], script[16384] = "";
-    test_tmp_dir(rec_dir, sizeof rec_dir);
-    test_tmp_dir(play_dir, sizeof play_dir);
+/* Records one game from the menu into rec_dir/game.lwreplay, with the soak
+   script's keys until tick 7000 and none after, so the game ends by itself
+   (at tick 8750 or so) and the recording ends between games at tick 10200:
+   by quitting (quit), where Loony's main calls ExitToShell at depth 1, or
+   with LOONY_EXIT_AFTER, inside a trap of the run loop. The recording's
+   status. */
+static int record_one_game(const char *rec_dir, bool quit, char *out, size_t cap) {
+    char script[16384] = "";
     int t = 1700;
     const char *menu[4] = {"esc", "esc", "return", "return"};
     for (int i = 0; i < 4; i++, t += 90) {
@@ -1235,53 +1183,98 @@ static void spike_b_round_trip(bool quit, char out[2][32768], int status[2]) {
         strcat(script, "10200 quit\n");
     else
         setenv("LOONY_EXIT_AFTER", "10200", 1);
-    status[0] = record_for_clips(rec_dir, script, out[0], sizeof out[0]);
+    int status = record_for_clips(rec_dir, script, out, cap);
     unsetenv("LOONY_EXIT_AFTER");
-    snprintf(run_data, sizeof run_data, "%s/data", play_dir);
-    status[1] = test_run_child(run_loony_replaying_spike_b, NULL, out[1], sizeof out[1]);
-    run_data[0] = '\0';
+    return status;
+}
+
+/* Watches the recording as fast as it can, with keys, in a data folder of
+   its own in play_dir: its status. */
+static int watch_fastest(const char *keys, const char *play_dir, char *out, size_t cap) {
+    double seconds;
+    watch_speed = "0";
+    int status = watch_recording(keys, play_dir, out, cap, &seconds);
+    watch_speed = NULL;
+    return status;
+}
+
+/* How many frames the first end of the recording in out says were
+   checked; 0 if there is none. */
+static unsigned frames_checked(const char *out) {
+    const char *end = strstr(out, "reached the end of the recording at step");
+    unsigned frames = 0;
+    if (end)
+        sscanf(end, "reached the end of the recording at step %*u (tick %*u), %u frames", &frames);
+    return frames;
+}
+
+/* Whether out unwound to main as how says, put the snapshot back from
+   there, and then reached the end of the recording with frames checked
+   and no desync. */
+static bool went_back_from_main(const char *out, const char *how) {
+    const char *unwound = strstr(out, how);
+    const char *back = unwound ? strstr(unwound, " from main, from ") : NULL;
+    const char *end = back ? strstr(back, "loony: replay: reached the end of the recording") : NULL;
+    return end && frames_checked(end) > 0 && !strstr(out, "replay: desync");
+}
+
+/* A watched game, as fast as it can, going back (seek.h): J three times in
+   the game puts back a snapshot taken in its handler in place each time; J
+   between games, while the replay runs in the event loop timer's callback,
+   and J once the game has quit (ExitToShell, after the end: headless, the
+   script's actions left come at once there) unwind to main and go back into
+   the game from there. Each time the game plays on, ends by itself, hands
+   back to the event loop, and the replay reaches its end with every frame
+   check matching, as a straight replay's do. */
+TEST(run_a_watched_game_goes_back) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_SLOW();
+    char rec_dir[1024], play_dir[1024];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    static char out[4][65536];
+    int rec_status = record_one_game(rec_dir, true, out[0], sizeof out[0]);
+    const char *keys[3] = {"3000 down j\n3004 up j\n4500 down j\n4504 up j\n6000 down j\n6004 up j\n",
+                           "9500 down j\n9504 up j\n", "10300 down j\n10301 up j\n"};
+    int status[3];
+    for (int i = 0; i < 3; i++) {
+        char dir[1100];
+        snprintf(dir, sizeof dir, "%s/%d", play_dir, i);
+        mkdir(dir, 0700);
+        status[i] = watch_fastest(keys[i], dir, out[i + 1], sizeof out[i + 1]);
+    }
     test_remove_tree(rec_dir);
     test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    for (int i = 0; i < 3; i++)
+        CHECK_EQ(status[i], 0);
+    CHECK_EQ(count_of(out[1], "watch: back to "), 3);
+    CHECK_EQ(count_of(out[1], "in place, in "), 3);
+    CHECK(!strstr(out[1], "unwinding to main"));
+    CHECK(frames_checked(out[1]) > 0);
+    CHECK(!strstr(out[1], "replay: desync"));
+    CHECK(went_back_from_main(out[2], "was taken in another frame, unwinding to main"));
+    CHECK(went_back_from_main(out[3], "where the replay has ended: unwinding to main"));
+    CHECK_EQ(count_of(out[3], "loony: ExitToShell\n"), 2); /* the end, and the end again */
 }
 
-/* What both ends share: the replay captured inside the game, unwound to
-   main at the end and went back in, the game's handler returned to the
-   rebuilt run loop, and the replay reached its end a second time with
-   every frame check matching. */
-static bool spike_b_went_back(const char *out) {
-    const char *back = strstr(out, "spike B: re-entering from main");
-    const char *returned = back ? strstr(back, "spike B: the handler returned 0 to the run loop") : NULL;
-    const char *end = returned ? strstr(returned, "loony: replay: reached the end of the recording") : NULL;
-    return strstr(out, "spike B: captured at 45.") && strstr(out, "spike B: the game ended inside") &&
-           end && !strstr(out, "replay: desync") && !strstr(out, "spike B: never");
-}
-
-/* Spike B from Loony's own end: the quit Apple Event's handler leaves the
-   run loop and main calls ExitToShell, at depth 1. */
-TEST(run_spike_b_goes_back_into_a_game_from_exit_to_shell) {
+/* Going back from the end of a recording that ends inside a trap of the
+   run loop, between games, where the viewer holds the last frame. */
+TEST(run_a_watched_game_goes_back_from_the_end_of_the_recording) {
     SKIP_UNLESS_GAME();
     SKIP_UNLESS_SLOW();
-    char out[2][32768];
-    int status[2];
-    spike_b_round_trip(true, out, status);
-    CHECK_EQ(status[0], 0);
-    CHECK_EQ(status[1], 0);
-    CHECK_CONTAINS(out[1], "spike B: the game ended inside #74 ExitToShell at depth 1");
-    CHECK(spike_b_went_back(out[1]));
-}
-
-/* Spike B from the end of the recording, which fires inside a trap of the
-   run loop between games. */
-TEST(run_spike_b_goes_back_into_a_game_from_the_end_of_the_recording) {
-    SKIP_UNLESS_GAME();
-    SKIP_UNLESS_SLOW();
-    char out[2][32768];
-    int status[2];
-    spike_b_round_trip(false, out, status);
-    CHECK_EQ(status[0], 0);
-    CHECK_EQ(status[1], 0);
-    CHECK_CONTAINS(out[1], "loony: replay: exiting where the recording stopped");
-    CHECK(spike_b_went_back(out[1]));
+    char rec_dir[1024], play_dir[1024];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    static char out[2][65536];
+    int rec_status = record_one_game(rec_dir, false, out[0], sizeof out[0]);
+    int status = watch_fastest("10300 down j\n10301 up j\n", play_dir, out[1], sizeof out[1]);
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(status, 0);
+    CHECK_EQ(count_of(out[1], "loony: replay: exiting where the recording stopped"), 1);
+    CHECK(went_back_from_main(out[1], "where the replay has ended: unwinding to main"));
 }
 
 /* The file the first clip in rec_dir/game.clips is exported to, or "". */
@@ -1372,9 +1365,9 @@ TEST(run_a_watched_replay_cancels_its_export) {
     CHECK_EQ(unfinished, 0);
 }
 
-/* Going back restarts the viewer, and the export goes on through it: the
-   viewer after the restart follows it to its end and shows the file. J
-   comes as the export starts, long before it ends. */
+/* Going back doesn't stop the export: the viewer goes on following it to
+   its end and shows the file. J comes as the export starts, long before it
+   ends. */
 TEST(run_a_watched_replay_keeps_exporting_when_it_goes_back) {
     SKIP_UNLESS_GAME();
     char rec_dir[1024], play_dir[1024], file[1200], want[1300];
@@ -1393,15 +1386,15 @@ TEST(run_a_watched_replay_keeps_exporting_when_it_goes_back) {
     test_remove_tree(play_dir);
     CHECK_EQ(rec_status, 0);
     CHECK_EQ(watch_status, 0);
-    const char *restarted = strstr(out[1], "loony: watch: restarting the replay");
-    CHECK_CONTAINS(out[1], "watch: the export goes on through the restart");
-    CHECK(restarted);
-    if (restarted) {
-        CHECK_CONTAINS(restarted, "watch: the export of the clips goes on");
-        CHECK_CONTAINS(restarted, "watch: exported 1 clip");
+    const char *back = strstr(out[1], "watch: back to 0:00\n");
+    CHECK(back);
+    if (back) {
+        CHECK_CONTAINS(back, "in place, in ");
+        CHECK_CONTAINS(back, "watch: exported 1 clip");
         snprintf(want, sizeof want, "watch: revealing %s\n", file);
-        CHECK_CONTAINS(restarted, want);
+        CHECK_CONTAINS(back, want);
     }
+    CHECK(!strstr(out[1], "restarting"));
     CHECK(written);
     CHECK_EQ(unfinished, 0);
     CHECK(!strstr(out[1], "replay: desync"));

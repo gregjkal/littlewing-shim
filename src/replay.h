@@ -172,6 +172,9 @@ void replay_step(void);
    ignored). Each call is a step. */
 uint64_t replay_clock(uint64_t host_us);
 
+/* The clock, in us, as replay_clock last returned it. Not a step. */
+uint64_t replay_now_us(void);
+
 /* Recording: logs a record at this step. */
 void replay_log(replay_kind kind, const uint32_t *values);
 
