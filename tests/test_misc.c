@@ -230,28 +230,25 @@ static void fixed_teardown(void) {
     misc_init();
 }
 
+/* On the virtual clock Delay visits every tick and 200 polls move it a tick,
+   so the counts are exact. On the real clock a sleep that overshoots by a
+   tick on a busy machine skips one, and the count came out short in CI (#61). */
 TEST(misc_delay_and_tick_count_run_the_idle_hook) {
-    /* Delay on the virtual clock, where h_delay moves exactly one tick a
-       step however busy the machine. On the real clock a runner that stalls
-       inside the Delay sees two ticks go by, not three (#61). */
     fixed_setup();
     idle_calls = 0;
     misc_set_idle(count_idle);
     call_import("Delay", 2, 3u, 0u);
     int after_delay = idle_calls;
-    misc_set_idle(NULL);
-    fixed_teardown();
-    idle_calls = 0;
-    misc_set_idle(count_idle);
     uint32_t t0 = misc_ticks();
     for (int i = 0; i < 1000; i++)
         call_import("TickCount", 0);
-    uint32_t ticks = misc_ticks() - t0; /* more than a couple on a busy machine */
+    uint32_t ticks = misc_ticks() - t0;
     misc_set_idle(NULL);
-    CHECK(after_delay >= 3); /* once per tick while waiting */
-    CHECK(after_delay <= 4);
+    fixed_teardown();
+    CHECK_EQ(after_delay, 3); /* once per tick while waiting */
+    CHECK_EQ(ticks, 5u);
     /* TickCount only when the tick changes, not once per call */
-    CHECK(idle_calls <= (int)ticks + 1);
+    CHECK_EQ(idle_calls - after_delay, 5);
 }
 
 TEST(misc_fixed_clock_stands_still_until_the_game_waits) {
