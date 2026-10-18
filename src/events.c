@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "cpu.h"
+#include "dialogs.h"
 #include "guest_mem.h"
 #include "keymap.h"
 #include "memmgr.h"
@@ -87,7 +88,9 @@ static struct {
 } E;
 
 /* A snapshot's walk (snapshot.h): the shim's hooks are the host's. The
-   modal sink is dialogs' or none, and follows its dialogs. */
+   modal sink is dialogs' or none, so it is walked as whether there is
+   one: a pointer into the shim's statics means nothing in another
+   process, which puts back a snapshot kept in a recording. */
 static void snap_walk(snapshot_walker *w) {
     snapshot_bytes(w, &E, sizeof E);
     SNAPSHOT_HOST(w, E.present);
@@ -95,6 +98,11 @@ static void snap_walk(snapshot_walker *w) {
     SNAPSHOT_HOST(w, E.screenshot);
     SNAPSHOT_HOST(w, E.cursor);
     SNAPSHOT_HOST(w, E.replay_key);
+    uint8_t modal = E.modal != NULL;
+    SNAPSHOT_REBUILT(w, E.modal);
+    snapshot_bytes(w, &modal, sizeof modal);
+    if (snapshot_loading(w))
+        E.modal = modal ? dialogs_modal_sink() : NULL;
 }
 SNAPSHOT_STATE_WALK(E, snap_walk)
 

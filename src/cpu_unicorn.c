@@ -255,23 +255,31 @@ void cpu_load(const cpu_context *ctx) {
     check(uc_context_restore(uc, ctx->uc_ctx), "context restore");
 }
 
+/* The machine's registers, in the order cpu_context_same and
+   cpu_context_regs take them: the general ones, the floating-point ones,
+   then these. */
+static const struct {
+    int id;
+    const char *name;
+} named[] = {{UC_PPC_REG_PC, "pc"},   {UC_PPC_REG_LR, "lr"},   {UC_PPC_REG_CTR, "ctr"},
+             {UC_PPC_REG_CR, "cr"},   {UC_PPC_REG_XER, "xer"}, {UC_PPC_REG_MSR, "msr"},
+             {UC_PPC_REG_FPSCR, "fpscr"}};
+_Static_assert(64 + sizeof named / sizeof named[0] == CPU_REGS, "CPU_REGS");
+
+static int reg_id(int i) {
+    return i < 32 ? UC_PPC_REG_0 + i : i < 64 ? UC_PPC_REG_FPR0 + i - 32 : named[i - 64].id;
+}
+
+/* Register i of ctx, the 32-bit ones in their low half. */
+static uint64_t reg_of(const cpu_context *ctx, int i) {
+    uint64_t v = 0;
+    check(uc_context_reg_read(ctx->uc_ctx, reg_id(i), &v), "context read");
+    return i < 32 || i >= 64 ? (uint32_t)v : v;
+}
+
 bool cpu_context_same(const cpu_context *a, const cpu_context *b, char *what, size_t cap) {
-    static const struct {
-        int id;
-        const char *name;
-    } named[] = {{UC_PPC_REG_PC, "pc"},   {UC_PPC_REG_LR, "lr"},   {UC_PPC_REG_CTR, "ctr"},
-                 {UC_PPC_REG_CR, "cr"},   {UC_PPC_REG_XER, "xer"}, {UC_PPC_REG_MSR, "msr"},
-                 {UC_PPC_REG_FPSCR, "fpscr"}};
-    int n = 64 + (int)(sizeof named / sizeof named[0]);
-    for (int i = 0; i < n; i++) {
-        int id = i < 32 ? UC_PPC_REG_0 + i : i < 64 ? UC_PPC_REG_FPR0 + i - 32 : named[i - 64].id;
-        uint64_t va = 0, vb = 0;
-        check(uc_context_reg_read(a->uc_ctx, id, &va), "context read");
-        check(uc_context_reg_read(b->uc_ctx, id, &vb), "context read");
-        if (i < 32 || i >= 64) { /* 32 bits */
-            va = (uint32_t)va;
-            vb = (uint32_t)vb;
-        }
+    for (int i = 0; i < CPU_REGS; i++) {
+        uint64_t va = reg_of(a, i), vb = reg_of(b, i);
         if (va == vb)
             continue;
         char name[8];
@@ -283,6 +291,20 @@ bool cpu_context_same(const cpu_context *a, const cpu_context *b, char *what, si
         return false;
     }
     return true;
+}
+
+void cpu_context_regs(const cpu_context *ctx, uint64_t regs[CPU_REGS]) {
+    for (int i = 0; i < CPU_REGS; i++)
+        regs[i] = reg_of(ctx, i);
+}
+
+cpu_context *cpu_context_with_regs(const uint64_t regs[CPU_REGS]) {
+    cpu_context *ctx = cpu_save();
+    for (int i = 0; i < CPU_REGS; i++) {
+        uint64_t v = regs[i];
+        check(uc_context_reg_write(ctx->uc_ctx, reg_id(i), &v), "context write");
+    }
+    return ctx;
 }
 
 void cpu_flush_translations(void) {

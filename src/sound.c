@@ -75,7 +75,9 @@ static void monitor(const int16_t *buf, uint32_t n) {
     SDL_PutAudioStreamData(SND.monitor, buf, (int)(n * 4));
 }
 
-static void render(uint32_t frames) {
+/* Renders frames, the first of them frame at of the game's sound (counted
+   from sound_init) when the clock drives it. */
+static void render(uint32_t frames, uint64_t at) {
     int16_t buf[2 * RENDER_FRAMES];
     while (frames > 0) {
         uint32_t n = frames < RENDER_FRAMES ? frames : RENDER_FRAMES;
@@ -87,8 +89,9 @@ static void render(uint32_t frames) {
         if (SND.recording)
             wav_write(&SND.wav, buf, n);
         if (SND.tap)
-            SND.tap(buf, n);
+            SND.tap(buf, n, at);
         frames -= n;
+        at += n;
     }
 }
 
@@ -96,7 +99,7 @@ static void render(uint32_t frames) {
 static void SDLCALL feed(void *unused, SDL_AudioStream *stream, int additional, int total) {
     (void)unused, (void)stream, (void)total;
     if (additional > 0)
-        render((uint32_t)additional / 4);
+        render((uint32_t)additional / 4, 0);
 }
 
 /* Clock-driven: renders the frames between the last call and now. On a
@@ -110,7 +113,7 @@ static void catch_up(void) {
     uint64_t target = (uint64_t)(now * MIX_RATE);
     if (target > SND.rendered) {
         double t0 = wall_seconds();
-        render((uint32_t)(target - SND.rendered));
+        render((uint32_t)(target - SND.rendered), SND.rendered);
         SND.rendered = target;
         SND.render_seconds += wall_seconds() - t0;
     }

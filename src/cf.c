@@ -48,7 +48,10 @@ static struct {
 
 /* A snapshot's walk (snapshot.h): C with its arrays and every string in
    them, since releasing an object frees its string and a new one can move
-   an array. An array's slots past its count are zeros in a snapshot. */
+   an array. An array's slots past its count are zeros in a snapshot. The
+   preferences file's path is the host's (another process, putting back a
+   snapshot kept in a recording, saves into its own folder), and so are the
+   kept-out values below: a string holding one is walked as which it is. */
 static void free_owned(void) {
     for (uint32_t i = 0; i < C.nobjs; i++)
         free(C.objs[i].str);
@@ -58,8 +61,43 @@ static void free_owned(void) {
         free(C.consts[i].text);
     free(C.objs);
     free(C.prefs);
-    free(C.prefs_path);
     free(C.consts);
+}
+
+/* The preferences whose values a snapshot leaves out
+   (cf_keep_out_of_snapshots), and their values as cf_load_prefs read
+   them: the host's, kept across cf_init. */
+#define MAX_KEPT_OUT 4
+static struct {
+    char *keys[MAX_KEPT_OUT];
+    char *values[MAX_KEPT_OUT]; /* NULL: no such string preference */
+    size_t n;
+} kept_out;
+
+/* A string the block owns, walked as which kept-out value it is (1 for
+   the first, 0 for none) and, if it is none, as itself. Loading one that
+   was kept out gives it this process's value. */
+static void walk_text(snapshot_walker *w, char **field) {
+    uint8_t which = 0;
+    if (!snapshot_loading(w) && *field)
+        for (size_t k = 0; k < kept_out.n; k++)
+            if (kept_out.values[k] && kept_out.values[k][0] && strcmp(*field, kept_out.values[k]) == 0)
+                which = (uint8_t)(k + 1);
+    snapshot_bytes(w, &which, sizeof which);
+    if (!snapshot_loading(w) && which) {
+        char *text = *field;
+        *field = NULL; /* written as no string */
+        snapshot_string(w, field);
+        *field = text;
+        return;
+    }
+    snapshot_string(w, field);
+    if (snapshot_loading(w) && which) {
+        const char *v = which <= kept_out.n && kept_out.values[which - 1] ? kept_out.values[which - 1] : "";
+        free(*field);
+        if (!(*field = strdup(v)))
+            fatal("out of memory");
+    }
 }
 
 static void snap_walk(snapshot_walker *w) {
@@ -69,7 +107,7 @@ static void snap_walk(snapshot_walker *w) {
     SNAPSHOT_OWNED(w, C.objs, C.cap);
     for (uint32_t i = 0; i < C.cap; i++) {
         if (i < C.nobjs)
-            snapshot_string(w, &C.objs[i].str);
+            walk_text(w, &C.objs[i].str);
         else
             SNAPSHOT_REBUILT(w, C.objs[i]);
     }
@@ -82,7 +120,7 @@ static void snap_walk(snapshot_walker *w) {
             SNAPSHOT_REBUILT(w, C.prefs[i]);
         }
     }
-    snapshot_string(w, &C.prefs_path);
+    SNAPSHOT_HOST(w, C.prefs_path);
     SNAPSHOT_OWNED(w, C.consts, C.consts_cap);
     for (uint32_t i = 0; i < C.consts_cap; i++) {
         if (i < C.nconsts) {
@@ -568,9 +606,33 @@ void cf_load_prefs(const char *path) {
         uint32_t v = e[i].is_number ? new_obj(CF_NUMBER_TYPE_ID, NULL, e[i].num) : cf_string(e[i].str);
         set_pref(e[i].key, v);
         release(lookup(v));
+        for (size_t k = 0; k < kept_out.n; k++)
+            if (!e[i].is_number && strcmp(e[i].key, kept_out.keys[k]) == 0) {
+                free(kept_out.values[k]);
+                if (!(kept_out.values[k] = strdup(e[i].str)))
+                    fatal("out of memory");
+            }
     }
     plist_free(e, n);
 }
+
+void cf_keep_out_of_snapshots(const char *const *keys, size_t n) {
+    if (n > MAX_KEPT_OUT)
+        fatal("cf: more than %d preferences kept out of snapshots", MAX_KEPT_OUT);
+    for (size_t k = 0; k < kept_out.n; k++) {
+        free(kept_out.keys[k]);
+        free(kept_out.values[k]);
+    }
+    memset(&kept_out, 0, sizeof kept_out);
+    for (size_t k = 0; k < n; k++)
+        if (!(kept_out.keys[k] = strdup(keys[k])))
+            fatal("out of memory");
+    kept_out.n = n;
+}
+
+const char *cf_kept_out(size_t i) { return i < kept_out.n ? kept_out.values[i] : NULL; }
+
+size_t cf_kept_out_count(void) { return kept_out.n; }
 
 bool cf_save_prefs(void) {
     if (!C.prefs_path)

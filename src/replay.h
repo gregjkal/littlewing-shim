@@ -21,9 +21,11 @@
    The file is gzip-compressed: a header (magic, format version, the game's
    id and the SHA-256 of its program, whether LOONY_AUTO_ALERTS was on, the
    wall clock and time zone at the start, and the preferences file the run
-   started from), then the records. Only format 5 is read, which logs
-   where a game starts and ends and where it is played (play.h); a shared
-   copy is format 5 with a flag. The prototype's formats 1 to 4 are refused.
+   started from), then the records. Formats 5 and 6 are read: format 5
+   logs where a game starts and ends and where it is played (play.h), and
+   format 6, which this version writes, is format 5 that may also hold a
+   snapshot of the game's start after its records (gamestart.h). A shared
+   copy is either with a flag. The prototype's formats 1 to 4 are refused.
    A replay starts from those preferences in a folder of its own
    (LOONY_DATA_DIR, or a new temporary folder), and refuses another game or
    another program.
@@ -117,10 +119,37 @@ bool replay_find_recording(const char *dir, const char *game_id, time_t when, ch
    The game only checks the license, and never shows it, so the frames are
    the same. Everything else is shared as recorded: the high-score names,
    and anything typed while playing. A recording still being written copies
-   to its last frame check. False, with err, if src can't be read, was
-   played unregistered (with the viewer's license its replay would start
+   to its last frame check. The copy leaves out src's snapshot of the
+   game's start (replay_snapshot), which only the install that took it
+   uses (gamestart.h). False, with err, if src can't be read, was played
+   unregistered (with the viewer's license its replay would start
    differently), or dst can't be written. */
 bool replay_share(const char *src, const char *dst, char *err, size_t errlen);
+
+/* After replay_open: the snapshot section of the file being replayed
+   (gamestart.h), its bytes as replay_set_snapshot wrote them, or NULL. */
+const uint8_t *replay_snapshot(size_t *len);
+
+/* After replay_open: a SHA-256 of all of the file a replay sees, so a
+   snapshot is put back only into a replay of the recording it was taken
+   from. A recording and its shared copy have the same: their headers
+   differ only in the license and the shared flag, which aren't in it. */
+void replay_identity(uint8_t out[32]);
+
+/* The snapshot section of the recording at path (malloc'd, or NULL for
+   none) and the recording's identity (replay_identity), without touching
+   the replay being played or recorded. False, with err, if it isn't a
+   replay this version reads. */
+bool replay_file_snapshot(const char *path, uint8_t **section, size_t *len,
+                          uint8_t identity[32], char *err, size_t errlen);
+
+/* Replay: writes the file being replayed again with section as its
+   snapshot section, in its place (in format 6), keeping the file's mode
+   and the time of its last write (which says which high score it holds).
+   False, logged, when the recording has no end record yet, when section
+   holds the license (the recording's, or the one this replay gave the
+   game, in any case), or when the file can't be written. */
+bool replay_set_snapshot(const uint8_t *section, size_t len);
 
 /* Before the app restarts to watch path, so a file it can't play doesn't
    end the game being played: whether path is a replay of a game it knows,

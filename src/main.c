@@ -19,6 +19,7 @@
 #include "events.h"
 #include "files.h"
 #include "game.h"
+#include "gamestart.h"
 #include "guest_mem.h"
 #include "hd.h"
 #include "libc.h"
@@ -415,6 +416,7 @@ int main(int argc, char **argv) {
     } else if (replay_playing() && seek_verifying()) {
         seek_start(NULL); /* snapshots to verify, and no seeks */
     }
+    gamestart_init(); /* after seek_start: its hook runs seek's */
     const char *script = getenv("LOONY_SCRIPT");
     if (script && *script && !script_load(script, err, sizeof err)) {
         fprintf(stderr, "loony: can't load the script %s: %s\n", script, err);

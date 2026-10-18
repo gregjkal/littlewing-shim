@@ -2,6 +2,7 @@
 
 #include <CommonCrypto/CommonDigest.h>
 #include <dirent.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <SDL3/SDL_scancode.h>
 #include <stdlib.h>
@@ -541,7 +542,7 @@ TEST(replay_share_leaves_the_license_out_and_a_replay_puts_the_viewers_in) {
     CHECK(replay_share(file, shared, err, sizeof err));
     size_t n = gunzip_into(shared, buf, sizeof buf);
     CHECK(n > 9);
-    CHECK_EQ((uint8_t)buf[8], 5); /* format 5, shared */
+    CHECK_EQ((uint8_t)buf[8], 6); /* format 6, shared */
     CHECK(!memmem(buf, n, "me@example.com", 14));
     CHECK(!memmem(buf, n, "123456789012", 12));
     CHECK(memmem(buf, n, "GREG", 4) != NULL);
@@ -1389,7 +1390,7 @@ TEST(replay_refuses_a_damaged_header) {
     write_replay("LWREPLAY", 8); /* no version */
     CHECK(!replay_open(err, sizeof err));
     CHECK_STR(err, "the replay's header is damaged");
-    write_replay("LWREPLAY\x06", 9);
+    write_replay("LWREPLAY\x07", 9);
     CHECK(!replay_open(err, sizeof err));
     CHECK_STR(err, "the replay was recorded by a newer version of LittleWing");
     uint8_t h[64];
@@ -1441,4 +1442,161 @@ TEST(replay_opens_no_web_pages) {
                              (uint32_t)strlen(u), sp, ep);
     CHECK_EQ(r, 0);
     CHECK_EQ(urls_opened, 0);
+}
+
+/* ---- format 6: the snapshot of the game's start (gamestart.h) ---- */
+
+/* Plays the file back again, from a new save folder. */
+static bool play_again(void) {
+    char play_data[1300];
+    snprintf(play_data, sizeof play_data, "%s/play", dir);
+    test_remove_tree(play_data);
+    return play_back();
+}
+
+/* Writes len bytes as path's whole decompressed content. */
+static bool gzip_to(const char *path, const void *bytes, size_t len) {
+    gzFile g = gzopen(path, "wb6");
+    bool ok = g && gzwrite(g, bytes, (unsigned)len) == (int)len;
+    if (g && gzclose(g) != Z_OK)
+        ok = false;
+    return ok;
+}
+
+/* Sets path's last write to t. */
+static void set_mtime(const char *path, time_t t) {
+    struct timeval tv[2] = {{t, 0}, {t, 0}};
+    utimes(path, tv);
+}
+
+static time_t mtime_of(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0 ? st.st_mtime : 0;
+}
+
+/* A replay keeps a snapshot in its recording after the records, in format
+   6, keeping the file's last write; a replay of it finds the snapshot, and
+   the same records, and the recording is the same one (replay_identity). */
+TEST(replay_keeps_a_snapshot_after_the_records) {
+    BEGIN_TEST();
+    CHECK(record_licensed("me@example.com", "123456789012"));
+    set_mtime(file, 1700000000);
+    CHECK(play_again());
+    size_t len;
+    CHECK(replay_snapshot(&len) == NULL);
+    uint8_t before[32], after[32], from_file[32];
+    replay_identity(before);
+    static const char snap[] = "a snapshot of the game's start";
+    CHECK(replay_set_snapshot((const uint8_t *)snap, sizeof snap));
+    CHECK_EQ(mtime_of(file), 1700000000);
+    char buf[65536];
+    size_t n = gunzip_into(file, buf, sizeof buf);
+    CHECK(n > 16);
+    CHECK_EQ((uint8_t)buf[8], 6);
+    CHECK(memcmp(buf + n - 8, "LWSTART6", 8) == 0);
+    CHECK(play_again());
+    const uint8_t *got = replay_snapshot(&len);
+    CHECK(got != NULL);
+    CHECK_EQ(len, sizeof snap);
+    CHECK(memcmp(got, snap, sizeof snap) == 0);
+    replay_identity(after);
+    CHECK(memcmp(before, after, 32) == 0);
+    uint32_t v[3];
+    replay_step();
+    CHECK(replay_take(REPLAY_KEY, v));
+    CHECK_EQ(v[0], SDL_SCANCODE_Z);
+    replay_reset();
+    uint8_t *section;
+    char err[256];
+    CHECK(replay_file_snapshot(file, &section, &len, from_file, err, sizeof err));
+    CHECK(section != NULL);
+    CHECK(memcmp(section, snap, sizeof snap) == 0);
+    CHECK(memcmp(from_file, before, 32) == 0);
+    free(section);
+    /* Kept again, it replaces the one there. */
+    CHECK(play_again());
+    CHECK(replay_set_snapshot((const uint8_t *)"again", 5));
+    CHECK(play_again());
+    got = replay_snapshot(&len);
+    CHECK(got && len == 5 && memcmp(got, "again", 5) == 0);
+}
+
+/* Never a snapshot holding the license, in any case. */
+TEST(replay_keeps_no_snapshot_holding_the_license) {
+    BEGIN_TEST();
+    CHECK(record_licensed("me@example.com", "123456789012"));
+    CHECK(play_again());
+    static const char *const bad[] = {"..me@example.com..", "..ME@EXAMPLE.COM..", "..123456789012.."};
+    for (int i = 0; i < 3; i++)
+        CHECK(!replay_set_snapshot((const uint8_t *)bad[i], strlen(bad[i])));
+    CHECK(play_again());
+    size_t len;
+    CHECK(replay_snapshot(&len) == NULL);
+}
+
+/* A recording cut short (no end record yet) keeps no snapshot. */
+TEST(replay_keeps_no_snapshot_in_a_recording_without_its_end) {
+    BEGIN_TEST();
+    CHECK(record_licensed("me@example.com", "123456789012"));
+    char buf[65536];
+    size_t n = gunzip_into(file, buf, sizeof buf);
+    CHECK(n > 2);
+    CHECK(gzip_to(file, buf, n - 2)); /* the end record: its step and kind */
+    CHECK(play_again());
+    CHECK(!replay_set_snapshot((const uint8_t *)"snap", 4));
+}
+
+/* A shared copy leaves the recording's snapshot out (only the install
+   that took it uses it), and has the recording's identity, as a replay
+   that takes one sees it. */
+TEST(replay_share_leaves_the_snapshot_out) {
+    BEGIN_TEST();
+    CHECK(record_licensed("me@example.com", "123456789012"));
+    CHECK(play_again());
+    CHECK(replay_set_snapshot((const uint8_t *)"snap", 4));
+    replay_reset();
+    char shared[1300], again[1300], err[256];
+    snprintf(shared, sizeof shared, "%s/shared.lwreplay", dir);
+    snprintf(again, sizeof again, "%s/again.lwreplay", dir);
+    CHECK(replay_share(file, shared, err, sizeof err));
+    CHECK(replay_share(shared, again, err, sizeof err));
+    uint8_t *section, mine[32], theirs[32], again_id[32];
+    size_t len;
+    CHECK(replay_file_snapshot(file, &section, &len, mine, err, sizeof err));
+    CHECK(section && len == 4);
+    free(section);
+    CHECK(replay_file_snapshot(shared, &section, &len, theirs, err, sizeof err));
+    CHECK(section == NULL);
+    CHECK(replay_file_snapshot(again, &section, &len, again_id, err, sizeof err));
+    CHECK(section == NULL);
+    CHECK(memcmp(mine, theirs, 32) == 0);
+    CHECK(memcmp(mine, again_id, 32) == 0);
+    static char buf[65536];
+    size_t n = gunzip_into(shared, buf, sizeof buf);
+    CHECK(n > 16);
+    CHECK(memcmp(buf + n - 8, "LWSTART6", 8) != 0);
+}
+
+/* Format 5, which has no snapshot, reads as it did. */
+TEST(replay_reads_format_5) {
+    BEGIN_TEST();
+    CHECK(record_licensed("me@example.com", "123456789012"));
+    static char buf[65536];
+    size_t n = gunzip_into(file, buf, sizeof buf);
+    CHECK(n > 9);
+    CHECK_EQ((uint8_t)buf[8], 6);
+    buf[8] = 5;
+    CHECK(gzip_to(file, buf, n));
+    CHECK(play_again());
+    size_t len;
+    CHECK(replay_snapshot(&len) == NULL);
+    uint32_t v[3];
+    replay_step();
+    CHECK(replay_take(REPLAY_KEY, v));
+    CHECK_EQ(v[0], SDL_SCANCODE_Z);
+    /* and a replay of it can keep a snapshot in it, which makes it format 6 */
+    CHECK(play_again());
+    CHECK(replay_set_snapshot((const uint8_t *)"snap", 4));
+    n = gunzip_into(file, buf, sizeof buf);
+    CHECK_EQ((uint8_t)buf[8], 6);
 }

@@ -118,7 +118,9 @@ static struct {
 
 /* A snapshot's walk (snapshot.h): G with the screens saved under its
    dialogs and its nibs' text (read_file's, with a NUL after it), since
-   closing a dialog or a nib frees them. front points into G itself. */
+   closing a dialog or a nib frees them. front points into G itself, so it
+   is walked as an index (-1 for none): a snapshot kept in a recording is
+   put back in another process, where G is somewhere else. */
 static void snap_walk(snapshot_walker *w) {
     if (snapshot_loading(w)) {
         for (int i = 0; i < DLG_MAX; i++)
@@ -127,6 +129,14 @@ static void snap_walk(snapshot_walker *w) {
             free(G.nibs[i]);
     }
     snapshot_bytes(w, &G, sizeof G);
+    int32_t front = G.front ? (int32_t)(G.front - G.d) : -1;
+    SNAPSHOT_REBUILT(w, G.front);
+    snapshot_bytes(w, &front, sizeof front);
+    if (snapshot_loading(w)) {
+        if (front < -1 || front >= DLG_MAX)
+            fatal("snapshot: the front dialog is %d, of %d", (int)front, DLG_MAX);
+        G.front = front >= 0 ? &G.d[front] : NULL;
+    }
     for (int i = 0; i < DLG_MAX; i++) {
         dialog *d = &G.d[i];
         SNAPSHOT_OWNED(w, d->saved,
@@ -618,6 +628,8 @@ static void on_text(const char *utf8) {
 }
 
 static const ev_modal_sink sink = {on_key, on_mouse, on_text};
+
+const ev_modal_sink *dialogs_modal_sink(void) { return &sink; }
 
 /* Takes the input until an item is hit; returns it (1-based). */
 static int run_modal(dialog *d) {
