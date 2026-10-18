@@ -215,6 +215,23 @@ static bool exists(const char *path, bool want_dir) {
    folders are the host's (a snapshot kept in a recording is put back in
    another process, with its own save folder, on another Mac), and the
    files are reopened in this process's. */
+/* Whether rel, in a field of cap bytes, is a path the shim could have made
+   inside one of its folders: ended, relative, and with no "." or ".."
+   step, so a snapshot from a file (gamestart.h) names no other file. */
+static bool safe_rel(const char *rel, size_t cap) {
+    if (!memchr(rel, 0, cap) || rel[0] == '/')
+        return false;
+    for (const char *p = rel; *p;) {
+        size_t n = strcspn(p, "/");
+        if ((n == 1 && p[0] == '.') || (n == 2 && p[0] == '.' && p[1] == '.'))
+            return false;
+        p += n;
+        if (*p)
+            p++;
+    }
+    return true;
+}
+
 static void snap_walk(snapshot_walker *w) {
     if (snapshot_loading(w))
         for (int i = 0; i < MAX_FILES; i++)
@@ -223,6 +240,13 @@ static void snap_walk(snapshot_walker *w) {
     snapshot_bytes(w, &F, sizeof F);
     SNAPSHOT_HOST(w, F.game_dir);
     SNAPSHOT_HOST(w, F.data_dir);
+    snapshot_check(w, F.ndirs >= 1 && F.ndirs <= MAX_DIRS && !F.dirs[0][0] && F.nrefs >= 0 &&
+                          F.nrefs <= MAX_REFS,
+                   "%d folders and %d references", F.ndirs, F.nrefs);
+    for (int i = 0; i < F.ndirs; i++)
+        snapshot_check(w, safe_rel(F.dirs[i], sizeof F.dirs[i]), "folder %d", i);
+    for (int i = 0; i < F.nrefs; i++)
+        snapshot_check(w, safe_rel(F.refs[i], sizeof F.refs[i]), "reference %d", i);
     for (int i = 0; i < MAX_FILES; i++) {
         open_file *o = &F.files[i];
         int64_t mark = !snapshot_loading(w) && o->f ? (int64_t)ftell(o->f) : -1;
@@ -230,6 +254,8 @@ static void snap_walk(snapshot_walker *w) {
         snapshot_bytes(w, &mark, sizeof mark);
         if (!snapshot_loading(w) || mark < 0)
             continue;
+        snapshot_check(w, safe_rel(o->rel, sizeof o->rel) && o->eof >= 0 && (!o->in_data || F.data_dir[0]),
+                       "open file %d", i);
         char path[PATH_CAP];
         under(o->in_data ? F.data_dir : F.game_dir, o->rel, path, sizeof path);
         o->f = fopen(path, o->in_data && o->writable ? "r+b" : "rb");

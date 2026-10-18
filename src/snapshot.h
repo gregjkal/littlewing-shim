@@ -106,6 +106,19 @@ uint8_t *snapshot_encode(const snapshot *s, const snapshot *base, const snapshot
    size. */
 snapshot *snapshot_decode(const uint8_t *data, size_t len, char *err, size_t errlen);
 
+/* For a snapshot decoded from a file another install may have written
+   (gamestart.h): whether it brings the emulator data and register values
+   alone, never code. Its guest memory must be the same as now in the
+   game's code section (trap_code), which at the baseline the game's own
+   files made; the program counter, link and count registers of the CPU
+   and of each level's saved context, each level's function called and
+   where its trap returns, must be in the code section, at an import's
+   trap address, at guest_call's return address, or zero; each level's
+   trap must be an import's; and the machine state register must be the
+   CPU's as it is now. If not, what isn't, in why. Not a sandbox: the
+   game's own code runs on whatever data it brings. */
+bool snapshot_brings_no_code(const snapshot *s, char *why, size_t cap);
+
 /* Whether s's guest memory holds text (as it is, in capitals or in small
    letters) where it isn't what base holds there: what snapshot_encode
    would put in the file, XORed out of sight. */
@@ -133,6 +146,14 @@ void snapshot_register(const char *file, const char *name, void *p, size_t len,
 
 /* In a walk: whether it is loading. */
 bool snapshot_loading(const snapshot_walker *w);
+
+/* Loading: ok must hold of what the walk loaded so far, or putting the
+   snapshot back fails hard, naming the block and what (a printf format).
+   A snapshot can come from a file another install wrote (gamestart.h), so
+   every walk checks each index and count it loaded against the host array
+   it indexes or bounds, before anything uses it. Saving, it does nothing. */
+void snapshot_check(snapshot_walker *w, bool ok, const char *fmt, ...)
+    __attribute__((format(printf, 3, 4)));
 
 /* len bytes at p: the game's. */
 void snapshot_bytes(snapshot_walker *w, void *p, size_t len);

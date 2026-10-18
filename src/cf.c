@@ -68,11 +68,23 @@ static void free_owned(void) {
    (cf_keep_out_of_snapshots), and their values as cf_load_prefs read
    them: the host's, kept across cf_init. */
 #define MAX_KEPT_OUT 4
+#define MAX_KEPT_FIELDS 8
+#define MAX_KEPT_FIELD 4096
 static struct {
     char *keys[MAX_KEPT_OUT];
     char *values[MAX_KEPT_OUT]; /* NULL: no such string preference */
     size_t n;
+    cf_field fields[MAX_KEPT_FIELDS]; /* cf_kept_out_field */
+    size_t nfields;
 } kept_out;
+
+/* Whether s is one of the values kept out. */
+static bool is_kept_out(const char *s) {
+    for (size_t k = 0; k < kept_out.n; k++)
+        if (kept_out.values[k] && kept_out.values[k][0] && strcmp(s, kept_out.values[k]) == 0)
+            return true;
+    return false;
+}
 
 /* A string the block owns, walked as which kept-out value it is (1 for
    the first, 0 for none) and, if it is none, as itself. Loading one that
@@ -100,18 +112,40 @@ static void walk_text(snapshot_walker *w, char **field) {
     }
 }
 
+static char *bundle_path; /* cf_set_bundle's; survives cf_init */
+
+static uint32_t ref_of(uint32_t index) { return CF_TAG_BASE + 16u * index; }
+
+bool cf_in_bundle(const char *path) {
+    size_t n = bundle_path ? strlen(bundle_path) : 0;
+    return path && n && strncmp(path, bundle_path, n) == 0 && (!path[n] || path[n] == '/') &&
+           !strstr(path + n, "/../") && !(strlen(path) >= 3 && strcmp(path + strlen(path) - 3, "/..") == 0);
+}
+
 static void snap_walk(snapshot_walker *w) {
     if (snapshot_loading(w))
         free_owned();
     snapshot_bytes(w, &C, sizeof C);
+    snapshot_check(w, C.nobjs <= C.cap && C.nprefs <= C.prefs_cap && C.nconsts <= C.consts_cap &&
+                          ref_of(C.nobjs) <= CF_TAG_LIMIT,
+                   "%u objects, %u preferences and %u constants", C.nobjs, C.nprefs, C.nconsts);
     SNAPSHOT_OWNED(w, C.objs, C.cap);
+    snapshot_check(w, !C.cap || C.objs, "no objects");
     for (uint32_t i = 0; i < C.cap; i++) {
         if (i < C.nobjs)
             walk_text(w, &C.objs[i].str);
         else
             SNAPSHOT_REBUILT(w, C.objs[i]);
     }
+    for (uint32_t i = 0; i < C.nobjs; i++) {
+        uint32_t t = C.objs[i].type_id;
+        if (t == CF_URL_TYPE_ID || t == CF_BUNDLE_TYPE_ID)
+            snapshot_check(w, cf_in_bundle(C.objs[i].str), "object %u's path", i);
+        else if (t == CF_STRING_TYPE_ID)
+            snapshot_check(w, C.objs[i].str != NULL, "string %u", i);
+    }
     SNAPSHOT_OWNED(w, C.prefs, C.prefs_cap);
+    snapshot_check(w, !C.prefs_cap || C.prefs, "no preferences");
     for (uint32_t i = 0; i < C.prefs_cap; i++) {
         if (i < C.nprefs) {
             snapshot_string(w, &C.prefs[i].key);
@@ -120,12 +154,19 @@ static void snap_walk(snapshot_walker *w) {
             SNAPSHOT_REBUILT(w, C.prefs[i]);
         }
     }
+    for (uint32_t i = 0; i < C.nprefs; i++) {
+        uint32_t v = C.prefs[i].value;
+        snapshot_check(w, C.prefs[i].key && v >= CF_TAG_BASE && !(v & 15u) && (v - CF_TAG_BASE) / 16u < C.nobjs,
+                       "preference %u", i);
+    }
     SNAPSHOT_HOST(w, C.prefs_path);
     SNAPSHOT_OWNED(w, C.consts, C.consts_cap);
+    snapshot_check(w, !C.consts_cap || C.consts, "no constants");
     for (uint32_t i = 0; i < C.consts_cap; i++) {
         if (i < C.nconsts) {
             snapshot_string(w, &C.consts[i].text);
             SNAPSHOT_PADDING(w, C.consts[i], addr);
+            snapshot_check(w, C.consts[i].text != NULL, "constant %u", i);
         } else {
             SNAPSHOT_REBUILT(w, C.consts[i]);
         }
@@ -133,9 +174,6 @@ static void snap_walk(snapshot_walker *w) {
 }
 SNAPSHOT_STATE_WALK(C, snap_walk)
 
-static char *bundle_path; /* cf_set_bundle's; survives cf_init */
-
-static uint32_t ref_of(uint32_t index) { return CF_TAG_BASE + 16u * index; }
 
 static cf_obj *lookup(uint32_t ref) {
     if (ref < CF_TAG_BASE || ref >= CF_TAG_LIMIT || (ref & 15u) != 0)
@@ -329,6 +367,14 @@ static void h_string_get_cstring(void) {
         return;
     }
     memcpy(gm_ptr(trap_arg(1), (uint32_t)n), s, n);
+    if (is_kept_out(s)) {
+        cf_field f = {trap_arg(1), (uint32_t)size < MAX_KEPT_FIELD ? (uint32_t)size : MAX_KEPT_FIELD};
+        size_t i = 0;
+        while (i < kept_out.nfields && (kept_out.fields[i].addr != f.addr || kept_out.fields[i].len != f.len))
+            i++;
+        if (i == kept_out.nfields && i < MAX_KEPT_FIELDS)
+            kept_out.fields[kept_out.nfields++] = f;
+    }
     trap_return(1);
 }
 
@@ -633,6 +679,11 @@ void cf_keep_out_of_snapshots(const char *const *keys, size_t n) {
 const char *cf_kept_out(size_t i) { return i < kept_out.n ? kept_out.values[i] : NULL; }
 
 size_t cf_kept_out_count(void) { return kept_out.n; }
+
+size_t cf_kept_out_fields(const cf_field **fields) {
+    *fields = kept_out.fields;
+    return kept_out.nfields;
+}
 
 bool cf_save_prefs(void) {
     if (!C.prefs_path)

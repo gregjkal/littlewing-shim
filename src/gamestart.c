@@ -1,7 +1,7 @@
 #include "gamestart.h"
 
 #include <CommonCrypto/CommonDigest.h>
-#include <CommonCrypto/CommonHMAC.h>
+#include <ctype.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <mach-o/dyld.h>
@@ -30,10 +30,11 @@
    the game's start's clock and trap entry (64 bits each), the resources
    left out (a count, 32 bits, then for each its index in the fork, its
    guest address and its length, 32 bits each), the snapshot
-   (snapshot_encode's bytes, after their length, 64 bits), and an
-   HMAC-SHA256 of all that under this install's key (install_key). */
+   (snapshot_encode's bytes, after their length, 64 bits). Version 1
+   ended in an HMAC under the install's own key, as only that install's
+   were used. */
 #define SECTION_MAGIC 0x4C574753u /* 'LWGS' */
-#define SECTION_VERSION 1u
+#define SECTION_VERSION 2u
 #define HASH_LEN CC_SHA256_DIGEST_LENGTH
 
 typedef struct {
@@ -85,85 +86,110 @@ static void build_id(uint8_t out[16]) {
     }
 }
 
+typedef struct {
+    uint32_t addr, len;
+} span;
+
+/* Adds [addr, addr + len) to *v (n of them, room for *cap). */
+static void add_span(span **v, size_t *n, size_t *cap, uint64_t addr, uint64_t len) {
+    if (*n == *cap) {
+        *cap = *cap ? 2 * *cap : 16;
+        if (!(*v = realloc(*v, *cap * sizeof **v)))
+            fatal("out of memory");
+    }
+    (*v)[(*n)++] = (span){(uint32_t)addr, (uint32_t)len};
+}
+
+/* Where guest memory holds the license, which a baseline's hash leaves
+   out: the buffers the game copied it into (cf_kept_out_fields), and
+   wherever else its text is, as it is, in capitals or in small letters,
+   in the pages held (vec, from mincore). Malloc'd, *n of them. */
+static span *license_spans(const char *vec, size_t npages, size_t *n) {
+    span *v = NULL;
+    size_t cap = 0;
+    *n = 0;
+    const cf_field *fields;
+    size_t nfields = cf_kept_out_fields(&fields);
+    for (size_t i = 0; i < nfields; i++)
+        add_span(&v, n, &cap, fields[i].addr, fields[i].len);
+    size_t page = vm_page_size;
+    const uint8_t *base = gm_host_base();
+    for (size_t i = 0; i < cf_kept_out_count(); i++) {
+        const char *text = cf_kept_out(i);
+        size_t len = text ? strlen(text) : 0;
+        if (!len || len > 255)
+            continue;
+        char forms[3][256];
+        for (size_t c = 0; c <= len; c++) {
+            forms[0][c] = text[c];
+            forms[1][c] = (char)toupper((unsigned char)text[c]);
+            forms[2][c] = (char)tolower((unsigned char)text[c]);
+        }
+        /* Each run of pages held, so a copy across two pages is found. */
+        for (size_t k = 0; k < npages;) {
+            if (!(vec[k] & (MINCORE_INCORE | MINCORE_PAGED_OUT))) {
+                k++;
+                continue;
+            }
+            size_t end = k;
+            while (end < npages && (vec[end] & (MINCORE_INCORE | MINCORE_PAGED_OUT)))
+                end++;
+            const uint8_t *lo = base + k * page, *hi = base + end * page;
+            for (int f = 0; f < 3; f++)
+                for (const uint8_t *at = lo;
+                     at < hi && (at = memmem(at, (size_t)(hi - at), forms[f], len)); at += len)
+                    add_span(&v, n, &cap, (uint64_t)(at - base), len);
+            k = end;
+        }
+    }
+    return v;
+}
+
 /* A SHA-256 of guest memory: every page that isn't zeros, after its
-   index. A page the host doesn't hold (mincore: in memory, or compressed
-   or swapped out) is zeros, and isn't read, which would make it
-   resident. */
+   index, with the license blanked (license_spans), so replays of one
+   recording under two licenses have the same. A page the host doesn't
+   hold (mincore: in memory, or compressed or swapped out) is zeros, and
+   isn't read, which would make it resident. */
 static void memory_hash(uint8_t out[HASH_LEN]) {
     size_t page = vm_page_size, npages = gm_host_size() / page;
     const uint8_t *base = gm_host_base();
     char *vec = malloc(npages ? npages : 1);
-    if (!vec)
+    uint8_t *buf = malloc(page);
+    if (!vec || !buf)
         fatal("out of memory");
     if (mincore((void *)(uintptr_t)base, npages * page, vec) != 0)
         memset(vec, MINCORE_INCORE, npages);
+    size_t nspans;
+    span *spans = license_spans(vec, npages, &nspans);
     CC_SHA256_CTX c;
     CC_SHA256_Init(&c);
     for (size_t k = 0; k < npages; k++) {
         if (!(vec[k] & (MINCORE_INCORE | MINCORE_PAGED_OUT)))
             continue;
-        const uint8_t *p = base + k * page;
+        memcpy(buf, base + k * page, page);
+        uint64_t lo = (uint64_t)k * page, hi = lo + page;
+        for (size_t i = 0; i < nspans; i++) {
+            uint64_t a = spans[i].addr, e = a + spans[i].len;
+            if (a < lo)
+                a = lo;
+            if (e > hi)
+                e = hi;
+            if (a < e)
+                memset(buf + (a - lo), 0, (size_t)(e - a));
+        }
         size_t i = 0;
-        while (i < page && !p[i])
+        while (i < page && !buf[i])
             i++;
         if (i == page)
             continue;
         uint32_t index = (uint32_t)k;
         CC_SHA256_Update(&c, &index, sizeof index);
-        CC_SHA256_Update(&c, p, (CC_LONG)page);
+        CC_SHA256_Update(&c, buf, (CC_LONG)page);
     }
     CC_SHA256_Final(out, &c);
+    free(spans);
+    free(buf);
     free(vec);
-}
-
-/* This install's key for the sections it writes, made at its first use
-   beside every game's save folder, readable by the user alone. False if it
-   can't be read or made: then no snapshot is kept or used. Never in
-   LOONY_DATA_DIR, which a replay sets to a folder of its own. */
-static bool install_key(uint8_t key[HASH_LEN]) {
-    static bool have;
-    static uint8_t k[HASH_LEN];
-    if (have) {
-        memcpy(key, k, HASH_LEN);
-        return true;
-    }
-    const char *home = getenv("HOME");
-    if (!home || !*home)
-        return false;
-    char dir[PATH_MAX], path[PATH_MAX + 16], tmp[PATH_MAX + 32];
-    snprintf(dir, sizeof dir, "%s/Library/Application Support/littlewing-shim", home);
-    snprintf(path, sizeof path, "%s/snapshot.key", dir);
-    size_t len;
-    uint8_t *p = read_file(path, &len);
-    if (!p && make_dirs(dir)) {
-        /* Written whole beside it, then linked to its name, which fails if
-           another copy of LittleWing made it first: then that one's. */
-        snprintf(tmp, sizeof tmp, "%s.XXXXXX", path);
-        int fd = mkstemp(tmp);
-        if (fd >= 0) {
-            uint8_t fresh[HASH_LEN];
-            arc4random_buf(fresh, sizeof fresh);
-            bool ok = fchmod(fd, 0600) == 0 && write(fd, fresh, sizeof fresh) == (ssize_t)sizeof fresh;
-            if (close(fd) == 0 && ok)
-                link(tmp, path);
-            unlink(tmp);
-        }
-        p = read_file(path, &len);
-    }
-    if (!p || len != HASH_LEN) {
-        free(p);
-        return false;
-    }
-    memcpy(k, p, HASH_LEN);
-    free(p);
-    have = true;
-    memcpy(key, k, HASH_LEN);
-    return true;
-}
-
-/* The HMAC of [p, p + len) under key. */
-static void mac_of(const uint8_t key[HASH_LEN], const uint8_t *p, size_t len, uint8_t out[HASH_LEN]) {
-    CCHmac(kCCHmacAlgSHA256, key, HASH_LEN, p, len, out);
 }
 
 /* ---- the section ---- */
@@ -201,22 +227,8 @@ static uint64_t le(const uint8_t *p, int bytes) {
    one this version reads. */
 static bool parse(const uint8_t *p, size_t len, section *s, char *why, size_t cap) {
     size_t fixed = 8 + 16 + HASH_LEN + 16 + HASH_LEN + 16 + 4;
-    if (len < fixed + 8 + HASH_LEN || le(p, 4) != SECTION_MAGIC || le(p + 4, 4) != SECTION_VERSION) {
+    if (len < fixed + 8 || le(p, 4) != SECTION_MAGIC || le(p + 4, 4) != SECTION_VERSION) {
         snprintf(why, cap, "it isn't one this version of LittleWing reads");
-        return false;
-    }
-    /* Only this install's: a section is the whole emulator, guest code
-       and registers included, so one made elsewhere would run as the game. */
-    uint8_t key[HASH_LEN], mac[HASH_LEN];
-    if (!install_key(key)) {
-        snprintf(why, cap, "this install's key for them can't be read or made");
-        return false;
-    }
-    len -= HASH_LEN;
-    mac_of(key, p, len, mac);
-    if (timingsafe_bcmp(mac, p + len, HASH_LEN) != 0) {
-        snprintf(why, cap, "it wasn't taken by this install of LittleWing (a shared copy, or "
-                           "another Mac's)");
         return false;
     }
     const uint8_t *q = p + 8;
@@ -254,7 +266,7 @@ static bool parse(const uint8_t *p, size_t len, section *s, char *why, size_t ca
 
 /* Whether s was taken by this build, of the recording whose identity is
    identity (replay_identity); if not, why. */
-static bool ours(const section *s, const uint8_t identity[HASH_LEN], char *why, size_t cap) {
+static bool same_recording(const section *s, const uint8_t identity[HASH_LEN], char *why, size_t cap) {
     uint8_t build[16];
     build_id(build);
     if (memcmp(build, s->build, 16) != 0) {
@@ -282,7 +294,7 @@ static void done(void) {
 static snapshot *load(const section *s, char *why, size_t cap) {
     uint8_t identity[HASH_LEN];
     replay_identity(identity);
-    if (!ours(s, identity, why, cap))
+    if (!same_recording(s, identity, why, cap))
         return NULL;
     if (s->base_clock != G.base_clock || s->base_entries != G.base_entries ||
         memcmp(s->base_hash, G.base_hash, HASH_LEN) != 0) {
@@ -315,6 +327,11 @@ static snapshot *load(const section *s, char *why, size_t cap) {
             return NULL;
         }
         snapshot_poke(snap, addr, rsrc_data(e), len);
+    }
+    if (!snapshot_brings_no_code(snap, err, sizeof err)) {
+        snprintf(why, cap, "%s", err);
+        snapshot_free(snap);
+        return NULL;
     }
     return snap;
 }
@@ -433,18 +450,10 @@ static void at_start(uint32_t index) {
     }
     add_le(&b, body_len, 8);
     add(&b, body, body_len);
-    uint8_t key[HASH_LEN], mac[HASH_LEN];
-    bool keyed = install_key(key);
-    if (keyed) {
-        mac_of(key, b.p, b.len, mac);
-        add(&b, mac, HASH_LEN);
-    } else {
-        log_msg("gamestart: this install's key for snapshots can't be read or made, so none is kept");
-    }
     uint64_t left_out = 0;
     for (size_t i = 0; i < nrefills; i++)
         left_out += refills[i].len;
-    bool kept = keyed && replay_set_snapshot(b.p, b.len);
+    bool kept = replay_set_snapshot(b.p, b.len);
     if (kept)
         log_msg("gamestart: kept a snapshot of the game's start at %.3f s in the recording: %zu "
                 "bytes before compression, %zu resources (%llu bytes) left out, in %.1f ms",

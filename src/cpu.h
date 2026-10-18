@@ -69,6 +69,12 @@ bool cpu_context_same(const cpu_context *a, const cpu_context *b, char *what, si
 void cpu_context_regs(const cpu_context *ctx, uint64_t regs[CPU_REGS]);
 cpu_context *cpu_context_with_regs(const uint64_t regs[CPU_REGS]);
 
+/* After cpu_init: [begin, end) (page-aligned, inside one mapped region)
+   can be read and written but not run, so the CPU runs code only from
+   what the program's files put in its code section (main.c). A jump there
+   stops the CPU with a fault. */
+void cpu_no_exec(uint32_t begin, uint32_t end);
+
 /* Calls fn for every guest write that touches [begin, end] (inclusive), with
    the CPU's registers (including pc) current. NULL removes the watch.
    cpu_init() clears it. */

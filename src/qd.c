@@ -41,6 +41,10 @@ static struct {
 /* A snapshot's walk (snapshot.h): dialogs' hook is the host's. */
 static void snap_walk(snapshot_walker *w) {
     snapshot_bytes(w, &Q, sizeof Q);
+    snapshot_check(w, Q.nports >= 0 && Q.nports <= MAX_PORTS, "%d ports", Q.nports);
+    snapshot_check(w, (!Q.saved_w && !Q.saved_h) || (Q.saved_w > 0 && Q.saved_w <= 4096 && Q.saved_h > 0 &&
+                                                     Q.saved_h <= 4096),
+                   "the screen before full screen, %d by %d", Q.saved_w, Q.saved_h);
     SNAPSHOT_HOST(w, Q.window_hook);
 }
 SNAPSHOT_STATE_WALK(Q, snap_walk)

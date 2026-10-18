@@ -36,7 +36,14 @@ static struct {
     } keymgr[KEYMGR_KEYS];
     int nkeymgr;
 } L;
-SNAPSHOT_STATE(L)
+
+/* A snapshot's walk (snapshot.h): the program's path is the host's. */
+static void snap_walk(snapshot_walker *w) {
+    snapshot_bytes(w, &L, sizeof L);
+    SNAPSHOT_HOST(w, L.exe_path);
+    snapshot_check(w, L.nkeymgr >= 0 && L.nkeymgr <= KEYMGR_KEYS, "%d keymgr keys", L.nkeymgr);
+}
+SNAPSHOT_STATE_WALK(L, snap_walk)
 
 static uint32_t new_object(uint32_t size) {
     uint32_t p = mm_new_ptr(size, true);

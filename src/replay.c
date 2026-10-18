@@ -130,13 +130,30 @@ static struct {
 } R;
 
 /* A snapshot's walk (snapshot.h): the cursor, the step and the counts are
-   the replay's; the file, what was parsed out of it, the recording's
-   buffers and the viewer's hooks are the host's, and stay as they are. The
-   header is the host's too, and the cursor is walked as where it is among
-   the records, so a snapshot of a recording fits its shared copy, whose
-   header differs (replay_identity). */
+   the replay's; whether this is a recording or a replay, the file, what
+   was parsed out of it, the recording's paths and buffers and the
+   viewer's hooks are the host's, and stay as they are. The header is the
+   host's too, and the cursor is walked as where it is among the records,
+   so a snapshot of a recording fits its shared copy, whose header differs
+   (replay_identity). */
 static void snap_walk(snapshot_walker *w) {
     snapshot_bytes(w, &R, sizeof R);
+    SNAPSHOT_HOST(w, R.mode);
+    SNAPSHOT_HOST(w, R.auto_dir);
+    SNAPSHOT_HOST(w, R.auto_id);
+    SNAPSHOT_HOST(w, R.session_step);
+    SNAPSHOT_HOST(w, R.path);
+    SNAPSHOT_HOST(w, R.last_step);
+    SNAPSHOT_HOST(w, R.write_failed);
+    SNAPSHOT_HOST(w, R.cut_text);
+    SNAPSHOT_HOST(w, R.loaded);
+    SNAPSHOT_HOST(w, R.cut_short);
+    SNAPSHOT_HOST(w, R.nmark_ticks);
+    SNAPSHOT_HOST(w, R.nspans);
+    SNAPSHOT_HOST(w, R.ended);
+    snapshot_check(w, R.next.kind >= 0 && R.next.kind < REPLAY_KINDS &&
+                          memchr(R.next.text, 0, sizeof R.next.text),
+                   "the next record");
     SNAPSHOT_HOST(w, R.header);
     SNAPSHOT_HOST(w, R.session);
     SNAPSHOT_HOST(w, R.out);

@@ -341,6 +341,11 @@ int main(int argc, char **argv) {
         cpu_init();
         if (!image_load(buf, len, &img, err, sizeof err))
             return startup_error("can't load %s: %s", path, err);
+        /* Code runs from the code section alone, which the game's files
+           fill and a snapshot from a file never changes (gamestart.h). */
+        uint32_t code_end = (img.code_base + img.code_len + 0xFFFu) & ~0xFFFu;
+        cpu_no_exec(GUEST_IMAGE_BASE, img.code_base);
+        cpu_no_exec(code_end, GUEST_IMAGE_LIMIT);
         if (!rsrc_open(fork, fork_len, err, sizeof err))
             return startup_error("can't load the resources of %s: %s", path, err);
         mm_init();

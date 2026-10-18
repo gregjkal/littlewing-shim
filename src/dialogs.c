@@ -118,7 +118,7 @@ static struct {
 
 /* A snapshot's walk (snapshot.h): G with the screens saved under its
    dialogs and its nibs' text (read_file's, with a NUL after it), since
-   closing a dialog or a nib frees them. front points into G itself, so it
+   closing a dialog or a nib frees them; LOONY_AUTO_ALERTS is the host's. front points into G itself, so it
    is walked as an index (-1 for none): a snapshot kept in a recording is
    put back in another process, where G is somewhere else. */
 static void snap_walk(snapshot_walker *w) {
@@ -137,14 +137,36 @@ static void snap_walk(snapshot_walker *w) {
             fatal("snapshot: the front dialog is %d, of %d", (int)front, DLG_MAX);
         G.front = front >= 0 ? &G.d[front] : NULL;
     }
+    SNAPSHOT_HOST(w, G.auto_alerts);
+    for (int i = 0; i < 4; i++)
+        snapshot_check(w, memchr(G.param[i], 0, sizeof G.param[i]) != NULL, "ParamText %d", i);
     for (int i = 0; i < DLG_MAX; i++) {
         dialog *d = &G.d[i];
+        snapshot_check(w, memchr(d->name, 0, sizeof d->name) && d->nitems >= 0 && d->nitems <= MAX_ITEMS,
+                       "dialog %d's name or its %d items", i, d->nitems);
+        for (int k = 0; k < d->nitems; k++)
+            snapshot_check(w, d->items[k].len >= 0 && d->items[k].len <= TEXT_CAP,
+                           "dialog %d's item %d is %d bytes", i, k, d->items[k].len);
+        snapshot_check(w, !d->open || (d->focus >= -1 && d->focus < d->nitems && d->pressed >= -1 &&
+                              d->pressed < d->nitems && d->hit >= 0 && d->hit <= d->nitems &&
+                              d->default_item >= 0 && d->default_item <= d->nitems &&
+                              d->cancel_item >= 0 && d->cancel_item <= d->nitems),
+                       "dialog %d's items in use", i);
+        /* The screen under it, where screen() can put it back. */
+        qd_rect r = d->saved_r, sc = d->saved_screen;
+        snapshot_check(w, !d->saved || ((d->saved_depth == 8 || d->saved_depth == 16 || d->saved_depth == 32) &&
+                                        r.left < r.right && r.top < r.bottom && r.left >= sc.left &&
+                                        r.top >= sc.top && r.right <= sc.right && r.bottom <= sc.bottom),
+                       "dialog %d's saved screen", i);
         SNAPSHOT_OWNED(w, d->saved,
                        (size_t)rect_w(d->saved_r) * (size_t)(d->saved_depth / 8) *
                            (size_t)rect_h(d->saved_r));
     }
-    for (int i = 0; i < NIB_MAX; i++)
+    for (int i = 0; i < NIB_MAX; i++) {
+        snapshot_check(w, !G.nibs[i] || G.nib_len[i] < (64u << 20), "nib %d is %zu bytes", i, G.nib_len[i]);
         SNAPSHOT_OWNED(w, G.nibs[i], G.nib_len[i] + 1);
+        snapshot_check(w, !G.nibs[i] || !G.nibs[i][G.nib_len[i]], "nib %d's text", i);
+    }
 }
 SNAPSHOT_STATE_WALK(G, snap_walk)
 

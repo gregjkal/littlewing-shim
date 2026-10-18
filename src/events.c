@@ -1,5 +1,6 @@
 #include "events.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -87,12 +88,30 @@ static struct {
     bool warned_full;
 } E;
 
-/* A snapshot's walk (snapshot.h): the shim's hooks are the host's. The
-   modal sink is dialogs' or none, so it is walked as whether there is
-   one: a pointer into the shim's statics means nothing in another
-   process, which puts back a snapshot kept in a recording. */
+/* A snapshot's walk (snapshot.h): the shim's hooks and LOONY_EXIT_AFTER
+   are the host's. The modal sink is dialogs' or none, so it is walked as
+   whether there is one: a pointer into the shim's statics means nothing in
+   another process, which puts back a snapshot kept in a recording. */
 static void snap_walk(snapshot_walker *w) {
     snapshot_bytes(w, &E, sizeof E);
+    snapshot_check(w, E.nhandlers >= 0 && E.nhandlers <= EV_MAX_HANDLERS, "%d handlers", E.nhandlers);
+    for (int i = 0; i < E.nhandlers; i++)
+        snapshot_check(w, E.handlers[i].ntypes <= 8, "handler %d has %u types", i, E.handlers[i].ntypes);
+    snapshot_check(w, E.nstandard >= 0 && E.nstandard <= MAX_STANDARD, "%d standard handlers",
+                   E.nstandard);
+    snapshot_check(w, E.qhead >= 0 && E.qhead < EV_MAX_EVENTS && E.qcount >= 0 && E.qcount <= EV_MAX_EVENTS,
+                   "the queue at %d, %d long", E.qhead, E.qcount);
+    for (int k = 0; k < E.qcount; k++) {
+        int idx = E.queue[(E.qhead + k) % EV_MAX_EVENTS];
+        snapshot_check(w, idx >= 0 && idx < EV_MAX_EVENTS, "event %d in the queue", idx);
+    }
+    snapshot_check(w, E.nheld >= 0 && E.nheld <= MAX_HELD && E.ngame_down >= 0 && E.ngame_down <= MAX_HELD,
+                   "%d modifiers and %d keys down", E.nheld, E.ngame_down);
+    for (int i = 0; i < EV_MAX_TIMERS; i++)
+        snapshot_check(w, isfinite(E.timers[i].next) && isfinite(E.timers[i].interval) &&
+                              E.timers[i].interval >= 0,
+                       "timer %d", i);
+    SNAPSHOT_HOST(w, E.exit_after);
     SNAPSHOT_HOST(w, E.present);
     SNAPSHOT_HOST(w, E.poll);
     SNAPSHOT_HOST(w, E.screenshot);
@@ -495,6 +514,20 @@ bool events_loop_frame(ev_frame *f) {
 }
 
 void events_resume_loop(const ev_frame *f, uint32_t (*call)(void)) {
+    /* The frame came with a snapshot, maybe from a file: it must be one
+       the run loop could be in, given the state that came with it. */
+    bool ok;
+    if (f->timer >= 0)
+        ok = f->timer < EV_MAX_TIMERS && E.timers[f->timer].active && E.timers[f->timer].running;
+    else
+        ok = f->timer == -1 && f->slot >= 0 && f->slot < EV_MAX_EVENTS && E.events[f->slot].refs >= 2 &&
+             f->nchain >= 1 && f->nchain <= 2 && f->link >= 0 && f->link < f->nchain &&
+             f->handler >= 0 && f->handler < E.nhandlers &&
+             E.handlers[f->handler].target == f->chain[f->link];
+    if (!ok || f->loop_depth < 1)
+        fatal("events: a snapshot's run loop frame (timer %d, slot %d, link %d of %d, handler %d) "
+              "isn't one it could be in",
+              f->timer, f->slot, f->link, f->nchain, f->handler);
     resume_at.on = true;
     resume_at.frame = *f;
     resume_at.call = call;

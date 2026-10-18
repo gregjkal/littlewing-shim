@@ -198,12 +198,14 @@ TEST(snapshot_puts_a_guest_back_in_place_in_the_run_loop) {
 }
 
 /* Every block a pattern can be written into without following a pointer
-   that isn't there: each is filled, saved, filled again and loaded, and
-   the state is then what was saved. The rest are the ones tested through
-   their modules below. A block added to the inventory is covered here
-   unless it is added to that list. */
-static const char *const owners[] = {"cf.c C", "files.c F", "mixer.c X", "dialogs.c G",
-                                     "cgimage.c G", "rsrc.c R"};
+   that isn't there, or failing a check of what its walk loads: each is
+   filled, saved, filled again and loaded, and the state is then what was
+   saved. The rest are the ones tested through their modules below and in
+   the replays that go back. A block added to the inventory is covered
+   here unless it is added to that list. */
+static const char *const owners[] = {"cf.c C",      "files.c F",  "mixer.c X",  "dialogs.c G",
+                                     "cgimage.c G", "rsrc.c R",   "events.c E", "replay.c R",
+                                     "misc.c M",    "qd.c Q",     "cgdisplay.c G", "libc.c L"};
 
 static bool is_owner(const char *file, const char *name) {
     char tag[128];
@@ -270,10 +272,10 @@ TEST(snapshot_state_puts_back_every_plain_block) {
     }
     free(a);
     CHECK(same_at_once);
-    CHECK(plain >= 10);
+    CHECK(plain >= 7);
     CHECK_EQ(restored, plain);
     CHECK(differed);
-    CHECK_CONTAINS(named, "misc.c M at byte ");
+    CHECK_CONTAINS(named, "play.c P at byte ");
     CHECK_CONTAINS(named, "trap.c T at byte ");
     CHECK_CONTAINS(named, "memmgr.c last_error at byte ");
     CHECK(same);
@@ -317,6 +319,7 @@ TEST(snapshot_state_puts_back_what_modules_own) {
     }
     char png[1100];
     snprintf(png, sizeof png, "%s/art.png", game);
+    cf_set_bundle(game); /* where a URL can be */
     uint32_t provider = call_import("CGDataProviderCreateWithURL", 1, cf_url(png));
     CHECK(provider != 0);
     size_t alen;
