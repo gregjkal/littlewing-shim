@@ -211,13 +211,18 @@ static bool exists(const char *path, bool want_dir) {
 /* A snapshot's walk (snapshot.h): an open file is its name, the folder it
    is open in and its mark, and loading reopens it there, since closing a
    file, or the first write that copies it to the data folder, replaces
-   its FILE. What a file holds isn't in a snapshot: a write stays. */
+   its FILE. What a file holds isn't in a snapshot: a write stays. The two
+   folders are the host's (a snapshot kept in a recording is put back in
+   another process, with its own save folder, on another Mac), and the
+   files are reopened in this process's. */
 static void snap_walk(snapshot_walker *w) {
     if (snapshot_loading(w))
         for (int i = 0; i < MAX_FILES; i++)
             if (F.files[i].f)
                 fclose(F.files[i].f);
     snapshot_bytes(w, &F, sizeof F);
+    SNAPSHOT_HOST(w, F.game_dir);
+    SNAPSHOT_HOST(w, F.data_dir);
     for (int i = 0; i < MAX_FILES; i++) {
         open_file *o = &F.files[i];
         int64_t mark = !snapshot_loading(w) && o->f ? (int64_t)ftell(o->f) : -1;

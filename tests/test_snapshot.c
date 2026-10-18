@@ -408,3 +408,148 @@ TEST(snapshot_state_fails_hard_on_a_header_tag_or_length_that_doesnt_match) {
     CHECK_CONTAINS(out[2], "the snapshot's is 1 bytes, this build's");
     CHECK_CONTAINS(out[3], "loading: ");
 }
+
+/* ---- on disk (#46) ---- */
+
+#define PART (AREA + 0x400) /* a range left out of the encoding, then poked back */
+#define PART_LEN 0x100u
+
+/* What the codec's hook saw. */
+static struct {
+    snapshot *base, *s, *decoded;
+    uint8_t *enc;
+    size_t enc_len;
+    uint32_t string;
+    bool done, missing_part, same, fits, late, early;
+    int calls;
+    char before_poke[2048], after[2048], err[256];
+} D;
+
+/* At the second SnapTest: the baseline. At the third: fills guest memory,
+   makes a CF string and takes the snapshot, encoded against the baseline
+   with PART left out. At the fourth: puts the baseline back, decodes the
+   encoding against it, pokes PART back and puts the decoded snapshot back
+   in place, which must be the third again. */
+static uint32_t codec_hook(uint32_t index) {
+    if (trap_depth() != 2 || strcmp(trap_import_name(index), "SnapTest") != 0)
+        return index;
+    D.calls++;
+    uint32_t n = gm_r32(COUNTER);
+    if (n == 2 && !D.base) {
+        fill(0x11);
+        gm_write_cstr(AREA + 0x2100, "early@example.com"); /* in a page that changes */
+        D.base = snapshot_take(index);
+    } else if (n == 3 && !D.s) {
+        fill(0x33);
+        gm_write_cstr(AREA + 0x1800, "late@example.com");
+        D.string = cf_string("made between");
+        D.s = snapshot_take(index);
+        D.late = snapshot_changed_holds(D.s, D.base, "LATE@example.com");
+        D.early = snapshot_changed_holds(D.s, D.base, "EARLY@EXAMPLE.COM");
+        snapshot_range part = {PART, PART_LEN};
+        D.enc = snapshot_encode(D.s, D.base, &part, 1, &D.enc_len);
+    } else if (n == 4 && !D.done) {
+        D.done = true;
+        snapshot_restore(D.base);
+        D.decoded = snapshot_decode(D.enc, D.enc_len, D.err, sizeof D.err);
+        if (!D.decoded)
+            return index;
+        D.fits = snapshot_fits(D.decoded);
+        index = snapshot_restore(D.decoded);
+        D.missing_part = !snapshot_verify(D.s, D.before_poke, sizeof D.before_poke);
+        uint8_t bytes[PART_LEN];
+        for (uint32_t i = 0; i < PART_LEN; i++)
+            bytes[i] = (uint8_t)(0x33 + (PART - AREA + i) * 7);
+        snapshot_poke(D.decoded, PART, bytes, PART_LEN);
+        index = snapshot_restore(D.decoded);
+        D.same = snapshot_verify(D.s, D.after, sizeof D.after);
+    }
+    return index;
+}
+
+/* A snapshot encoded against an earlier one (snapshot_encode) and decoded
+   against the emulator put back to that one is the snapshot again, once
+   the range left out is poked back; and the encoding holds the pages that
+   changed, not the whole mapping. */
+TEST(snapshot_encodes_as_the_pages_that_differ_from_a_baseline) {
+    setup();
+    emit_proc();
+    memset(&D, 0, sizeof D);
+    cpu_set_fpr(1, 0.0);
+    cpu_set_fpr(2, 0.001);
+    uint32_t out = scratch(4);
+    uint32_t upp = call_import("NewEventLoopTimerUPP", 1, TV_PROC);
+    CHECK_EQ(call_import("InstallEventLoopTimer", 8, call_import("GetMainEventLoop", 0), 0u, 0u, 0u,
+                         0u, upp, 0u, out),
+             0);
+    trap_on_entry(codec_hook);
+    call_import("RunApplicationEventLoop", 0);
+    trap_on_entry(NULL);
+    CHECK(D.base && D.s && D.enc);
+    CHECK_STR(D.err, "");
+    CHECK(D.late);   /* written since the baseline, in any case */
+    CHECK(!D.early); /* there at the baseline, unchanged: XORed out of the file */
+    CHECK(D.decoded != NULL);
+    CHECK(D.fits);
+    CHECK(D.missing_part);
+    CHECK_CONTAINS(D.before_poke, "guest memory at 0x");
+    CHECK(D.same);
+    CHECK_STR(D.after, "");
+    size_t state_len;
+    uint8_t *state = snapshot_state_save(&state_len);
+    free(state);
+    /* Past the module state, a few pages, of a mapping of megabytes. */
+    CHECK(D.enc_len > state_len);
+    CHECK(D.enc_len - state_len < 64 * 1024);
+    /* Fires 1 to 4, then 4 and 5 again from the third. */
+    CHECK_EQ(D.calls, 4 + FIRES - 3);
+    CHECK_STR(cf_string_text("test", D.string), "made between");
+    /* A damaged encoding is refused, not put back. */
+    char err[256] = "";
+    D.enc[0] ^= 1;
+    CHECK(snapshot_decode(D.enc, D.enc_len, err, sizeof err) == NULL);
+    CHECK_CONTAINS(err, "isn't a snapshot");
+    D.enc[0] ^= 1;
+    CHECK(snapshot_decode(D.enc, D.enc_len - 1, err, sizeof err) == NULL);
+    snapshot_free(D.base);
+    snapshot_free(D.s);
+    snapshot_free(D.decoded);
+    free(D.enc);
+    teardown();
+}
+
+/* A string the preferences hold as a license is never in the module
+   state (cf_keep_out_of_snapshots): it is walked as which key it is, and
+   loading gives it the value this process loaded. */
+TEST(snapshot_state_leaves_out_the_license) {
+    setup();
+    char path[1100];
+    snprintf(path, sizeof path, "%s/prefs.plist", game);
+    FILE *f = fopen(path, "w");
+    fputs("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>"
+          "<key>user email</key><string>me@example.com</string>"
+          "<key>user id</key><string>123456789012</string>"
+          "<key>highscore name 1</key><string>GREG</string></dict></plist>\n",
+          f);
+    fclose(f);
+    static const char *const keys[] = {"user email", "user id"};
+    cf_keep_out_of_snapshots(keys, 2);
+    cf_load_prefs(path);
+    CHECK_STR(cf_kept_out(0), "me@example.com");
+    CHECK_STR(cf_kept_out(1), "123456789012");
+    uint32_t copy = cf_string("me@example.com"); /* as the game copies one */
+    size_t len;
+    uint8_t *state = snapshot_state_save(&len);
+    CHECK(!memmem(state, len, "me@example.com", 14));
+    CHECK(!memmem(state, len, "123456789012", 12));
+    CHECK(memmem(state, len, "GREG", 4) != NULL);
+    call_import("CFRelease", 1, copy);
+    snapshot_state_load(state, len);
+    char what[1024];
+    CHECK(snapshot_state_verify(state, len, what, sizeof what));
+    CHECK_STR(cf_string_text("test", copy), "me@example.com");
+    CHECK_STR(cf_pref_string("user email"), "me@example.com");
+    CHECK_STR(cf_pref_string("user id"), "123456789012");
+    free(state);
+    teardown();
+}

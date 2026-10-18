@@ -35,13 +35,15 @@
    hard, naming the block, on a header, a tag, a size or a length that
    doesn't match. Pointers a walk follows are written as zeros, and so are
    the host's own fields, so two snapshots of the same state are the same
-   bytes. Two pointers are left as they are, since they point into the
-   shim's own statics, which stay put while the process runs: events.c's
-   modal sink and dialogs.c's front dialog; a snapshot kept on disk (#46)
-   would turn them into indices. A file's contents aren't in a snapshot,
-   only which files are open and their marks (files.c). What describes the
-   host stack isn't in a block (trap.c's depth
-   and levels, events.c's frame in progress, both reset by
+   bytes. The module state holds no pointer, path or other value that
+   means something only in this process, so a snapshot can be kept in a
+   recording and put back by another process on another Mac (#46,
+   gamestart.h): events.c's modal sink is walked as whether there is one,
+   dialogs.c's front dialog as an index, the folders files.c and cf.c use
+   are the host's, and so is the replay's file header. A file's contents
+   aren't in a snapshot, only which files are open and their marks
+   (files.c). What describes the host stack isn't in a block (trap.c's
+   depth and levels, events.c's frame in progress, both reset by
    snapshot_reenter), and neither is host state the game never sees (the
    window, the viewer, HD's copies, a script's actions, sound's output and
    volume).
@@ -80,6 +82,37 @@ void snapshot_reenter(const snapshot *s, void (*after)(void));
    parts, each with where it first differs ("guest memory at 0x00123400 (3
    pages)", "cf.c C at byte 1200 of 5678, in C"), in what. */
 bool snapshot_verify(const snapshot *s, char *what, size_t cap);
+
+/* A snapshot as bytes, to keep in a recording (#46, gamestart.h): the
+   CPU and each level's saved context as their registers
+   (cpu_context_regs), the frame, the clock and the module state as they
+   are, and the guest mapping as the pages that differ from base's, each
+   XORed with base's page, so what didn't change since base is zeros. The
+   bytes in each range of same (guest addresses) are written as base has
+   them, to be put back by other means (snapshot_poke). The encoding is
+   malloc'd, *len bytes. snapshot_encode reads which pages each side holds
+   (mincore, in memory or paged out); a page neither holds is zeros on
+   both. */
+typedef struct {
+    uint32_t addr, len;
+} snapshot_range;
+uint8_t *snapshot_encode(const snapshot *s, const snapshot *base, const snapshot_range *same,
+                         size_t nsame, size_t *len);
+
+/* The snapshot data encodes, against the guest mapping as it is now, which
+   must be what base was when it was encoded; the contexts are the CPU's as
+   it is now with the registers put in. NULL, with err, if data isn't a
+   snapshot this version reads, or its guest mapping isn't this one's
+   size. */
+snapshot *snapshot_decode(const uint8_t *data, size_t len, char *err, size_t errlen);
+
+/* Whether s's guest memory holds text (as it is, in capitals or in small
+   letters) where it isn't what base holds there: what snapshot_encode
+   would put in the file, XORed out of sight. */
+bool snapshot_changed_holds(const snapshot *s, const snapshot *base, const char *text);
+
+/* Writes len bytes at guest address addr in s's guest memory. */
+void snapshot_poke(snapshot *s, uint32_t addr, const void *p, size_t len);
 
 /* The inventory: a module's file-scope state, by name, registered before
    main. SNAPSHOT_STATE(X) goes after X's definition, and a snapshot holds

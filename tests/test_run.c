@@ -9,6 +9,9 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <zlib.h>
+
+#include <CommonCrypto/CommonHMAC.h>
 
 #include "cgimage.h"
 #include "clip.h"
@@ -2582,4 +2585,116 @@ TEST(run_three_minutes_of_monster_fair_match_the_recording) {
        82 seconds of tryout time left. Minute 2: ball 2, 161,500 points, 33
        seconds left. Minute 3: TIME UP, GAME OVER. */
     CHECK_STR(got, "f0797114 9453e91a f7f53dc9 ef2e653a");
+}
+
+/* Changes byte at (from the start of the snapshot section) of the recording
+   at path, as a damaged file or a foreign baseline would; with sign, signs
+   the section again with this install's key (gamestart.h), so only the
+   byte is wrong. */
+static bool damage_section(const char *path, size_t at, bool sign) {
+    static uint8_t buf[8 << 20];
+    gzFile g = gzopen(path, "rb");
+    int n = g ? gzread(g, buf, sizeof buf) : -1;
+    if (g)
+        gzclose(g);
+    if (n < 16 || memcmp(buf + n - 8, "LWSTART6", 8) != 0)
+        return false;
+    uint64_t len = 0;
+    for (int b = 0; b < 8; b++)
+        len |= (uint64_t)buf[n - 16 + b] << (8 * b);
+    uint8_t *section = buf + (size_t)n - 16 - len;
+    section[at] ^= 0xFF;
+    if (sign) {
+        char key_path[1100];
+        snprintf(key_path, sizeof key_path, "%s/Library/Application Support/littlewing-shim/snapshot.key",
+                 getenv("HOME"));
+        size_t key_len = 0;
+        uint8_t *key = read_file(key_path, &key_len);
+        if (!key || key_len != CC_SHA256_DIGEST_LENGTH) {
+            free(key);
+            return false;
+        }
+        CCHmac(kCCHmacAlgSHA256, key, key_len, section, len - CC_SHA256_DIGEST_LENGTH,
+               section + len - CC_SHA256_DIGEST_LENGTH);
+        free(key);
+    }
+    g = gzopen(path, "wb6");
+    bool ok = g && gzwrite(g, buf, (unsigned)n) == n;
+    if (g && gzclose(g) != Z_OK)
+        ok = false;
+    return ok;
+}
+
+/* The preferences a replay in play_dir/data-name left. */
+static char *prefs_of(const char *play_dir, const char *name) {
+    char path[1200];
+    snprintf(path, sizeof path, "%s/data-%s/prefs.plist", play_dir, name);
+    return read_text(path);
+}
+
+/* A game recorded after the opening (gamestart.h): its first replay plays
+   from launch and keeps a snapshot of the game's start in the recording;
+   the second goes to the game's start from the baseline and plays on with
+   every frame check matching, to the same last frame and the same
+   preferences. Verifying, a replay from launch is the snapshot where it
+   was taken. A snapshot this install didn't sign, or whose baseline
+   doesn't match, is said not to fit, and replaced; LOONY_GAMESTART=0
+   neither uses one nor takes one. */
+TEST(run_a_recorded_game_starts_at_the_game_from_its_snapshot) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_SLOW();
+    char rec_dir[1024], play_dir[1024];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    static char out[7][65536];
+    int rec_status = record_one_game(rec_dir, true, out[0], sizeof out[0]);
+    uint32_t shot[6], wav[6];
+    int status[6];
+    status[0] = replay_hashed(play_dir, "first", out[1], sizeof out[1], &shot[0], &wav[0]);
+    status[1] = replay_hashed(play_dir, "second", out[2], sizeof out[2], &shot[1], &wav[1]);
+    setenv("LOONY_SNAPSHOT_VERIFY", "1", 1);
+    status[2] = replay_hashed(play_dir, "verify", out[3], sizeof out[3], &shot[2], &wav[2]);
+    unsetenv("LOONY_SNAPSHOT_VERIFY");
+    /* 8 + 16 + 32 + 16: the baseline's hash */
+    bool damaged = damage_section(replay_file, 72, false);
+    status[3] = replay_hashed(play_dir, "damaged", out[4], sizeof out[4], &shot[3], &wav[3]);
+    bool resigned = damage_section(replay_file, 72, true);
+    status[4] = replay_hashed(play_dir, "baseline", out[5], sizeof out[5], &shot[4], &wav[4]);
+    setenv("LOONY_GAMESTART", "0", 1);
+    status[5] = replay_hashed(play_dir, "off", out[6], sizeof out[6], &shot[5], &wav[5]);
+    unsetenv("LOONY_GAMESTART");
+    char *prefs[2] = {prefs_of(play_dir, "first"), prefs_of(play_dir, "second")};
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    for (int i = 0; i < 6; i++) {
+        CHECK_EQ(status[i], 0);
+        CHECK_CONTAINS(out[i + 1], "loony: replay: reached the end of the recording");
+        CHECK(!strstr(out[i + 1], "replay: desync"));
+        CHECK_EQ(frames_checked(out[i + 1]), frames_checked(out[1]));
+        CHECK_EQ(shot[i], shot[0]);
+    }
+    CHECK(shot[0] != 0);
+    CHECK_CONTAINS(out[1], "gamestart: kept a snapshot of the game's start at ");
+    CHECK(!strstr(out[1], "gamestart: going to"));
+    CHECK_CONTAINS(out[2], "gamestart: going to the game's start at ");
+    CHECK_CONTAINS(out[2], " from main, from 8.0");
+    CHECK(!strstr(out[2], "gamestart: kept"));
+    CHECK(prefs[0] && prefs[1]);
+    CHECK_STR(prefs[1], prefs[0]);
+    free(prefs[0]);
+    free(prefs[1]);
+    CHECK_CONTAINS(out[3], "gamestart: verify: decoded the recording's snapshot at the baseline");
+    CHECK_CONTAINS(out[3], " the replay from launch is the recording's snapshot");
+    CHECK_EQ(wav[2], wav[0]); /* from launch, it sounds the same */
+    CHECK(damaged);
+    CHECK_CONTAINS(out[4], "gamestart: the recording's snapshot can't be used: it wasn't taken by "
+                           "this install");
+    CHECK_CONTAINS(out[4], "; replaying from launch");
+    CHECK_CONTAINS(out[4], "gamestart: kept a snapshot of the game's start at ");
+    CHECK(resigned);
+    CHECK_CONTAINS(out[5], "gamestart: the recording's snapshot can't be used: the replay's baseline");
+    CHECK_CONTAINS(out[5], "gamestart: kept a snapshot of the game's start at ");
+    CHECK(!strstr(out[6], "gamestart:"));
+    CHECK_EQ(wav[5], wav[0]);
 }

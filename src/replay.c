@@ -1,8 +1,13 @@
 #include "replay.h"
 
 #include <CommonCrypto/CommonDigest.h>
+#include <copyfile.h>
+#include <ctype.h>
 #include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,6 +17,7 @@
 #include <unistd.h>
 #include <zlib.h>
 
+#include "cf.h"
 #include "files.h"
 #include "game.h"
 #include "snapshot.h"
@@ -19,12 +25,18 @@
 #include "util.h"
 
 #define MAGIC "LWREPLAY"
-/* The one format this program reads and writes. Format 5 logs where a game
-   starts and ends and where it is played (play.h), so each game can have a
-   file of its own, and is recorded with the menus' Microseconds and Delay(0)
-   spins waited out (misc.c). The prototype's formats 1 to 4 are not read. A
-   shared copy is format 5 with FLAG_SHARED. */
-#define FORMAT_VERSION 5
+/* The format this program writes. Format 5 logs where a game starts and
+   ends and where it is played (play.h), so each game can have a file of
+   its own, and is recorded with the menus' Microseconds and Delay(0) spins
+   waited out (misc.c). Format 6 is format 5 that may have a snapshot of
+   the game's start after its end record (gamestart.h), followed by the
+   trailer: the section's length (8 bytes, little-endian) and
+   SECTION_MAGIC. Both are read; the prototype's formats 1 to 4 are not. A
+   shared copy is either with FLAG_SHARED. */
+#define FORMAT_VERSION 6
+#define OLDEST_VERSION 5
+#define SECTION_MAGIC "LWSTART6"
+#define TRAILER 16
 #define FLAG_AUTO_ALERTS 1u
 #define FLAG_DST 2u    /* daylight saving time was on when the recording started */
 #define FLAG_SHARED 4u /* the license is out of the preferences */
@@ -108,13 +120,21 @@ static struct {
     size_t nmark_ticks;
     replay_span *spans; /* where it is played (REPLAY_PLAY records) */
     size_t nspans;
+    size_t records_at;    /* where the records start in data (the header's length) */
+    bool ended;           /* the records end with an end record */
+    const uint8_t *snap;  /* the snapshot section in data, or NULL */
+    size_t snap_len;
+    uint8_t identity[CC_SHA256_DIGEST_LENGTH]; /* replay_identity */
     void (*pace)(uint64_t clock_us);
     void (*end)(void);
 } R;
 
 /* A snapshot's walk (snapshot.h): the cursor, the step and the counts are
    the replay's; the file, what was parsed out of it, the recording's
-   buffers and the viewer's hooks are the host's, and stay as they are. */
+   buffers and the viewer's hooks are the host's, and stay as they are. The
+   header is the host's too, and the cursor is walked as where it is among
+   the records, so a snapshot of a recording fits its shared copy, whose
+   header differs (replay_identity). */
 static void snap_walk(snapshot_walker *w) {
     snapshot_bytes(w, &R, sizeof R);
     SNAPSHOT_HOST(w, R.header);
@@ -123,11 +143,25 @@ static void snap_walk(snapshot_walker *w) {
     SNAPSHOT_HOST(w, R.started_wall);
     SNAPSHOT_HOST(w, R.data);
     SNAPSHOT_HOST(w, R.in.data);
-    SNAPSHOT_HOST(w, R.h.prefs);
+    SNAPSHOT_HOST(w, R.in.len);
+    SNAPSHOT_HOST(w, R.h);
     SNAPSHOT_HOST(w, R.mark_ticks);
     SNAPSHOT_HOST(w, R.spans);
+    SNAPSHOT_HOST(w, R.records_at);
+    SNAPSHOT_HOST(w, R.snap);
+    SNAPSHOT_HOST(w, R.snap_len);
+    SNAPSHOT_HOST(w, R.identity);
     SNAPSHOT_HOST(w, R.pace);
     SNAPSHOT_HOST(w, R.end);
+    uint64_t pos = R.in.pos - R.records_at;
+    SNAPSHOT_HOST(w, R.in.pos);
+    snapshot_bytes(w, &pos, sizeof pos);
+    if (snapshot_loading(w)) {
+        if (pos > R.in.len - R.records_at)
+            fatal("snapshot: the replay is at byte %llu of its records, which are %zu bytes",
+                  (unsigned long long)pos, R.in.len - R.records_at);
+        R.in.pos = R.records_at + (size_t)pos;
+    }
 }
 SNAPSHOT_STATE_WALK(R, snap_walk)
 
@@ -301,6 +335,7 @@ typedef struct {
     replay_span *spans; /* where it is played, malloc'd */
     size_t nspans;
     uint64_t end_ms; /* the clock at the last record */
+    bool ended;      /* with an end record */
 } scan_result;
 
 /* Finds the marks and the spans of play in the records at c, so a clip
@@ -313,7 +348,11 @@ static void scan(cursor c, scan_result *out) {
     bool on = false;
     memset(&r, 0, sizeof r);
     memset(out, 0, sizeof *out);
-    while (parse_record(&c, &r) && r.kind != REPLAY_END) {
+    while (parse_record(&c, &r)) {
+        if (r.kind == REPLAY_END) {
+            out->ended = true;
+            break;
+        }
         if (r.kind == REPLAY_CLOCK) {
             clock_ms += r.v[0];
         } else if (r.kind == REPLAY_MARK) {
@@ -452,7 +491,7 @@ static bool parse_header(cursor *c, header *h, char *err, size_t errlen) {
     }
     if (!get_varint(c, &version))
         goto bad;
-    if (version < FORMAT_VERSION) {
+    if (version < OLDEST_VERSION) {
         snprintf(err, errlen, "the replay was recorded by an early prototype of LittleWing, "
                               "and this version can't play it");
         return false;
@@ -493,6 +532,54 @@ static const char *record_env(void) {
     return rec && *rec && strcmp(rec, "0") != 0 ? rec : NULL;
 }
 
+static uint8_t *with_license(const uint8_t *prefs, size_t len, plist_entry *from, uint32_t nfrom,
+                             size_t *out_len, char *err, size_t errlen);
+
+/* Where a decompressed file's records end: before its snapshot section,
+   which goes to *section (NULL for none) and *section_len. */
+static size_t split_section(const uint8_t *data, size_t len, const uint8_t **section,
+                            size_t *section_len) {
+    *section = NULL;
+    *section_len = 0;
+    if (len < 9 || data[8] < 6 || len < TRAILER || memcmp(data + len - 8, SECTION_MAGIC, 8) != 0)
+        return len;
+    uint64_t n = 0;
+    for (int b = 0; b < 8; b++)
+        n |= (uint64_t)data[len - TRAILER + b] << (8 * b);
+    if (n > len - TRAILER)
+        return len;
+    *section = data + len - TRAILER - n;
+    *section_len = (size_t)n;
+    return len - TRAILER - (size_t)n;
+}
+
+/* The identity of the recording whose header is h and whose records are
+   [records, records + len): a SHA-256 of everything a replay of it sees,
+   which a recording and its shared copy have alike (replay.h): the
+   header's fields but FLAG_SHARED, the preferences with the license
+   emptied, as a shared copy has them, and the records. */
+static void identity_of(const header *h, const uint8_t *records, size_t len, uint8_t *out) {
+    CC_SHA256_CTX c;
+    CC_SHA256_Init(&c);
+    uint8_t b[10];
+    CC_SHA256_Update(&c, "LWID", 4);
+    CC_SHA256_Update(&c, h->game_id, (CC_LONG)strlen(h->game_id) + 1);
+    CC_SHA256_Update(&c, h->sha, sizeof h->sha);
+    CC_SHA256_Update(&c, b, (CC_LONG)varint(b, h->flags & ~FLAG_SHARED));
+    CC_SHA256_Update(&c, b, (CC_LONG)varint(b, (uint64_t)h->start_unix));
+    CC_SHA256_Update(&c, b, (CC_LONG)varint(b, (uint32_t)h->gmtoff));
+    char err[256];
+    size_t plen = 0;
+    uint8_t *prefs =
+        h->prefs_len ? with_license(h->prefs, h->prefs_len, NULL, 0, &plen, err, sizeof err) : NULL;
+    CC_SHA256_Update(&c, b, (CC_LONG)varint(b, prefs ? plen : 0));
+    if (prefs)
+        CC_SHA256_Update(&c, prefs, (CC_LONG)plen);
+    free(prefs);
+    CC_SHA256_Update(&c, records, (CC_LONG)len);
+    CC_SHA256_Final(out, &c);
+}
+
 bool replay_open(char *err, size_t errlen) {
     const char *path = getenv("LOONY_REPLAY");
     if (!path || !*path)
@@ -508,14 +595,18 @@ bool replay_open(char *err, size_t errlen) {
         return false;
     }
     R.in.data = R.data;
+    R.in.len = split_section(R.data, R.in.len, &R.snap, &R.snap_len);
     if (!parse_header(&R.in, &R.h, err, errlen))
         return false;
+    R.records_at = R.in.pos;
     scan_result found;
     scan(R.in, &found);
     R.mark_ticks = found.mark_ticks;
     R.nmark_ticks = found.nmark_ticks;
     R.spans = found.spans;
     R.nspans = found.nspans;
+    R.ended = found.ended;
+    identity_of(&R.h, R.data + R.records_at, R.in.len - R.records_at, R.identity);
     R.loaded = true;
     const char *game = getenv("LOONY_GAME");
     if (!game || !*game)
@@ -679,6 +770,7 @@ static bool start_playing(const char *game_id, const uint8_t *sha, const char *d
         }
     }
     free(licensed);
+    cf_keep_out_of_snapshots(license_keys, NLICENSE_KEYS);
     read_next();
     R.mode = PLAYING;
     R.started_wall = wall_seconds();
@@ -867,6 +959,124 @@ bool replay_find_recording(const char *dir, const char *game_id, time_t when, ch
     return found;
 }
 
+/* Whether text, or text in capitals or in small letters, is in [p, p + n). */
+static bool mentions(const uint8_t *p, size_t n, const char *text) {
+    size_t len = strlen(text);
+    if (!len || len > 255)
+        return false;
+    char forms[3][256];
+    for (size_t i = 0; i <= len; i++) {
+        forms[0][i] = text[i];
+        forms[1][i] = (char)toupper((unsigned char)text[i]);
+        forms[2][i] = (char)tolower((unsigned char)text[i]);
+    }
+    for (int k = 0; k < 3; k++)
+        if (memmem(p, n, forms[k], len))
+            return true;
+    return false;
+}
+
+/* Whether [p, p + n) holds the license in h's preferences, or the one
+   this replay gave the game (cf_kept_out). */
+static bool holds_license(const uint8_t *p, size_t n, const header *h) {
+    plist_entry *e;
+    uint32_t ne;
+    char perr[256];
+    bool found = false;
+    if (h->prefs_len && plist_parse(h->prefs, h->prefs_len, &e, &ne, perr, sizeof perr) == PLIST_OK) {
+        for (size_t i = 0; i < NLICENSE_KEYS && !found; i++) {
+            plist_entry *k = find_entry(e, ne, license_keys[i]);
+            found = k && !k->is_number && mentions(p, n, k->str);
+        }
+        plist_free(e, ne);
+    }
+    for (size_t i = 0; i < NLICENSE_KEYS && !found; i++) {
+        const char *v = cf_kept_out(i);
+        found = v && mentions(p, n, v);
+    }
+    return found;
+}
+
+/* Writes a snapshot section and its trailer. */
+static bool write_section(gzFile f, const uint8_t *section, size_t len) {
+    uint8_t trailer[TRAILER];
+    for (int b = 0; b < 8; b++)
+        trailer[b] = (uint8_t)((uint64_t)len >> (8 * b));
+    memcpy(trailer + 8, SECTION_MAGIC, 8);
+    size_t done = 0;
+    while (done < len) { /* gzwrite takes an unsigned count */
+        unsigned n = len - done > (1u << 30) ? 1u << 30 : (unsigned)(len - done);
+        if (gzwrite(f, section + done, n) != (int)n)
+            return false;
+        done += n;
+    }
+    return gzwrite(f, trailer, TRAILER) == TRAILER;
+}
+
+const uint8_t *replay_snapshot(size_t *len) {
+    *len = R.snap_len;
+    return R.snap;
+}
+
+void replay_identity(uint8_t out[32]) { memcpy(out, R.identity, sizeof R.identity); }
+
+bool replay_set_snapshot(const uint8_t *section, size_t len) {
+    const char *path = getenv("LOONY_REPLAY");
+    if (R.mode != PLAYING || !path || !*path)
+        return false;
+    if (!R.ended) {
+        log_msg("replay: the recording has no end record, so no snapshot is kept in it");
+        return false;
+    }
+    if (holds_license(section, len, &R.h)) {
+        log_msg("replay: the snapshot of the game's start holds the license, so it isn't kept");
+        return false;
+    }
+    /* A hidden file beside it, renamed over it, with its mode, its extended
+       attributes and its last write kept, all before the rename, so no
+       moment shows another: that time says which high score it holds
+       (replay.h). The signals that end a replay wait until it is done, so
+       none leaves the hidden file behind. */
+    sigset_t ending, was;
+    sigemptyset(&ending);
+    sigaddset(&ending, SIGTERM);
+    sigaddset(&ending, SIGINT);
+    sigaddset(&ending, SIGHUP);
+    sigprocmask(SIG_BLOCK, &ending, &was);
+    struct stat st;
+    char tmp[PATH_MAX + 16];
+    const char *slash = strrchr(path, '/');
+    if (slash)
+        snprintf(tmp, sizeof tmp, "%.*s/.%s.XXXXXX", (int)(slash - path), path, slash + 1);
+    else
+        snprintf(tmp, sizeof tmp, ".%s.XXXXXX", path);
+    int fd = stat(path, &st) == 0 ? mkstemp(tmp) : -1;
+    if (fd < 0) {
+        log_msg("replay: can't keep the snapshot in %s: %s", path, strerror(errno));
+        sigprocmask(SIG_SETMASK, &was, NULL);
+        return false;
+    }
+    fchmod(fd, st.st_mode & 0777);
+    gzFile f = gzdopen(fd, "wb6");
+    uint8_t version = FORMAT_VERSION; /* the header as it is, but its format */
+    bool ok = f && gzwrite(f, R.data, 8) == 8 && gzwrite(f, &version, 1) == 1 &&
+              gzwrite(f, R.data + 9, (unsigned)(R.records_at - 9)) == (int)(R.records_at - 9) &&
+              gzwrite(f, R.data + R.records_at, (unsigned)(R.in.len - R.records_at)) ==
+                  (int)(R.in.len - R.records_at) &&
+              write_section(f, section, len);
+    if (f ? gzclose(f) != Z_OK : close(fd) != 0)
+        ok = false;
+    struct timespec times[2] = {st.st_atimespec, st.st_mtimespec};
+    ok = ok && copyfile(path, tmp, NULL, COPYFILE_XATTR | COPYFILE_SECURITY) == 0 &&
+         utimensat(AT_FDCWD, tmp, times, 0) == 0 && rename(tmp, path) == 0;
+    if (!ok) {
+        log_msg("replay: can't keep the snapshot in %s", path);
+        unlink(tmp);
+    }
+    sigprocmask(SIG_SETMASK, &was, NULL);
+    return ok;
+}
+
 bool replay_share(const char *src, const char *dst, char *err, size_t errlen) {
     size_t len;
     uint8_t *data = gunzip_file(src, &len);
@@ -874,7 +1084,9 @@ bool replay_share(const char *src, const char *dst, char *err, size_t errlen) {
         snprintf(err, errlen, "can't read %s", src);
         return false;
     }
-    cursor c = {data, len, 0};
+    const uint8_t *section;
+    size_t section_len, records_end = split_section(data, len, &section, &section_len);
+    cursor c = {data, records_end, 0};
     header h;
     uint8_t *prefs = NULL;
     size_t prefs_len = 0;
@@ -927,8 +1139,10 @@ bool replay_share(const char *src, const char *dst, char *err, size_t errlen) {
     ok = ok && gzwrite(f, b, (unsigned)varint(b, prefs_len)) > 0;
     ok = ok && (!prefs_len || gzwrite(f, prefs, (unsigned)prefs_len) == (int)prefs_len);
     /* The records as they are; a recording still being written stops where
-       it was last flushed, and the copy plays to there. */
-    size_t rest = len - c.pos;
+       it was last flushed, and the copy plays to there. Not the snapshot
+       of the game's start: only the install that took one uses it
+       (gamestart.h). */
+    size_t rest = records_end - c.pos;
     ok = ok && (!rest || gzwrite(f, data + c.pos, (unsigned)rest) == (int)rest);
     if (gzclose(f) != Z_OK)
         ok = false;
@@ -949,6 +1163,35 @@ fail:
     free(prefs);
     free(data);
     return false;
+}
+
+bool replay_file_snapshot(const char *path, uint8_t **section, size_t *len,
+                          uint8_t identity[32], char *err, size_t errlen) {
+    *section = NULL;
+    *len = 0;
+    size_t n;
+    uint8_t *data = gunzip_file(path, &n);
+    if (!data) {
+        snprintf(err, errlen, "it can't be read");
+        return false;
+    }
+    const uint8_t *snap;
+    size_t snap_len;
+    cursor c = {data, split_section(data, n, &snap, &snap_len), 0};
+    header h;
+    if (!parse_header(&c, &h, err, errlen)) {
+        free(data);
+        return false;
+    }
+    identity_of(&h, data + c.pos, c.len - c.pos, identity);
+    if (snap) {
+        if (!(*section = malloc(snap_len ? snap_len : 1)))
+            fatal("out of memory");
+        memcpy(*section, snap, snap_len);
+        *len = snap_len;
+    }
+    free(data);
+    return true;
 }
 
 bool replay_check(const char *path, char *err, size_t errlen) {
@@ -994,7 +1237,9 @@ bool replay_summarize(const char *path, replay_summary *out, char *err, size_t e
         snprintf(err, errlen, "it can't be read");
         return false;
     }
-    cursor c = {data, len, 0};
+    const uint8_t *section;
+    size_t section_len;
+    cursor c = {data, split_section(data, len, &section, &section_len), 0};
     header h;
     if (!parse_header(&c, &h, err, errlen)) {
         free(data);

@@ -55,8 +55,11 @@ void sound_monitor(bool on);
 
 /* Gets everything the mixer renders, in order from sound_init, as it is
    rendered (on the audio thread with a device), at the mixer's level like
-   LOONY_WAV. Can be set before sound_init. */
-typedef void (*sound_tap_fn)(const int16_t *samples, uint32_t frames);
+   LOONY_WAV. Can be set before sound_init. When the clock drives the sound
+   (no device), at is where the first frame is in the game's sound, counted
+   from sound_init: a replay that goes to a snapshot (gamestart.h) renders
+   from the snapshot's frame on, not from where it was. With a device, 0. */
+typedef void (*sound_tap_fn)(const int16_t *samples, uint32_t frames, uint64_t at);
 void sound_set_tap(sound_tap_fn fn);
 
 /* Renders up to now if clock-driven, then delivers the callbacks the queues

@@ -143,9 +143,9 @@ bool clip_on(void);
    passed; at a clip's end, finishes its file, and exits after the last. */
 void clip_present(bool dirty);
 
-/* The mixer's output, in order from launch (sound_set_tap): keeps what falls
-   in the clip. */
-void clip_sound(const int16_t *samples, uint32_t frames);
+/* The mixer's output (sound_set_tap), frames from frame at of the game's
+   sound: keeps what falls in the clip. */
+void clip_sound(const int16_t *samples, uint32_t frames, uint64_t at);
 
 /* LOONY_CLIP_PROGRESS's lines, without writing them: what (skipped, wrote,
    error) and text, the text's line breaks made spaces and the text cut

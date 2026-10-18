@@ -3,6 +3,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "snapshot.h"
+
 /* Seeking in a watched replay (#44): snapshots of the emulator
    (snapshot.h) taken as it plays, and a seek that puts back the nearest one
    at or before the time wanted, from where the viewer (watch.h) replays to
@@ -73,6 +75,15 @@ bool seek_snapshot_ahead(uint64_t after_us, uint64_t to_us);
    seek_unwound. Returns only if there is no snapshot to go to (and the
    seek is served as landing where the replay is). */
 void seek_serve_here(void);
+
+/* From a trap entry at depth 2, for the snapshot of the game's start
+   (gamestart.h): unwinds to main, where seek_reenter puts s back and runs
+   the game on from there, as a seek that can't be put back in place does.
+   Once it is back, the store forgets every snapshot it took (all of them
+   before s) and keeps s as its first, and landed is told, unless a seek
+   is waiting, which will say where it lands. s is the store's from then
+   on, or, when the store isn't started, kept until seek_reset. */
+_Noreturn void seek_enter(snapshot *s);
 
 /* Where a seek unwinds to: main calls setjmp(seek_unwound) before its guest
    call to the game's main, and seek_reenter when it returns there a second
