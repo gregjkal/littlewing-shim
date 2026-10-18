@@ -35,6 +35,7 @@
 #include "replay.h"
 #include "rsrc.h"
 #include "script.h"
+#include "seek.h"
 #include "settings.h"
 #include "sound.h"
 #include "trap.h"
@@ -183,11 +184,11 @@ static void restart_self(const char *why) {
 }
 
 /* The game ended by itself (ExitToShell, or its main returned). A watched
-   replay holds its last frame first. After a pick, and unless the host
+   replay holds its last frame first, and a seek from there goes back into
+   the game (seek.h) instead of returning. After a pick, and unless the host
    asked to quit or something failed, the preferences are saved and the
    process restarts itself to show the picker again. */
 static void back_to_picker(void) {
-    measure_game_ended(); /* Spike B may go back into the game first */
     watch_hold();
     if (!return_to_picker || events_quit_requested() || util_failed())
         return;
@@ -196,17 +197,6 @@ static void back_to_picker(void) {
     unsetenv("LOONY_REPLAY");
     unsetenv("LOONY_WATCH");
     restart_self("back to the picker");
-}
-
-/* Going back in a watched replay: the replay starts again in its save
-   folder (always LOONY_DATA_DIR on a replay), without the preferences it
-   wrote there, which it refuses to start over. */
-static void restart_watching(void) {
-    char prefs[PATH_MAX + 16];
-    snprintf(prefs, sizeof prefs, "%s/prefs.plist", getenv("LOONY_DATA_DIR"));
-    if (unlink(prefs) != 0 && errno != ENOENT)
-        log_msg("can't delete %s: %s", prefs, strerror(errno));
-    restart_self("watch: restarting the replay");
 }
 
 /* A recording opened from Finder, dropped on the window or chosen from the
@@ -418,7 +408,7 @@ int main(int argc, char **argv) {
     sound_start_output();
     if (watch_on()) {
         events_set_replay_key(watch_key);
-        watch_start(game->title, restart_watching);
+        watch_start(game->title);
         menu_add_replay();
         menu_note_recent(getenv("LOONY_REPLAY")); /* for File > Open Recent */
     }
@@ -457,8 +447,10 @@ int main(int argc, char **argv) {
         uint32_t args[4] = {1};
         libc_main_args(&args[1], &args[2], &args[3]);
         volatile uint32_t status = 0;
-        if (setjmp(measure_unwound) == 0) /* Spike B's way back from inside a trap */
+        if (setjmp(seek_unwound) == 0) /* where a seek unwinds to from inside a trap */
             status = guest_call(img.main_addr, 4, args);
+        else
+            seek_reenter();
         back_to_picker();
         log_msg("main returned %d", (int32_t)status);
         return 0;
@@ -476,8 +468,10 @@ int main(int argc, char **argv) {
     if (img.init_tvector)
         guest_call(img.init_tvector, 0, NULL);
     play_init(game->id, img.code_base, gm_r32(img.main_tvector + 4));
-    if (setjmp(measure_unwound) == 0) /* Spike B's way back from inside a trap */
+    if (setjmp(seek_unwound) == 0) /* where a seek unwinds to from inside a trap */
         guest_call(img.main_tvector, 0, NULL);
+    else
+        seek_reenter();
     back_to_picker();
     log_msg("main returned");
     return 0;

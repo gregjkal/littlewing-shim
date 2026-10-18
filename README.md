@@ -495,15 +495,21 @@ of the file, or adding one, renames none of the other clips' files, though
 clips that come to overlap, or stop overlapping, get new files. A recording in
 `recordings` with a `.clips` file is kept, like a marked one.
 
-Going ahead replays without pacing to the time. A replay only runs
-forward, so going back restarts the program, which replays from the start
-to the time wanted: the further into the game, the longer it takes (longer
-still in HD). The speed, a pause
-and a clip's start carry over. At the end of the replay, or when the game
-quits, the last frame stays up until you close the window. At 1x each
-minute of play logs how long it took on the wall clock: within a few
-milliseconds. The keys of a `LOONY_SCRIPT` go to the viewer too (`60 down
-i`), until a restart.
+Going ahead replays without pacing to the time. Going back is near
+instant: while you watch, the viewer keeps a snapshot of the emulator every
+5 seconds of the game's clock, puts back the last one before the time
+wanted, and replays the few seconds from there without pacing. Going ahead
+after going back uses them too. The window stays open, the speed, a pause
+and a clip's start stay as they were, and an export goes on. It works from
+the end of the replay too, after the game has quit. Snapshots take about a
+megabyte each and stay in memory while the viewer runs; past 120 the
+oldest are thinned out, so early in a long game they end up 10 or 20
+seconds apart. At the end of the replay, or when the game quits, the last
+frame stays up until you close the window or go back. At 1x each minute of
+play logs how long it took on the wall clock: within a few milliseconds.
+The keys of a `LOONY_SCRIPT` go to the viewer too (`60 down i`), at the
+replay's ticks, so after going back the next one comes when the replay
+gets there again; headless, the ones left at the end come at once.
 
 #### Exporting from the viewer
 

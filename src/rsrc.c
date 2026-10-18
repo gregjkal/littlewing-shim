@@ -7,7 +7,7 @@
 #include <strings.h>
 
 #include "guest_mem.h"
-#include "measure.h"
+#include "snapshot.h"
 #include "memmgr.h"
 #include "trap.h"
 #include "util.h"
@@ -20,10 +20,10 @@ static struct {
     int16_t error; /* ResError */
 } R;
 
-/* Spike A's copy (measure.h): R and its entries, which hold the guest
+/* A snapshot's copy (snapshot.h): R and its entries, which hold the guest
    handle each loaded resource is in. The fork is parsed once, so the
    entries stay where they are. */
-static void *spike_save(void) {
+static void *snap_save(void) {
     size_t len = sizeof R + R.n * sizeof *R.entries;
     uint8_t *copy = malloc(len ? len : 1);
     if (!copy)
@@ -34,13 +34,14 @@ static void *spike_save(void) {
     return copy;
 }
 
-static void spike_load(void *copy) {
+static void snap_load(const void *copy) {
     memcpy(&R, copy, sizeof R);
     if (R.n)
-        memcpy(R.entries, (uint8_t *)copy + sizeof R, R.n * sizeof *R.entries);
-    free(copy);
+        memcpy(R.entries, (const uint8_t *)copy + sizeof R, R.n * sizeof *R.entries);
 }
-MEASURE_STATE_WITH(R, spike_save, spike_load)
+
+static void snap_drop(void *copy) { free(copy); }
+SNAPSHOT_STATE_WITH(R, snap_save, snap_load, snap_drop)
 
 static bool fail(char *err, size_t errlen, const char *fmt, ...)
     __attribute__((format(printf, 3, 4)));

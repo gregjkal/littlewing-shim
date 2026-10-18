@@ -3,7 +3,7 @@
 #include <string.h>
 
 #include "guest_mem.h"
-#include "measure.h"
+#include "snapshot.h"
 #include "misc.h"
 #include "qd.h"
 #include "trap.h"
@@ -22,7 +22,7 @@ static struct {
     int nmodes;
     int captured; /* captures not yet released */
 } G;
-MEASURE_STATE(G)
+SNAPSHOT_STATE(G)
 
 void cgdisplay_init(void) {
     memset(&G, 0, sizeof G);

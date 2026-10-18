@@ -5,7 +5,7 @@
 #include <string.h>
 
 #include "guest_mem.h"
-#include "measure.h"
+#include "snapshot.h"
 #include "memmgr.h"
 #include "misc.h"
 #include "mixer.h"
@@ -37,7 +37,33 @@ static struct {
     int volume;
     sound_tap_fn tap;
 } SND = {.volume = SOUND_DEFAULT_VOLUME};
-MEASURE_STATE(SND)
+
+/* A snapshot's copy (snapshot.h): SND, but putting it back keeps what is
+   the host's and not the game's: the streams, the volume, a recording of
+   the output, the tap, and the wall clock spent rendering. */
+static void *snap_save(void) {
+    typeof(SND) *copy = malloc(sizeof SND);
+    if (!copy)
+        fatal("out of memory");
+    memcpy(copy, &SND, sizeof SND);
+    return copy;
+}
+
+static void snap_load(const void *copy) {
+    typeof(SND) host = SND;
+    memcpy(&SND, copy, sizeof SND);
+    SND.stream = host.stream;
+    SND.monitor = host.monitor;
+    SND.monitor_on = host.monitor_on;
+    SND.render_seconds = host.render_seconds;
+    SND.wav = host.wav;
+    SND.recording = host.recording;
+    SND.volume = host.volume;
+    SND.tap = host.tap;
+}
+
+static void snap_drop(void *copy) { free(copy); }
+SNAPSHOT_STATE_WITH(SND, snap_save, snap_load, snap_drop)
 
 /* The audio thread holds the stream's lock while it renders. */
 static void lock(void) {

@@ -5,7 +5,7 @@
 
 #include "cpu.h"
 #include "guest_mem.h"
-#include "measure.h"
+#include "snapshot.h"
 #include "replay.h"
 #include "util.h"
 
@@ -37,7 +37,7 @@ static struct {
     bool reset;   /* Event_ResetGame threw a suspended game away */
     bool in_game, playing;
 } P;
-MEASURE_STATE(P)
+SNAPSHOT_STATE(P)
 
 void play_reset(void) { memset(&P, 0, sizeof P); }
 

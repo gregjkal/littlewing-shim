@@ -65,7 +65,7 @@ static void child_press_keys(void *unused) {
     setenv("LOONY_REPLAY", "game.lwreplay", 1);
     if (!watch_open(err, sizeof err))
         _exit(1);
-    watch_start("Game", NULL);
+    watch_start("Game");
     watch_key(SDL_SCANCODE_K, true, false);
     watch_key(SDL_SCANCODE_K, true, true);   /* held: no change */
     watch_key(SDL_SCANCODE_K, false, false); /* released */

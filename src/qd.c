@@ -6,7 +6,7 @@
 #include "events.h"
 #include "guest_mem.h"
 #include "hd.h"
-#include "measure.h"
+#include "snapshot.h"
 #include "memmgr.h"
 #include "pict.h"
 #include "rsrc.h"
@@ -37,7 +37,7 @@ static struct {
     bool direct;          /* qd_set_direct_drawing */
     bool window_sized;    /* CreateNewWindow has sized the screen */
 } Q;
-MEASURE_STATE(Q)
+SNAPSHOT_STATE(Q)
 
 /* ---- guest structure helpers ---- */
 

@@ -14,11 +14,13 @@
 
 #include "clip.h"
 #include "display.h"
+#include "events.h"
 #include "export.h"
 #include "hd.h"
 #include "menu.h"
 #include "qd.h"
 #include "replay.h"
+#include "seek.h"
 #include "sound.h"
 #include "util.h"
 
@@ -49,10 +51,11 @@ static const int speeds[] = {1, 2, 4, 8, 0};
 static struct {
     bool on, started, at_end;
     const char *title;
-    void (*restart)(void);
     int speed; /* in speeds */
     bool paused;
     bool going; /* to from, without pacing or drawing every frame */
+    bool seeking; /* to from, through a seek not served yet (seek.h), the same way */
+    unsigned seek_generation; /* that seek's */
     uint32_t from;
     bool skipping; /* what isn't play, without pacing, drawing or sound */
     bool have_in;
@@ -113,11 +116,12 @@ static void set_title(void) {
     if (W.have_in)
         snprintf(in, sizeof in, ", clip from %s", fmt_seconds(W.in, u, sizeof u));
     const replay_span *spans;
-    if (W.going && replay_play_spans(&spans) && W.clock_us < spans[0].on_us)
+    bool going = W.going || W.seeking;
+    if (going && replay_play_spans(&spans) && W.clock_us < spans[0].on_us)
         snprintf(text, sizeof text, "%s: replaying what came before the game, %s of %s", title,
                  fmt_seconds(tick_of(W.clock_us), t, sizeof t),
                  fmt_seconds(tick_of(spans[0].on_us), u, sizeof u));
-    else if (W.going)
+    else if (going)
         snprintf(text, sizeof text, "%s: going to %s (at %s)%s", title,
                  fmt_seconds(W.from, u, sizeof u), t, in);
     else if (W.at_end)
@@ -173,7 +177,7 @@ void watch_present(bool dirty) {
     W.pending |= dirty;
     if (!W.pending)
         return;
-    bool unpaced = W.going || W.skipping;
+    bool going = W.going || W.seeking, unpaced = going || W.skipping;
     if (dirty && unpaced)
         W.stretch_presents++;
     int speed = speeds[W.speed];
@@ -181,7 +185,7 @@ void watch_present(bool dirty) {
     double lag = W.paused || !speed
                      ? 0
                      : now - (W.anchor_wall + (double)(W.clock_us - W.anchor_us) / 1e6 / speed);
-    if (!W.skipping && watch_draws(now - W.drawn, lag, speed, W.going)) {
+    if (!W.skipping && watch_draws(now - W.drawn, lag, speed, going)) {
         draw();
         if (unpaced)
             W.stretch_draw += W.drawn - now;
@@ -208,7 +212,7 @@ static void idle(void) {
 /* ---- pacing ---- */
 
 static bool sound_on(void) {
-    return speeds[W.speed] == 1 && !W.paused && !W.going && !W.skipping && !W.at_end;
+    return speeds[W.speed] == 1 && !W.paused && !W.going && !W.seeking && !W.skipping && !W.at_end;
 }
 
 /* The wall clock and the replay's clock line up from now. */
@@ -266,6 +270,11 @@ static void poll_now_and_then(void) {
 /* The replay's clock is about to move to clock_us: waits until the wall
    clock has reached it at this speed. What isn't play goes by unpaced. */
 static void pace(uint64_t clock_us) {
+    if (W.seeking) { /* to the next trap entry where the seek is served */
+        W.clock_us = clock_us;
+        poll_now_and_then();
+        return;
+    }
     uint64_t next_on;
     bool in_play = replay_in_play(clock_us, &next_on);
     if (W.going) {
@@ -303,7 +312,7 @@ static void pace(uint64_t clock_us) {
         anchor();
     }
     for (;;) {
-        if (W.going) /* L while waiting: from the next clock on; paused or not, it goes */
+        if (W.going || W.seeking) /* J or L while waiting: paused or not, it goes */
             break;
         if (W.paused) {
             idle();
@@ -355,49 +364,64 @@ static void set_speed(int i) {
         log_msg("watch: as fast as it can");
 }
 
-/* Goes back to tick: restarts the program, which goes there. */
-static _Noreturn void go_back(uint32_t tick) {
-    char v[32], t[32];
-    if (W.going || W.skipping)
-        log_stretch("the last stretch, unpaced");
-    else
-        log_run("the last stretch");
-    log_msg("watch: back to %s: restarting", clip_format_time(tick, t, sizeof t));
-    snprintf(v, sizeof v, "%u", tick);
-    setenv("LOONY_WATCH_FROM", v, 1);
-    snprintf(v, sizeof v, "%d", speeds[W.speed]);
-    setenv("LOONY_WATCH_SPEED", v, 1);
-    if (W.paused)
-        setenv("LOONY_WATCH_PAUSED", "1", 1);
-    else
-        unsetenv("LOONY_WATCH_PAUSED");
-    if (W.have_in) {
-        snprintf(v, sizeof v, "%u", W.in);
-        setenv("LOONY_WATCH_IN", v, 1);
-    } else {
-        unsetenv("LOONY_WATCH_IN");
+/* Goes to tick through a seek (seek.h): the replay runs unpaced to where it
+   is served, and from the snapshot put back there to tick. */
+static void seek_tick(uint32_t tick, bool back) {
+    char t[32];
+    if (!W.seeking) {
+        if (W.going || W.skipping)
+            log_stretch("the last stretch, unpaced");
+        else
+            log_run("the last stretch");
+        begin_stretch();
     }
-    unsetenv("LOONY_SCRIPT");
+    log_msg("watch: %s %s", back ? "back to" : "going to", clip_format_time(tick, t, sizeof t));
+    W.from = tick;
+    W.seeking = true;
+    W.going = W.skipping = false;
+    W.seek_generation = seek_to(replay_clock_us((uint64_t)tick * 1000000 / 60));
     sound_monitor(false);
-    if (export_running())
-        log_msg("watch: the export goes on through the restart");
-    export_pass_on();
-    W.restart();
-    fatal("watch: can't restart to go back");
+}
+
+/* A seek was served (seek.h): the replay's clock is at clock_us, from a
+   snapshot put back (restored) or where it was. From there it goes on to
+   the time wanted, unpaced, keeping the pause and the speed. */
+static void landed(uint64_t clock_us, bool restored, unsigned generation) {
+    if (generation != W.seek_generation) /* a newer one is pending */
+        return;
+    W.seeking = false;
+    if (restored) {
+        W.clock_us = clock_us;
+        W.at_end = false;
+        W.pending = true; /* the screen put back is drawn, whether the game draws or not */
+        begin_stretch(); /* from the snapshot's clock */
+    }
+    uint64_t next_on;
+    W.going = !W.at_end && (W.from > now_tick() || !replay_in_play(W.clock_us, &next_on));
+    if (!W.going) {
+        char t[32], what[64];
+        snprintf(what, sizeof what, "went to %s", clip_format_time(now_tick(), t, sizeof t));
+        log_stretch(what);
+        log_msg("watch: reached %s", t);
+        anchor();
+    }
+    sound_monitor(sound_on());
+    update_title();
 }
 
 /* J and L: by step ticks back (step < 0) or ahead, from the time going to
-   while going. */
+   while going. Back, or ahead past a snapshot, goes through a seek. */
 static void step_by(int64_t step) {
-    int64_t to = (int64_t)(W.going ? W.from : now_tick()) + step;
+    int64_t to = (int64_t)(W.going || W.seeking ? W.from : now_tick()) + step;
     uint32_t tick = to < 0 ? 0 : to > UINT32_MAX ? UINT32_MAX : (uint32_t)to;
-    if (tick < now_tick()) {
-        if (W.restart)
-            go_back(tick);
+    bool back = tick < now_tick();
+    if (W.at_end && !back) /* nothing ahead */
+        return;
+    if (back || W.seeking ||
+        seek_snapshot_ahead(W.clock_us, replay_clock_us((uint64_t)tick * 1000000 / 60))) {
+        seek_tick(tick, back);
         return;
     }
-    if (W.at_end) /* nothing ahead */
-        return;
     char t[32];
     log_msg("watch: going to %s", clip_format_time(tick, t, sizeof t));
     W.from = tick;
@@ -706,7 +730,7 @@ bool watch_open(char *err, size_t errlen) {
 }
 
 static void log_at_exit(void) {
-    if (W.going || W.skipping)
+    if (W.going || W.seeking || W.skipping)
         log_stretch("the last stretch, unpaced");
     else if (!W.paused && !W.at_end) /* logged already */
         log_run("the last stretch");
@@ -714,14 +738,14 @@ static void log_at_exit(void) {
 
 static void held_at_end(void) { watch_hold(); }
 
-void watch_start(const char *title, void (*restart)(void)) {
+void watch_start(const char *title) {
     if (!W.on)
         return;
     W.title = title;
-    W.restart = restart;
     W.started = true;
     replay_set_pace(pace);
     replay_set_end(held_at_end);
+    seek_start(landed);
     display_raise_on_open();
     sound_open_monitor();
     atexit(log_at_exit);
@@ -743,7 +767,7 @@ void watch_start(const char *title, void (*restart)(void)) {
 void watch_hold(void) {
     if (!W.started || W.at_end)
         return;
-    if (W.going || W.skipping)
+    if (W.going || W.seeking || W.skipping)
         log_stretch("the stretch to the end, unpaced");
     else
         log_run("the last stretch");
@@ -751,6 +775,11 @@ void watch_hold(void) {
     W.going = W.skipping = false;
     const char *video = getenv("SDL_VIDEO_DRIVER");
     if (video && strcmp(video, "dummy") == 0) { /* headless: nobody to close the window */
+        /* or to press a key but the script, whose actions left come now */
+        while (!W.seeking && events_script_rest())
+            ;
+        if (W.seeking)
+            seek_serve_here(); /* back into the game, unless there's nowhere to go */
         if (export_running())
             log_msg("watch: the end: waiting for the export");
         while (export_running()) /* so a scripted run ends with it done */
@@ -760,6 +789,9 @@ void watch_hold(void) {
     sound_monitor(false);
     char t[32];
     log_msg("watch: the end, at %s: close the window to quit", clip_format_time(now_tick(), t, sizeof t));
-    for (;;)
+    for (;;) {
+        if (W.seeking)
+            seek_serve_here(); /* back into the game, unless there's nowhere to go */
         idle();
+    }
 }
