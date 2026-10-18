@@ -146,6 +146,27 @@ void events_pump(void);
 /* Number of timers installed and not removed. */
 int events_active_timers(void);
 
+/* For Spike B (measure.h): the host frames above a handler that
+   RunApplicationEventLoop dispatched an event to, which a snapshot taken
+   inside the handler needs in order to rebuild them. */
+typedef struct {
+    int slot;          /* the event's slot */
+    uint32_t chain[2]; /* the targets dispatch tries, in order */
+    int nchain, link;  /* how many, and which one it is on */
+    int handler;       /* the handler's index among those installed */
+    int loop_depth;    /* the loop depth call_out hides while it runs */
+} ev_frame;
+
+/* True, filling *f, while the run loop's dispatch has a handler running:
+   the guest call at depth 2, if the run loop is at depth 1. */
+bool events_loop_frame(ev_frame *f);
+
+/* The next RunApplicationEventLoop call goes back into the dispatch f
+   describes instead of starting: it runs call, which stands for the guest
+   call to handler f->handler and returns what that returned, then finishes
+   the dispatch and runs on as if it had never left. */
+void events_resume_loop(const ev_frame *f, uint32_t (*call)(void));
+
 /* Registers NewEventHandlerUPP, GetApplicationEventTarget,
    GetEventDispatcherTarget, GetWindowEventTarget, InstallEventHandler,
    InstallStandardEventHandler, NewEventLoopTimerUPP, GetMainEventLoop,

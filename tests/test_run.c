@@ -1198,6 +1198,92 @@ TEST(run_spike_a_restores_a_game_in_place) {
     }
 }
 
+static void run_loony_replaying_spike_b(void *unused) {
+    setenv("LOONY_SPIKE_B", "45", 1);
+    run_loony_replaying(unused);
+}
+
+/* Spike B (measure.h) on a recording of one game from the menu, with the
+   soak script's keys until tick 7000 and none after, so the game ends by
+   itself (at tick 8750 or so) and the recording ends between games at
+   tick 10200: by quitting (quit) or with LOONY_EXIT_AFTER. The replay
+   captures at 45 s, inside the game, and goes back there from the end.
+   out[0] is the recording's log, out[1] the replay's; status likewise. */
+static void spike_b_round_trip(bool quit, char out[2][32768], int status[2]) {
+    char rec_dir[1024], play_dir[1024], script[16384] = "";
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    int t = 1700;
+    const char *menu[4] = {"esc", "esc", "return", "return"};
+    for (int i = 0; i < 4; i++, t += 90) {
+        size_t len = strlen(script);
+        snprintf(script + len, sizeof script - len, "%d down %s\n%d up %s\n", t, menu[i], t + 4,
+                 menu[i]);
+    }
+    while (t < 7000) {
+        size_t len = strlen(script);
+        snprintf(script + len, sizeof script - len, "%d down return\n%d up return\n", t, t + 80);
+        for (int i = 0, k = (t += 120); i < 12; i++, k += 25) {
+            const char *key = i % 2 ? "slash" : "z";
+            len = strlen(script);
+            snprintf(script + len, sizeof script - len, "%d down %s\n%d up %s\n", k, key, k + 8,
+                     key);
+        }
+        t += 12 * 25;
+    }
+    if (quit)
+        strcat(script, "10200 quit\n");
+    else
+        setenv("LOONY_EXIT_AFTER", "10200", 1);
+    status[0] = record_for_clips(rec_dir, script, out[0], sizeof out[0]);
+    unsetenv("LOONY_EXIT_AFTER");
+    snprintf(run_data, sizeof run_data, "%s/data", play_dir);
+    status[1] = test_run_child(run_loony_replaying_spike_b, NULL, out[1], sizeof out[1]);
+    run_data[0] = '\0';
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+}
+
+/* What both ends share: the replay captured inside the game, unwound to
+   main at the end and went back in, the game's handler returned to the
+   rebuilt run loop, and the replay reached its end a second time with
+   every frame check matching. */
+static bool spike_b_went_back(const char *out) {
+    const char *back = strstr(out, "spike B: re-entering from main");
+    const char *returned = back ? strstr(back, "spike B: the handler returned 0 to the run loop") : NULL;
+    const char *end = returned ? strstr(returned, "loony: replay: reached the end of the recording") : NULL;
+    return strstr(out, "spike B: captured at 45.") && strstr(out, "spike B: the game ended inside") &&
+           end && !strstr(out, "replay: desync") && !strstr(out, "spike B: never");
+}
+
+/* Spike B from Loony's own end: the quit Apple Event's handler leaves the
+   run loop and main calls ExitToShell, at depth 1. */
+TEST(run_spike_b_goes_back_into_a_game_from_exit_to_shell) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_SLOW();
+    char out[2][32768];
+    int status[2];
+    spike_b_round_trip(true, out, status);
+    CHECK_EQ(status[0], 0);
+    CHECK_EQ(status[1], 0);
+    CHECK_CONTAINS(out[1], "spike B: the game ended inside #74 ExitToShell at depth 1");
+    CHECK(spike_b_went_back(out[1]));
+}
+
+/* Spike B from the end of the recording, which fires inside a trap of the
+   run loop between games. */
+TEST(run_spike_b_goes_back_into_a_game_from_the_end_of_the_recording) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_SLOW();
+    char out[2][32768];
+    int status[2];
+    spike_b_round_trip(false, out, status);
+    CHECK_EQ(status[0], 0);
+    CHECK_EQ(status[1], 0);
+    CHECK_CONTAINS(out[1], "loony: replay: exiting where the recording stopped");
+    CHECK(spike_b_went_back(out[1]));
+}
+
 /* The file the first clip in rec_dir/game.clips is exported to, or "". */
 static void first_clip_file(const char *rec_dir, char *out, size_t cap) {
     char list[1100], err[256];

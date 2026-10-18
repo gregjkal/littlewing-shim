@@ -66,6 +66,21 @@ uint32_t trap_call_target(int depth);
 typedef uint32_t (*trap_entry_fn)(uint32_t index);
 void trap_on_entry(trap_entry_fn fn);
 
+/* For Spike B (measure.h). trap_level: the trap the guest_call at depth is
+   dispatching (or last dispatched) and where the guest goes on after it;
+   false at a depth with no guest_call. trap_unwind: after a longjmp out of
+   every guest_call, frees the contexts they saved and sets the depth to 0.
+   guest_resume: a guest_call that rebuilds a level instead of starting a
+   call. It takes the level as a snapshot held it: the function it called,
+   outer (the context it saved, which it restores on return, copied), and
+   cpu (the CPU when the guest stopped at trap index with resume in the link
+   register, loaded). It dispatches that trap, runs on as guest_call does,
+   and returns the guest's r3. */
+bool trap_level(int depth, uint32_t *index, uint32_t *resume);
+void trap_unwind(void);
+uint32_t guest_resume(uint32_t code, const cpu_context *outer, const cpu_context *cpu,
+                      uint32_t index, uint32_t resume);
+
 /* Prints a crash report (message, registers, depth, recent imports) and exits 2. */
 _Noreturn void trap_crash(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
