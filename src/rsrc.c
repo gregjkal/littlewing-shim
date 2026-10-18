@@ -20,28 +20,26 @@ static struct {
     int16_t error; /* ResError */
 } R;
 
-/* A snapshot's copy (snapshot.h): R and its entries, which hold the guest
-   handle each loaded resource is in. The fork is parsed once, so the
-   entries stay where they are. */
-static void *snap_save(void) {
-    size_t len = sizeof R + R.n * sizeof *R.entries;
-    uint8_t *copy = malloc(len ? len : 1);
-    if (!copy)
-        fatal("out of memory");
-    memcpy(copy, &R, sizeof R);
-    if (R.n)
-        memcpy(copy + sizeof R, R.entries, R.n * sizeof *R.entries);
-    return copy;
+/* A snapshot's walk (snapshot.h): ResError and the guest handle each
+   loaded resource is in. The fork is parsed once, so what was parsed out
+   of it is the host's and stays where it is; the count of entries is
+   walked to check that. */
+static void snap_walk(snapshot_walker *w) {
+    snapshot_bytes(w, &R, sizeof R);
+    SNAPSHOT_HOST(w, R.fork);
+    SNAPSHOT_HOST(w, R.entries);
+    uint32_t n = R.n, ntypes = R.ntypes;
+    SNAPSHOT_HOST(w, R.n);
+    SNAPSHOT_HOST(w, R.ntypes);
+    snapshot_bytes(w, &n, sizeof n);
+    snapshot_bytes(w, &ntypes, sizeof ntypes);
+    if (n != R.n || ntypes != R.ntypes)
+        fatal("snapshot: the resource fork has %u entries of %u types, and the snapshot %u of %u",
+              R.n, R.ntypes, n, ntypes);
+    for (uint32_t i = 0; i < R.n; i++)
+        snapshot_bytes(w, &R.entries[i].handle, sizeof R.entries[i].handle);
 }
-
-static void snap_load(const void *copy) {
-    memcpy(&R, copy, sizeof R);
-    if (R.n)
-        memcpy(R.entries, (const uint8_t *)copy + sizeof R, R.n * sizeof *R.entries);
-}
-
-static void snap_drop(void *copy) { free(copy); }
-SNAPSHOT_STATE_WITH(R, snap_save, snap_load, snap_drop)
+SNAPSHOT_STATE_WALK(R, snap_walk)
 
 static bool fail(char *err, size_t errlen, const char *fmt, ...)
     __attribute__((format(printf, 3, 4)));

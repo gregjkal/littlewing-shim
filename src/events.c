@@ -85,7 +85,18 @@ static struct {
     void (*replay_key)(int scancode, bool down, bool repeat);
     bool warned_full;
 } E;
-SNAPSHOT_STATE(E)
+
+/* A snapshot's walk (snapshot.h): the shim's hooks are the host's. The
+   modal sink is dialogs' or none, and follows its dialogs. */
+static void snap_walk(snapshot_walker *w) {
+    snapshot_bytes(w, &E, sizeof E);
+    SNAPSHOT_HOST(w, E.present);
+    SNAPSHOT_HOST(w, E.poll);
+    SNAPSHOT_HOST(w, E.screenshot);
+    SNAPSHOT_HOST(w, E.cursor);
+    SNAPSHOT_HOST(w, E.replay_key);
+}
+SNAPSHOT_STATE_WALK(E, snap_walk)
 
 /* Outside E, which a snapshot copies back whole, since they describe the
    host stack (events.h): the run loop's frame in progress (a dispatch, or

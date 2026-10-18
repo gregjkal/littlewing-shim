@@ -223,57 +223,35 @@ void mix_render(int16_t *out, uint32_t frames) {
     }
 }
 
-/* A snapshot's copy of the mixer (snapshot.h): the channels with every
-   sound they own copied too, since a sound that ends is freed. */
-static mix_sound *clone_sound(const mix_sound *s) {
-    if (!s)
-        return NULL;
-    mix_sound *c = mix_sound_new(s->frames, s->nch, s->rate);
-    if (!c)
-        fatal("out of memory");
-    memcpy(c->samples, s->samples, (size_t)s->frames * (size_t)s->nch * sizeof *s->samples);
-    return c;
+/* A snapshot's walk of the mixer (snapshot.h): the channels with every
+   sound they own, since a sound that ends is freed. A queue's slots
+   outside its ring hold nothing. */
+static void walk_sound(snapshot_walker *w, mix_sound **s) {
+    SNAPSHOT_OWNED(w, *s, 1);
+    if (*s) /* mix_sound_new's one more sample */
+        SNAPSHOT_OWNED(w, (*s)->samples, (size_t)(*s)->frames * (size_t)(*s)->nch + 1);
 }
 
-/* Gives each of x's channels copies of the sounds it holds. */
-static void clone_sounds(typeof(X) *x) {
+static void snap_walk(snapshot_walker *w) {
+    if (snapshot_loading(w))
+        for (int i = 0; i < MIX_CHANNELS; i++) {
+            free_queue(&X.ch[i]);
+            stop(&X.ch[i]);
+        }
+    snapshot_bytes(w, &X, sizeof X);
     for (int i = 0; i < MIX_CHANNELS; i++) {
-        channel *c = &x->ch[i];
-        c->voice = clone_sound(c->voice);
-        for (int k = 0; k < c->count; k++) {
+        channel *c = &X.ch[i];
+        walk_sound(w, &c->voice);
+        for (int k = 0; k < MIX_QUEUE_LEN; k++) {
             mix_cmd *m = &c->queue[(c->head + k) % MIX_QUEUE_LEN];
-            m->sound = clone_sound(m->sound);
+            if (k < c->count)
+                walk_sound(w, &m->sound);
+            else
+                SNAPSHOT_REBUILT(w, m->sound);
         }
     }
 }
-
-static void free_sounds(typeof(X) *x) {
-    for (int i = 0; i < MIX_CHANNELS; i++) {
-        free_queue(&x->ch[i]);
-        stop(&x->ch[i]);
-    }
-}
-
-static void *snap_save(void) {
-    typeof(X) *copy = malloc(sizeof X);
-    if (!copy)
-        fatal("out of memory");
-    memcpy(copy, &X, sizeof X);
-    clone_sounds(copy);
-    return copy;
-}
-
-static void snap_load(const void *copy) {
-    free_sounds(&X);
-    memcpy(&X, copy, sizeof X);
-    clone_sounds(&X); /* the copy keeps its own */
-}
-
-static void snap_drop(void *copy) {
-    free_sounds(copy);
-    free(copy);
-}
-SNAPSHOT_STATE_WITH(X, snap_save, snap_load, snap_drop)
+SNAPSHOT_STATE_WALK(X, snap_walk)
 
 bool mix_take_callback(mix_callback *cb) {
     if (X.cb_count == 0)

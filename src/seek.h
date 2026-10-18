@@ -31,15 +31,30 @@
    which way and what it took.
 
    Where no trap entry at depth 2 will come again (the replay's or the
-   game's end), seek_serve_here serves the seek by unwinding to main. */
+   game's end), seek_serve_here serves the seek by unwinding to main.
+
+   Verifying (LOONY_SNAPSHOT_VERIFY=1). Each snapshot, once taken, is put
+   back at once in place and compared with the emulator (snapshot_verify),
+   which catches a walk that loads something other than what it saved. And
+   once a seek has put one back, the replay is compared with each snapshot
+   after it as it comes to the trap entry where that one was taken
+   (trap_entries), which catches state no snapshot holds, before the frame
+   checks would. A difference is fatal and names the parts that differ. A
+   replay that isn't watched takes snapshots too while verifying, so its
+   output can be compared with one that takes none. */
 
 #define SEEK_SPACING_US 5000000ull
 #define SEEK_MAX_SNAPSHOTS 120
 
-/* Once watching: starts taking snapshots and serving seeks. landed is
-   called when a seek has been served, with the replay's clock (from the
-   snapshot put back, or where the replay is when none was), whether one
-   was put back, and the seek's generation (seek_to's). */
+/* Before seek_start: reads LOONY_SNAPSHOT_VERIFY. */
+void seek_init(void);
+bool seek_verifying(void);
+
+/* Once watching, or replaying while verifying: starts taking snapshots and
+   serving seeks. landed is called when a seek has been served, with the
+   replay's clock (from the snapshot put back, or where the replay is when
+   none was), whether one was put back, and the seek's generation
+   (seek_to's); NULL when nothing will seek. */
 typedef void (*seek_landed_fn)(uint64_t clock_us, bool restored, unsigned generation);
 void seek_start(seek_landed_fn landed);
 

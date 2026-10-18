@@ -511,6 +511,17 @@ The keys of a `LOONY_SCRIPT` go to the viewer too (`60 down i`), at the
 replay's ticks, so after going back the next one comes when the replay
 gets there again; headless, the ones left at the end come at once.
 
+`LOONY_SNAPSHOT_VERIFY=1` checks the snapshots as they are used, for
+debugging a seek that desyncs. Each one is put back the moment it is taken
+and compared with what was there, and after going back the replay is
+compared with every snapshot it passed before, at the same trap, as it
+comes to it again. A difference stops the program and names what differs:
+a range of guest memory, a register, or a module's state and the byte in
+it. A replay that isn't watched takes snapshots too while verifying, so
+its frames and sound can be compared with one that takes none. The log's
+last `seek: verify:` line counts the snapshots checked each way. It costs
+little time but more memory, about 15 MB a snapshot instead of 1.
+
 #### Exporting from the viewer
 
 E exports the clips in `game.clips` without leaving the viewer: the
