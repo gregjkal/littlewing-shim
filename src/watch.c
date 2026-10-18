@@ -718,13 +718,6 @@ bool watch_open(char *err, size_t errlen) {
         snprintf(W.replay, sizeof W.replay, "%s/%s", cwd, replay);
     else
         snprintf(W.replay, sizeof W.replay, "%s", replay);
-    char why[512];
-    if (!export_take_up(why, sizeof why))
-        log_msg("watch: %s", why);
-    else if (export_running()) {
-        log_msg("watch: the export of the %s goes on", export_what(export_running_kind()));
-        stop_export_on_exit(); /* even if the restart fails before watch_start */
-    }
     W.on = true;
     return true;
 }

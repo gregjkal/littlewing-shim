@@ -130,10 +130,9 @@ void export_title(const export_progress *p, char *buf, size_t cap) {
    or where it writes: none reach it. */
 static const char *const dropped[] = {
     "LOONY_WATCH",       "LOONY_WATCH_FROM",   "LOONY_WATCH_SPEED", "LOONY_WATCH_PAUSED",
-    "LOONY_WATCH_IN",    "LOONY_WATCH_EXPORT", "LOONY_WATCH_EXPORT_SAID",
-    "LOONY_SCRIPT",      "LOONY_SCREENSHOT",   "LOONY_FULLSCREEN",  "LOONY_DATA_DIR",
-    "LOONY_EXIT_AFTER",  "LOONY_CLIP_OUT",     "LOONY_WAV",         "LOONY_RECORD",
-    "LOONY_PICK",        "LOONY_PICKER_SHOT",  "LOONY_HD_DUMP",
+    "LOONY_WATCH_IN",    "LOONY_SCRIPT",       "LOONY_SCREENSHOT",  "LOONY_FULLSCREEN",
+    "LOONY_DATA_DIR",    "LOONY_EXIT_AFTER",   "LOONY_CLIP_OUT",    "LOONY_WAV",
+    "LOONY_RECORD",      "LOONY_PICK",         "LOONY_PICKER_SHOT", "LOONY_HD_DUMP",
     /* set below */
     "LOONY_CLIP",        "LOONY_CLIP_PROGRESS", "LOONY_REPLAY",     "LOONY_LOG_INHERITED",
 };
@@ -322,95 +321,4 @@ bool export_stop(double seconds, int *status) {
         nanosleep(&gap, NULL);
     }
     return export_poll(status);
-}
-
-/* What has been said, as the lines that say it again. */
-static char *said_lines(void) {
-    const export_progress *p = &X.said;
-    size_t cap = 256 + strlen(p->error) + p->partial_len;
-    for (size_t i = 0; i < p->nwrote; i++)
-        cap += strlen(p->wrote[i]) + 8;
-    for (size_t i = 0; i < p->nskipped; i++)
-        cap += strlen(p->skipped[i]) + 10;
-    char *s = malloc(cap);
-    if (!s)
-        return NULL;
-    size_t len = 0;
-    s[0] = '\0';
-    for (size_t i = 0; i < p->nskipped; i++)
-        len += (size_t)snprintf(s + len, cap - len, "skipped %s\n", p->skipped[i]);
-    for (size_t i = 0; i < p->nwrote; i++)
-        len += (size_t)snprintf(s + len, cap - len, "wrote %s\n", p->wrote[i]);
-    if (p->error[0])
-        len += (size_t)snprintf(s + len, cap - len, "error %s\n", p->error);
-    if (p->n) /* the last clip line, then the seek after it, if that came last */
-        len += (size_t)snprintf(s + len, cap - len, "clip %zu %zu %llu %llu\n", p->k, p->n,
-                                (unsigned long long)p->frame, (unsigned long long)p->frames);
-    if (p->phase == EXPORT_SEEKING)
-        len += (size_t)snprintf(s + len, cap - len, "seek %u %u\n", p->tick, p->target);
-    /* A line read only in part (one longer than PIPE_BUF can come in two
-       writes): its start, unended, so the next read ends it. */
-    memcpy(s + len, p->partial, p->partial_len);
-    s[len + p->partial_len] = '\0';
-    return s;
-}
-
-void export_pass_on(void) {
-    unsetenv("LOONY_WATCH_EXPORT");
-    unsetenv("LOONY_WATCH_EXPORT_SAID");
-    if (!X.running)
-        return;
-    if (X.fd >= 0 && !drain()) {
-        close(X.fd);
-        X.fd = -1;
-    }
-    char v[64];
-    snprintf(v, sizeof v, "%d %d %d %d", (int)X.pid, X.fd, (int)X.kind, X.cancelled);
-    char *said = said_lines();
-    if (X.fd >= 0)
-        set_fd_flag(X.fd, F_GETFD, F_SETFD, FD_CLOEXEC, false);
-    setenv("LOONY_WATCH_EXPORT", v, 1);
-    setenv("LOONY_WATCH_EXPORT_SAID", said ? said : "", 1);
-    free(said);
-}
-
-/* Whether pid is a child of this process, without reaping it if it has
-   ended. */
-static bool is_child(pid_t pid) {
-    siginfo_t info;
-    return waitid(P_PID, (id_t)pid, &info, WEXITED | WNOHANG | WNOWAIT) == 0 || errno != ECHILD;
-}
-
-bool export_take_up(char *err, size_t errlen) {
-    const char *v = getenv("LOONY_WATCH_EXPORT");
-    char *said = getenv("LOONY_WATCH_EXPORT_SAID");
-    bool ok = true;
-    if (v && *v) {
-        int pid, fd, kind, cancelled;
-        char end;
-        if (sscanf(v, "%d %d %d %d%c", &pid, &fd, &kind, &cancelled, &end) != 4 || pid <= 0 ||
-            fd < -1 || (kind != EXPORT_CLIPS && kind != EXPORT_MARKS)) {
-            snprintf(err, errlen, "LOONY_WATCH_EXPORT=%s isn't \"<pid> <fd> <kind> <cancelled>\"", v);
-            ok = false;
-        } else if (!is_child(pid)) {
-            snprintf(err, errlen, "LOONY_WATCH_EXPORT names %d, which isn't this program's", pid);
-            ok = false;
-        } else {
-            export_reset();
-            X.running = true;
-            X.cancelled = cancelled != 0;
-            X.pid = pid;
-            X.fd = fd >= 0 && fcntl(fd, F_GETFD) >= 0 ? fd : -1;
-            X.kind = (export_kind)kind;
-            if (X.fd >= 0) {
-                set_fd_flag(X.fd, F_GETFD, F_SETFD, FD_CLOEXEC, true);
-                set_fd_flag(X.fd, F_GETFL, F_SETFL, O_NONBLOCK, true);
-            }
-            if (said)
-                export_feed(&X.said, said, strlen(said));
-        }
-    }
-    unsetenv("LOONY_WATCH_EXPORT");
-    unsetenv("LOONY_WATCH_EXPORT_SAID");
-    return ok;
 }
