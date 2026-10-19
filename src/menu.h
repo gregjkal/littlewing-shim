@@ -26,12 +26,13 @@ void menu_install(void);
 void menu_add_high_scores(const char *game_id, const char *title, const char *rec_dir);
 
 /* Adds a Replay menu after the Sound menu, for watching a replay (watch.h):
-   at once if menu_install has run, else when it does. Export Clips and
-   Export Marks export the watched recording's clips or marks
-   (watch_export), and Cancel Export cancels (watch_cancel_export); the
-   export items are disabled while an export runs, and Cancel Export while
-   none does. The items have no key equivalents: E
-   and Esc are the viewer's own keys, which AppKit would take first. */
+   at once if menu_install has run, else when it does. Its items are the
+   viewer's actions, built from watch_bindings: Play/Pause, the steps back
+   and ahead, Slower and Faster, Mark In and Mark Out, Export Clips, Export
+   Marks and Cancel Export. Each does what its key does (watch_act), is
+   enabled when watch_can says, and shows its key as its key equivalent,
+   as this keyboard types it. The menu never takes those keys itself: they
+   go to the viewer (watch_key), which would otherwise see them as well. */
 void menu_add_replay(void);
 
 /* Adds a Replays menu, before SDL's Window menu, and a File menu with Open

@@ -1047,8 +1047,9 @@ TEST(run_a_watched_replay_goes_ahead_and_back) {
                                        &ahead_seconds);
     test_remove_tree(play_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
-    int back_status = watch_recording("30 down right\n34 up right\n150 down j\n154 up j\n", play_dir,
-                                      out[2], sizeof out[2], &back_seconds);
+    int back_status = watch_recording("30 down lshift\n30 down period\n34 up period\n34 up lshift\n"
+                                      "150 down j\n154 up j\n", /* > for 2x */
+                                      play_dir, out[2], sizeof out[2], &back_seconds);
     test_remove_tree(rec_dir);
     test_remove_tree(play_dir);
     CHECK_EQ(rec_status, 0);

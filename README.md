@@ -488,11 +488,18 @@ LOONY_REPLAY=game.lwreplay LOONY_CLIP=clips ./build-release/loony
 | Key | While watching |
 | --- | --- |
 | Space, K | Pause, or go on |
-| Right, Left | Faster or slower: 1x, 2x, 4x, 8x, as fast as it can |
-| I, O | Where a clip starts, and where it ends (O saves it) |
 | J, L | Back or ahead 10 seconds (with Shift, a minute) |
+| Right | Ahead 5 seconds |
+| `<`, `>` (Shift-comma, Shift-period) | Slower or faster: 1x, 2x, 4x, 8x, as fast as it can |
+| I, O | Where a clip starts, and where it ends (O saves it) |
 | E | Export the clips, as `LOONY_CLIP=clips` does |
 | Esc | Cancel the export |
+
+These are YouTube's keys. Left doesn't go back yet: it says to use J
+([#34](https://github.com/gregjkal/littlewing-shim/issues/34)). A key
+with Cmd, Ctrl or Option held goes to the menus, not the viewer. The
+**Replay** menu (next to Sound) lists every one of these with its key,
+so it is also where to find them, and Help's search finds them by name.
 
 Watching starts where the game does. First it replays what came before the
 game, silent and as fast as it can, about 9 times real time in HD and 18
@@ -559,10 +566,10 @@ while it replays up to that clip). When it is done, Finder opens with the
 new files selected, next to the recording, where the clips always go.
 With every clip exported already, the title says so and Finder shows
 those. Esc cancels, which leaves no file behind. One export runs at a
-time; going back (J) doesn't stop it, and quitting does. While watching,
-the **Replay** menu (next to Sound) has the same: **Export Clips**,
-**Export Marks** (as `LOONY_CLIP=marks`, from the marks made with Cmd-S
-while recording) and **Cancel Export**.
+time; going back (J) doesn't stop it, and quitting does. The **Replay**
+menu has the same: **Export Clips**, **Export Marks** (as
+`LOONY_CLIP=marks`, from the marks made with Cmd-S while recording, with
+no key) and **Cancel Export**.
 
 #### The Replays menu
 
