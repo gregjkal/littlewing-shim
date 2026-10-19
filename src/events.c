@@ -122,6 +122,14 @@ static void snap_walk(snapshot_walker *w) {
     snapshot_bytes(w, &modal, sizeof modal);
     if (snapshot_loading(w))
         E.modal = modal ? dialogs_modal_sink() : NULL;
+    /* The quit's deadline is on this process's wall clock, which a replay
+       that comes to the same place again, or another process, doesn't
+       share: what the game sees is whether a quit is pending. */
+    uint8_t quitting = E.quit_deadline > 0;
+    SNAPSHOT_REBUILT(w, E.quit_deadline);
+    snapshot_bytes(w, &quitting, sizeof quitting);
+    if (snapshot_loading(w))
+        E.quit_deadline = quitting ? wall_seconds() + QUIT_GRACE_SECONDS : 0;
 }
 SNAPSHOT_STATE_WALK(E, snap_walk)
 

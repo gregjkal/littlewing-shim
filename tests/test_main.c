@@ -100,11 +100,11 @@ void test_remove_tree(const char *path) {
         fprintf(stderr, "can't remove %s\n", path);
 }
 
-/* The output of the children test_run_child ran in the current test that
-   didn't exit with status 0, the last KEPT_CHILDREN of them, each its
-   last KEPT_BYTES: printed if the test fails, since a test keeps a child's
-   output in a buffer it checks, and a crash or an unexpected status
-   otherwise leaves nothing to go on. */
+/* The output of the last KEPT_CHILDREN children test_run_child ran in the
+   current test, each its last KEPT_BYTES: printed if the test fails, since
+   a test keeps a child's output in a buffer it checks, and a crash, an
+   unexpected status or a check of what a child said otherwise leaves
+   nothing to go on. */
 #define KEPT_CHILDREN 4
 #define KEPT_BYTES 16384
 static struct {
@@ -172,8 +172,7 @@ int test_run_child(void (*fn)(void *), void *arg, char *out, size_t outlen) {
     int status = 0;
     waitpid(pid, &status, 0);
     int code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-    if (code != 0)
-        keep_child(out, code);
+    keep_child(out, code);
     return code;
 }
 

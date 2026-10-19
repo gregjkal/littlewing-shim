@@ -1246,7 +1246,11 @@ static bool went_back_from_main(const char *out, const char *how) {
    the game from there. Each time the game plays on, ends by itself, hands
    back to the event loop, and the replay reaches its end with every frame
    check matching, as a straight replay's do. Verifying, each snapshot it
-   comes to again after going back is what the emulator is there. */
+   comes to again after going back is what the emulator is there. The
+   recording is on the real clock, so its game ends anywhere from about
+   tick 9450 to 9550 and the recording a few to a hundred ticks after the
+   quit at 10200: the J between games is at 9900, and the one after the
+   end far past it. */
 TEST(run_a_watched_game_goes_back) {
     SKIP_UNLESS_GAME();
     SKIP_UNLESS_SLOW();
@@ -1256,7 +1260,7 @@ TEST(run_a_watched_game_goes_back) {
     static char out[4][65536];
     int rec_status = record_one_game(rec_dir, true, out[0], sizeof out[0]);
     const char *keys[3] = {"3000 down j\n3004 up j\n4500 down j\n4504 up j\n6000 down j\n6004 up j\n",
-                           "9500 down j\n9504 up j\n", "10300 down j\n10301 up j\n"};
+                           "9900 down j\n9904 up j\n", "20000 down j\n20001 up j\n"};
     int status[3];
     for (int i = 0; i < 3; i++) {
         char dir[1100];
