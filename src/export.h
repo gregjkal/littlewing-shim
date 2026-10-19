@@ -59,6 +59,11 @@ void export_title(const export_progress *p, char *buf, size_t cap);
 char **export_child_env(char *const *env, export_kind kind, const char *replay);
 void export_free_env(char **env);
 
+/* The same for any second copy of this program: env less those settings
+   and the names set sets, then set ("NAME=value" entries, NULL-terminated).
+   Free it with export_free_env. */
+char **export_env_with(char *const *env, const char *const *set);
+
 /* Starts an export of kind of the recording at replay (absolute), running
    the program at self. False, with err, if it can't start, or one is
    running. */

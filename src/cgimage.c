@@ -24,7 +24,8 @@ static struct {
 } G;
 
 /* A snapshot's walk (snapshot.h): each provider's path and each image's
-   pixels, since releasing one frees them. A free slot holds nothing. */
+   pixels, since releasing one frees them. A free slot holds nothing. A
+   path must be in the bundle (cf_in_bundle). */
 static void snap_walk(snapshot_walker *w) {
     if (snapshot_loading(w))
         for (int i = 0; i < MAX_OBJECTS; i++) {
@@ -34,8 +35,14 @@ static void snap_walk(snapshot_walker *w) {
     snapshot_bytes(w, &G, sizeof G);
     for (int i = 0; i < MAX_OBJECTS; i++) {
         cg_obj *o = &G.objs[i];
+        snapshot_check(w, o->refs >= 0 && o->px.width >= 0 && o->px.width <= 4096 && o->px.height >= 0 &&
+                              o->px.height <= 4096,
+                       "object %d (%d refs, %d by %d)", i, o->refs, o->px.width, o->px.height);
         snapshot_string(w, &o->path);
         SNAPSHOT_OWNED(w, o->px.xrgb, (size_t)o->px.width * (size_t)o->px.height * 4);
+        snapshot_check(w, o->is_image ? !o->path && (o->px.xrgb || !o->px.width || !o->px.height)
+                                      : !o->path || cf_in_bundle(o->path),
+                       "object %d's pixels or path", i);
     }
 }
 SNAPSHOT_STATE_WALK(G, snap_walk)

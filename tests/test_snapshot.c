@@ -1,5 +1,6 @@
 #include "test.h"
 
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -9,6 +10,7 @@
 #include "cgimage.h"
 #include "events.h"
 #include "files.h"
+#include "gamestart.h"
 #include "harness.h"
 #include "memmgr.h"
 #include "misc.h"
@@ -22,7 +24,7 @@
 static const char *const names[] = {
     "NewEventLoopTimerUPP", "GetMainEventLoop", "InstallEventLoopTimer", "RunApplicationEventLoop",
     "QuitApplicationEventLoop", "SnapTest", "FSMakeFSSpec", "FSpOpenDF", "PBReadSync", "FSClose",
-    "CFRelease", "CGDataProviderCreateWithURL", "CGDataProviderRelease",
+    "CFRelease", "CGDataProviderCreateWithURL", "CGDataProviderRelease", "CFStringGetCString",
 };
 
 #define PROC    (GUEST_IMAGE_BASE + 0x200)
@@ -198,12 +200,14 @@ TEST(snapshot_puts_a_guest_back_in_place_in_the_run_loop) {
 }
 
 /* Every block a pattern can be written into without following a pointer
-   that isn't there: each is filled, saved, filled again and loaded, and
-   the state is then what was saved. The rest are the ones tested through
-   their modules below. A block added to the inventory is covered here
-   unless it is added to that list. */
-static const char *const owners[] = {"cf.c C", "files.c F", "mixer.c X", "dialogs.c G",
-                                     "cgimage.c G", "rsrc.c R"};
+   that isn't there, or failing a check of what its walk loads: each is
+   filled, saved, filled again and loaded, and the state is then what was
+   saved. The rest are the ones tested through their modules below and in
+   the replays that go back. A block added to the inventory is covered
+   here unless it is added to that list. */
+static const char *const owners[] = {"cf.c C",      "files.c F",  "mixer.c X",  "dialogs.c G",
+                                     "cgimage.c G", "rsrc.c R",   "events.c E", "replay.c R",
+                                     "misc.c M",    "qd.c Q",     "cgdisplay.c G", "libc.c L"};
 
 static bool is_owner(const char *file, const char *name) {
     char tag[128];
@@ -270,10 +274,10 @@ TEST(snapshot_state_puts_back_every_plain_block) {
     }
     free(a);
     CHECK(same_at_once);
-    CHECK(plain >= 10);
+    CHECK(plain >= 7);
     CHECK_EQ(restored, plain);
     CHECK(differed);
-    CHECK_CONTAINS(named, "misc.c M at byte ");
+    CHECK_CONTAINS(named, "play.c P at byte ");
     CHECK_CONTAINS(named, "trap.c T at byte ");
     CHECK_CONTAINS(named, "memmgr.c last_error at byte ");
     CHECK(same);
@@ -317,6 +321,7 @@ TEST(snapshot_state_puts_back_what_modules_own) {
     }
     char png[1100];
     snprintf(png, sizeof png, "%s/art.png", game);
+    cf_set_bundle(game); /* where a URL can be */
     uint32_t provider = call_import("CGDataProviderCreateWithURL", 1, cf_url(png));
     CHECK(provider != 0);
     size_t alen;
@@ -421,9 +426,20 @@ static struct {
     size_t enc_len;
     uint32_t string;
     bool done, missing_part, same, fits, late, early;
+    bool plain_ok, code_ok, pc_ok; /* snapshot_brings_no_code */
+    char code_why[256], pc_why[256];
     int calls;
     char before_poke[2048], after[2048], err[256];
 } D;
+
+/* Decodes enc (len bytes) against the emulator as it is and says whether
+   it brings no code, and if not why. */
+static bool brings_no_code(const uint8_t *enc, size_t len, char *why, size_t cap) {
+    snapshot *s = snapshot_decode(enc, len, why, cap);
+    bool ok = s && snapshot_brings_no_code(s, why, cap);
+    snapshot_free(s);
+    return ok;
+}
 
 /* At the second SnapTest: the baseline. At the third: fills guest memory,
    makes a CF string and takes the snapshot, encoded against the baseline
@@ -451,6 +467,20 @@ static uint32_t codec_hook(uint32_t index) {
     } else if (n == 4 && !D.done) {
         D.done = true;
         snapshot_restore(D.base);
+        /* The harness's code section is the first 64 KB of the image,
+           where the hook fills memory: the baseline against itself brings
+           none, the snapshot changes the code, and a program counter in
+           data is refused. */
+        size_t plain_len;
+        uint8_t *plain = snapshot_encode(D.base, D.base, NULL, 0, &plain_len);
+        char why[256];
+        D.plain_ok = brings_no_code(plain, plain_len, why, sizeof why);
+        D.code_ok = brings_no_code(D.enc, D.enc_len, D.code_why, sizeof D.code_why);
+        size_t pc_at = 4 + 4 + 4 + 8 + 8 + 64 * 8; /* the CPU's registers: the pc after r0-31, f0-31 */
+        for (int b = 0; b < 4; b++)
+            plain[pc_at + (size_t)b] = (uint8_t)(0x00500000u >> (8 * b));
+        D.pc_ok = brings_no_code(plain, plain_len, D.pc_why, sizeof D.pc_why);
+        free(plain);
         D.decoded = snapshot_decode(D.enc, D.enc_len, D.err, sizeof D.err);
         if (!D.decoded)
             return index;
@@ -490,6 +520,11 @@ TEST(snapshot_encodes_as_the_pages_that_differ_from_a_baseline) {
     CHECK(D.late);   /* written since the baseline, in any case */
     CHECK(!D.early); /* there at the baseline, unchanged: XORed out of the file */
     CHECK(D.decoded != NULL);
+    CHECK(D.plain_ok);
+    CHECK(!D.code_ok);
+    CHECK_CONTAINS(D.code_why, "it changes the game's code, at 0x");
+    CHECK(!D.pc_ok);
+    CHECK_STR(D.pc_why, "the CPU's pc is 0x00500000, outside the game's code");
     CHECK(D.fits);
     CHECK(D.missing_part);
     CHECK_CONTAINS(D.before_poke, "guest memory at 0x");
@@ -515,6 +550,48 @@ TEST(snapshot_encodes_as_the_pages_that_differ_from_a_baseline) {
     snapshot_free(D.s);
     snapshot_free(D.decoded);
     free(D.enc);
+    teardown();
+}
+
+/* Guest memory as a game registered with email leaves it at launch:
+   copied into a buffer of the game's (LICENSE_FIELD) by CFStringGetCString,
+   and somewhere else in capitals. */
+#define LICENSE_FIELD (GUEST_IMAGE_BASE + 0xA000)
+#define LICENSE_COPY  (GUEST_IMAGE_BASE + 0xA3FE) /* across a 1 KB line, for the search */
+static void registered_as(const char *email) {
+    static const char *const keys[] = {"user email"};
+    cf_keep_out_of_snapshots(keys, 1);
+    char path[1100];
+    snprintf(path, sizeof path, "%s/prefs.plist", game);
+    FILE *f = fopen(path, "w");
+    fprintf(f, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>"
+               "<key>user email</key><string>%s</string></dict></plist>\n",
+            email);
+    fclose(f);
+    cf_load_prefs(path);
+    memset(gm_ptr(LICENSE_FIELD, 0x800), 0, 0x800);
+    CHECK_EQ(call_import("CFStringGetCString", 4, cf_string(email), LICENSE_FIELD, 256u, 0u), 1);
+    gm_ptr(LICENSE_FIELD, 1)[0] ^= 0x5A; /* changed in place, as Loony decrypts its key code */
+    char upper[64];
+    for (size_t i = 0; i <= strlen(email); i++)
+        upper[i] = (char)toupper((unsigned char)email[i]);
+    gm_write_cstr(LICENSE_COPY, upper);
+}
+
+/* A baseline's hash is the same under any license (gamestart.h): the
+   buffers the license was copied into, and its text anywhere else, are
+   blanked. Any other byte counts. */
+TEST(snapshot_baseline_hash_leaves_out_the_license) {
+    setup();
+    uint8_t mine[32], theirs[32], other[32];
+    registered_as("me@example.com");
+    gamestart_memory_hash(mine);
+    registered_as("someone.else@example.org");
+    gamestart_memory_hash(theirs);
+    gm_ptr(LICENSE_FIELD + 0x400, 1)[0] ^= 1;
+    gamestart_memory_hash(other);
+    CHECK(memcmp(mine, theirs, sizeof mine) == 0);
+    CHECK(memcmp(mine, other, sizeof mine) != 0);
     teardown();
 }
 

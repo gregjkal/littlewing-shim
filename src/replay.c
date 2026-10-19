@@ -130,13 +130,30 @@ static struct {
 } R;
 
 /* A snapshot's walk (snapshot.h): the cursor, the step and the counts are
-   the replay's; the file, what was parsed out of it, the recording's
-   buffers and the viewer's hooks are the host's, and stay as they are. The
-   header is the host's too, and the cursor is walked as where it is among
-   the records, so a snapshot of a recording fits its shared copy, whose
-   header differs (replay_identity). */
+   the replay's; whether this is a recording or a replay, the file, what
+   was parsed out of it, the recording's paths and buffers and the
+   viewer's hooks are the host's, and stay as they are. The header is the
+   host's too, and the cursor is walked as where it is among the records,
+   so a snapshot of a recording fits its shared copy, whose header differs
+   (replay_identity). */
 static void snap_walk(snapshot_walker *w) {
     snapshot_bytes(w, &R, sizeof R);
+    SNAPSHOT_HOST(w, R.mode);
+    SNAPSHOT_HOST(w, R.auto_dir);
+    SNAPSHOT_HOST(w, R.auto_id);
+    SNAPSHOT_HOST(w, R.session_step);
+    SNAPSHOT_HOST(w, R.path);
+    SNAPSHOT_HOST(w, R.last_step);
+    SNAPSHOT_HOST(w, R.write_failed);
+    SNAPSHOT_HOST(w, R.cut_text);
+    SNAPSHOT_HOST(w, R.loaded);
+    SNAPSHOT_HOST(w, R.cut_short);
+    SNAPSHOT_HOST(w, R.nmark_ticks);
+    SNAPSHOT_HOST(w, R.nspans);
+    SNAPSHOT_HOST(w, R.ended);
+    snapshot_check(w, R.next.kind >= 0 && R.next.kind < REPLAY_KINDS &&
+                          memchr(R.next.text, 0, sizeof R.next.text),
+                   "the next record");
     SNAPSHOT_HOST(w, R.header);
     SNAPSHOT_HOST(w, R.session);
     SNAPSHOT_HOST(w, R.out);
@@ -1139,11 +1156,18 @@ bool replay_share(const char *src, const char *dst, char *err, size_t errlen) {
     ok = ok && gzwrite(f, b, (unsigned)varint(b, prefs_len)) > 0;
     ok = ok && (!prefs_len || gzwrite(f, prefs, (unsigned)prefs_len) == (int)prefs_len);
     /* The records as they are; a recording still being written stops where
-       it was last flushed, and the copy plays to there. Not the snapshot
-       of the game's start: only the install that took one uses it
-       (gamestart.h). */
+       it was last flushed, and the copy plays to there. Then the snapshot
+       of the game's start, which fits the copy as it does the recording
+       (replay_identity), unless the license is in it as it stands. */
     size_t rest = records_end - c.pos;
     ok = ok && (!rest || gzwrite(f, data + c.pos, (unsigned)rest) == (int)rest);
+    if (section && holds_license(section, section_len, &h)) {
+        log_msg("replay: the snapshot of the game's start in %s holds the license, so the shared "
+                "copy leaves it out",
+                src);
+        section = NULL;
+    }
+    ok = ok && (!section || write_section(f, section, section_len));
     if (gzclose(f) != Z_OK)
         ok = false;
     f = NULL;
@@ -1153,7 +1177,8 @@ bool replay_share(const char *src, const char *dst, char *err, size_t errlen) {
     }
     free(prefs);
     free(data);
-    log_msg("replay: shared %s as %s, without its license", src, dst);
+    log_msg("replay: shared %s as %s, without its license, %s a snapshot of the game's start", src, dst,
+            section ? "with" : "without");
     return true;
 fail:
     if (f)

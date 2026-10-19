@@ -37,7 +37,15 @@ static struct {
     bool reset;   /* Event_ResetGame threw a suspended game away */
     bool in_game, playing;
 } P;
-SNAPSHOT_STATE(P)
+
+/* A snapshot's walk (snapshot.h): whether games are told apart here, and
+   where the flags are, are the host's. */
+static void snap_walk(snapshot_walker *w) {
+    snapshot_bytes(w, &P, sizeof P);
+    SNAPSHOT_HOST(w, P.on);
+    SNAPSHOT_HOST(w, P.toc);
+}
+SNAPSHOT_STATE_WALK(P, snap_walk)
 
 void play_reset(void) { memset(&P, 0, sizeof P); }
 

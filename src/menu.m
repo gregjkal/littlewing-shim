@@ -11,6 +11,7 @@
 #include "cf.h"
 #include "display.h"
 #include "game.h"
+#include "gamestart.h"
 #include "recordings.h"
 #include "replay.h"
 #include "settings.h"
@@ -147,17 +148,75 @@ static NSMenuItem *disabled_item(NSString *title) {
     }
 }
 
-/* Writes the shared copy of info's recording to url, or says why not. */
+/* Writes the shared copy of info's recording to url, or says why not. A
+   copy without a snapshot of the game's start takes one first, behind a
+   panel, so its replay starts at the game on the recipient's Mac
+   (gamestart.h); NO if that is cancelled. */
 - (BOOL)write:(NSDictionary *)info to:(NSURL *)url {
     char err[1024];
-    if (replay_share([info[@"path"] fileSystemRepresentation], url.fileSystemRepresentation, err,
-                     sizeof err))
+    if (!replay_share([info[@"path"] fileSystemRepresentation], url.fileSystemRepresentation, err,
+                      sizeof err)) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = @"The replay can't be shared";
+        alert.informativeText = @(err);
+        [alert runModal];
+        return NO;
+    }
+    if (gamestart_in_file(url.fileSystemRepresentation))
         return YES;
-    NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = @"The replay can't be shared";
-    alert.informativeText = @(err);
-    [alert runModal];
-    return NO;
+    return [self takeSnapshotInto:url];
+}
+
+/* Runs a second copy of LittleWing on the shared copy at url to keep a
+   snapshot of the game's start in it, with a panel that says so and can
+   cancel it. YES once it has ended (with a snapshot or, if none could be
+   taken, without: the copy still plays, from launch). */
+- (BOOL)takeSnapshotInto:(NSURL *)url {
+    char err[1024];
+    NSString *self_path = NSBundle.mainBundle.executablePath;
+    if (!self_path || !gamestart_take_start(self_path.fileSystemRepresentation, url.fileSystemRepresentation,
+                                            err, sizeof err)) {
+        log_msg("menu: can't take a snapshot for the shared replay: %s", self_path ? err : "no program");
+        return YES;
+    }
+    NSPanel *panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 360, 116)
+                                                styleMask:NSWindowStyleMaskTitled
+                                                  backing:NSBackingStoreBuffered
+                                                    defer:NO];
+    panel.title = @"Share Replay";
+    NSTextField *label = [NSTextField
+        wrappingLabelWithString:@"Getting the replay ready, so it starts at the game for whoever "
+                                @"watches it. This takes a while for a game late in a session."];
+    label.frame = NSMakeRect(20, 52, 320, 48);
+    NSProgressIndicator *bar = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(20, 22, 230, 20)];
+    bar.style = NSProgressIndicatorStyleBar;
+    bar.indeterminate = YES;
+    [bar startAnimation:nil];
+    NSButton *cancel = [NSButton buttonWithTitle:@"Cancel" target:NSApp action:@selector(abortModal)];
+    cancel.frame = NSMakeRect(260, 16, 82, 32);
+    cancel.keyEquivalent = @"\033"; /* Escape */
+    for (NSView *v in @[ label, bar, cancel ])
+        [panel.contentView addSubview:v];
+    [panel center];
+    __block bool kept = false;
+    NSTimer *poll = [NSTimer timerWithTimeInterval:0.2
+                                           repeats:YES
+                                             block:^(NSTimer *t) {
+                                               if (gamestart_take_poll(&kept)) {
+                                                   [t invalidate];
+                                                   [NSApp stopModalWithCode:NSModalResponseOK];
+                                               }
+                                             }];
+    [[NSRunLoop currentRunLoop] addTimer:poll forMode:NSModalPanelRunLoopMode];
+    NSModalResponse r = [NSApp runModalForWindow:panel];
+    [poll invalidate];
+    [panel orderOut:nil];
+    if (r != NSModalResponseOK) {
+        gamestart_take_stop();
+        log_msg("menu: sharing a replay was cancelled while its snapshot was taken");
+        return NO;
+    }
+    return YES;
 }
 
 - (void)share:(NSMenuItem *)item {

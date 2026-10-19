@@ -33,6 +33,10 @@ void trap_set_direct_calls(bool on);
 
 const char *trap_import_name(uint32_t index);
 
+/* The imports' number, and the code section trap_init was given. */
+uint32_t trap_count(void);
+void trap_code(uint32_t *base, uint32_t *len);
+
 /* Index of the import called name, or -1. */
 int32_t trap_find(const char *name);
 

@@ -202,6 +202,17 @@ static const region *region_of(const snapshot_walker *w, const void *field, size
 
 bool snapshot_loading(const snapshot_walker *w) { return w->loading; }
 
+void snapshot_check(snapshot_walker *w, bool ok, const char *fmt, ...) {
+    if (!w->loading || ok)
+        return;
+    char msg[256];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof msg, fmt, ap);
+    va_end(ap);
+    walk_fatal(w, "%s", msg);
+}
+
 void snapshot_bytes(snapshot_walker *w, void *p, size_t len) {
     size_t at = w->at;
     uint8_t *b = advance(w, len);
@@ -885,7 +896,13 @@ snapshot *snapshot_decode(const uint8_t *data, size_t len, char *err, size_t err
         s->state_len = (size_t)state_len;
     }
     uint64_t count = in_le(&in, 4);
-    if (in.bad || s->frame.nchain < 0 || s->frame.nchain > 2) {
+    const ev_frame *f = &s->frame;
+    bool frame_ok = f->timer >= 0 ? f->timer < EV_MAX_TIMERS
+                                  : f->timer == -1 && f->slot >= 0 && f->slot < EV_MAX_EVENTS &&
+                                        f->nchain >= 1 && f->nchain <= 2 && f->link >= 0 &&
+                                        f->link < f->nchain && f->handler >= 0 &&
+                                        f->handler < EV_MAX_HANDLERS;
+    if (in.bad || !frame_ok || f->loop_depth < 1) {
         snprintf(err, errlen, "it is damaged");
         snapshot_free(s);
         return NULL;
@@ -917,6 +934,76 @@ snapshot *snapshot_decode(const uint8_t *data, size_t len, char *err, size_t err
         return NULL;
     }
     return s;
+}
+
+/* Whether a is somewhere code may run from, or return to (snapshot_brings_no_code). */
+static bool code_address(uint32_t a, uint32_t code, uint32_t code_len) {
+    return !a || a == GUEST_RETURN_MAGIC || (a >= code && a - code < code_len) ||
+           (a >= GUEST_TRAP_BASE && a < GUEST_TRAP_ADDR(trap_count()) && a % 4 == 0);
+}
+
+/* The same for the registers of ctx that hold code addresses, named
+   after who, in why. */
+static bool code_registers(const cpu_context *ctx, const char *who, uint32_t code, uint32_t code_len,
+                           char *why, size_t cap) {
+    static const char *const names[] = {"pc", "lr", "ctr"};
+    uint64_t regs[CPU_REGS];
+    cpu_context_regs(ctx, regs);
+    for (int i = 0; i < 3; i++)
+        if (!code_address((uint32_t)regs[64 + i], code, code_len)) {
+            snprintf(why, cap, "%s's %s is 0x%08x, outside the game's code", who, names[i],
+                     (uint32_t)regs[64 + i]);
+            return false;
+        }
+    return true;
+}
+
+bool snapshot_brings_no_code(const snapshot *s, char *why, size_t cap) {
+    uint32_t code, code_len;
+    trap_code(&code, &code_len);
+    if (!code_len || code > gm_host_size() || code_len > gm_host_size() - code) {
+        snprintf(why, cap, "the game's code isn't where a snapshot can be checked");
+        return false;
+    }
+    const uint8_t *mine = (const uint8_t *)(uintptr_t)s->mem + code, *live = gm_host_base() + code;
+    for (uint32_t i = 0; i < code_len; i++)
+        if (mine[i] != live[i]) {
+            snprintf(why, cap, "it changes the game's code, at 0x%08x", code + i);
+            return false;
+        }
+    if (!code_registers(s->cpu, "the CPU", code, code_len, why, cap))
+        return false;
+    for (int d = 0; d < DEPTH; d++) {
+        char who[32];
+        snprintf(who, sizeof who, "depth %d", d + 1);
+        if (!code_registers(s->level[d].saved, who, code, code_len, why, cap))
+            return false;
+        if (!code_address(s->level[d].called, code, code_len) ||
+            !code_address(s->level[d].resume, code, code_len)) {
+            snprintf(why, cap, "depth %d calls 0x%08x and returns to 0x%08x, outside the game's code",
+                     d + 1, s->level[d].called, s->level[d].resume);
+            return false;
+        }
+        if (s->level[d].index >= trap_count()) {
+            snprintf(why, cap, "depth %d is in trap %u, of %u", d + 1, s->level[d].index, trap_count());
+            return false;
+        }
+    }
+    if (strcmp(trap_import_name(s->level[0].index), "RunApplicationEventLoop") != 0) {
+        snprintf(why, cap, "depth 1 is in %s, not the run loop", trap_import_name(s->level[0].index));
+        return false;
+    }
+    uint64_t regs[CPU_REGS], now[CPU_REGS];
+    cpu_context *cpu = cpu_save();
+    cpu_context_regs(cpu, now);
+    cpu_context_free(cpu);
+    cpu_context_regs(s->cpu, regs);
+    if (regs[69] != now[69]) {
+        snprintf(why, cap, "its machine state register is 0x%08x, not 0x%08x", (uint32_t)regs[69],
+                 (uint32_t)now[69]);
+        return false;
+    }
+    return true;
 }
 
 void snapshot_poke(snapshot *s, uint32_t addr, const void *p, size_t len) {

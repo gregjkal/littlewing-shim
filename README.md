@@ -357,17 +357,22 @@ after that goes to the game's start from it a quarter of a second after
 launch, however late in the session the game came. The snapshot holds
 what changed since a point shortly after launch that every replay of the
 file reaches by itself, less the game's own sounds and art, which come
-from your copy of the game, and never your registration. It is the whole
-emulator, the game's code included, so LittleWing only uses the ones it
-took itself: each is signed with a key made at first use,
-`littlewing-shim/snapshot.key` beside the games' save folders. One from
-another Mac, or taken by another build of LittleWing, or one that doesn't
-fit (another copy of the game, a damaged file), is ignored with a line in
-the log saying why: the replay plays from launch and takes it again. A game that starts within
+from your copy of the game, and never your registration. A snapshot works
+on any Mac with the same copy of the game and the same version of
+LittleWing, whoever's registration it has, so a shared replay carries its
+snapshot (below). One taken by another version of LittleWing, or that
+doesn't fit (another copy of the game, a damaged file), is ignored with a
+line in the log saying why: the replay plays from launch and takes it
+again. A snapshot is the state of the whole emulator, so one that would
+change the game's code, or run anything but the game's own code, is
+refused the same way. A game that starts within
 20 seconds of launch gets none, and neither does a recording still being
 written. Taking it rewrites the file in place, keeping its last write's
 time, which is how a game is matched to its high score (below).
 `LOONY_GAMESTART=0` neither uses a snapshot nor takes one.
+`LOONY_GAMESTART=take`, with `LOONY_REPLAY`, replays only until the
+snapshot is kept in the file (or found there already, or known to be
+impossible) and exits: it is what sharing runs, headless.
 
 At launch, the last three games are kept, and so is every game where you
 pressed Cmd-S (renamed `...-marked.lwreplay` at the first press), every
@@ -595,10 +600,15 @@ set the score, and watching it starts at that game (above).
 
 The shared file leaves your registration out. The app writes a copy with
 the e-mail address and key code emptied, and the original recording stays
-as it is. The copy leaves the recording's snapshot of the game's start
-out (above), so its first replay on another Mac plays from launch, and
-keeps a snapshot of its own in it. The high-score names and anything typed during play are in the
-copy. A game played before Loony Labyrinth was registered can't be shared:
+as it is. The copy carries the recording's snapshot of the game's start
+(above), so it starts at the game on the other Mac too. When the
+recording has none yet, the app takes one into the copy before the share
+sheet or the save panel shows, by replaying it out of sight: a panel says
+so, and Cancel stops the share. That takes a while for a game late in a
+session (about a minute for a game 20 minutes in). The snapshot is the
+state of the game's memory when the game started, so whoever opens the
+file runs the game from that state, not only from the inputs recorded.
+The high-score names and anything typed during play are in the copy. A game played before Loony Labyrinth was registered can't be shared:
 the replay would start differently.
 
 #### Opening a replay
@@ -619,8 +629,9 @@ play it. The replay also needs the same version of LittleWing, or it may
 desync. From a terminal, `LOONY_REPLAY_LICENSE` names the preferences to
 take the registration from; by default they're your own copy's, in
 `littlewing-shim/loony-labyrinth/prefs.plist`. Shared files are format 6,
-like recordings, with a flag that says the registration is out. Watching
-one keeps a snapshot of the game's start in it, as for your own.
+like recordings, with a flag that says the registration is out. One that
+came without a snapshot, or with one that doesn't fit, keeps a snapshot of
+the game's start in it the first time you watch it, as for your own.
 
 While recording, the game's clock moves in whole milliseconds. When the
 game spins on `TickCount` waiting for the next tick, it sleeps instead, and

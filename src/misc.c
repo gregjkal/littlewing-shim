@@ -41,10 +41,12 @@ static struct {
     void (*exit_hook)(void);
 } M;
 
-/* A snapshot's walk (snapshot.h): the host's clock at launch and the
-   shim's hooks are the host's. */
+/* A snapshot's walk (snapshot.h): the host's clock at launch,
+   LOONY_FIXED_CLOCK and the shim's hooks are the host's. */
 static void snap_walk(snapshot_walker *w) {
     snapshot_bytes(w, &M, sizeof M);
+    snapshot_check(w, M.nae >= 0 && M.nae <= MAX_AE_HANDLERS, "%d AppleEvent handlers", M.nae);
+    SNAPSHOT_HOST(w, M.fixed);
     SNAPSHOT_HOST(w, M.start);
     SNAPSHOT_HOST(w, M.idle);
     SNAPSHOT_HOST(w, M.open_url);
