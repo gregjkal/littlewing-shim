@@ -42,6 +42,17 @@ void cf_keep_out_of_snapshots(const char *const *keys, size_t n);
 const char *cf_kept_out(size_t i);
 size_t cf_kept_out_count(void);
 
+/* Where the game keeps those values: each guest buffer CFStringGetCString
+   copied one into, at the size the game gave it (at most 4096 bytes), since
+   the game may go on to change the text there (Loony decrypts its key
+   code in place, so it is in no form cf_kept_out gives). A baseline's hash
+   leaves them out, so it is the same under any license (gamestart.h). Kept
+   across cf_init(), forgotten by cf_keep_out_of_snapshots. */
+typedef struct {
+    uint32_t addr, len;
+} cf_field;
+size_t cf_kept_out_fields(const cf_field **fields);
+
 /* Writes the preferences to the file named by cf_load_prefs. False (logged)
    if that fails. True, doing nothing, if there's no file. A key whose value
    is no longer a live object is left out (logged). */
@@ -78,6 +89,11 @@ void cf_set_bundle(const char *path);
 
 /* The path cf_set_bundle was given, or NULL. */
 const char *cf_bundle_path(void);
+
+/* Whether path is inside the bundle with no ".." in it: the one place a
+   URL, a bundle or an image provider's path can be, so a snapshot from a
+   file (gamestart.h) can't name another for the shim to open. */
+bool cf_in_bundle(const char *path);
 
 /* Creates a CFURL (retain count 1) for a host path. */
 uint32_t cf_url(const char *path);

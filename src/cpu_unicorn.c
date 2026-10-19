@@ -100,6 +100,11 @@ void cpu_init(void) {
     reg_write(UC_PPC_REG_MSR, reg_read(UC_PPC_REG_MSR) | MSR_FP);
 }
 
+void cpu_no_exec(uint32_t begin, uint32_t end) {
+    if (begin < end)
+        check(uc_mem_protect(uc, begin, end - begin, UC_PROT_READ | UC_PROT_WRITE), "protect memory");
+}
+
 void cpu_shutdown(void) {
     if (uc)
         uc_close(uc);

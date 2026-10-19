@@ -34,11 +34,16 @@ static struct {
     uint8_t lowmem_seen[GUEST_LOWMEM_SIZE / 8]; /* one bit per address already logged */
 } T;
 
-/* A snapshot's walk (snapshot.h): the import table and its handlers, the
-   history a crash report prints, the counts, the logging and what has been
-   logged are the host's. */
+/* A snapshot's walk (snapshot.h): the import table, its handlers and its
+   size, the code section, how guest_call calls, the history a crash report
+   prints, the counts, the logging and what has been logged are the
+   host's. */
 static void snap_walk(snapshot_walker *w) {
     snapshot_bytes(w, &T, sizeof T);
+    SNAPSHOT_HOST(w, T.n);
+    SNAPSHOT_HOST(w, T.code_base);
+    SNAPSHOT_HOST(w, T.code_len);
+    SNAPSHOT_HOST(w, T.direct_calls);
     SNAPSHOT_HOST(w, T.names);
     SNAPSHOT_HOST(w, T.handlers);
     SNAPSHOT_HOST(w, T.hist);
@@ -165,6 +170,13 @@ size_t trap_depth_counts(const uint64_t **counts) {
     return TRAP_DEPTH_COUNTS;
 }
 
+uint32_t trap_count(void) { return T.n; }
+
+void trap_code(uint32_t *base, uint32_t *len) {
+    *base = T.code_base;
+    *len = T.code_len;
+}
+
 const char *trap_import_name(uint32_t index) {
     return index < T.n ? T.names[index] : "(unknown)";
 }
@@ -262,6 +274,8 @@ static void run_until_return(uint32_t pc) {
         T.entries++;
         if (on_entry)
             index = on_entry(index); /* may have put the CPU back to an earlier entry */
+        if (index >= T.n)
+            trap_crash("the trap entry hook gave import #%u, of %u", index, T.n);
         pc = dispatch_trap(index, cpu_lr());
     }
 }

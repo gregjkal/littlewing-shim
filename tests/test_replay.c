@@ -1546,10 +1546,10 @@ TEST(replay_keeps_no_snapshot_in_a_recording_without_its_end) {
     CHECK(!replay_set_snapshot((const uint8_t *)"snap", 4));
 }
 
-/* A shared copy leaves the recording's snapshot out (only the install
-   that took it uses it), and has the recording's identity, as a replay
-   that takes one sees it. */
-TEST(replay_share_leaves_the_snapshot_out) {
+/* A shared copy keeps the recording's snapshot, so its replay starts at
+   the game on the recipient's Mac, and has the recording's identity, as a
+   replay that takes one sees it; so does a copy of the copy. */
+TEST(replay_share_keeps_the_snapshot) {
     BEGIN_TEST();
     CHECK(record_licensed("me@example.com", "123456789012"));
     CHECK(play_again());
@@ -1566,15 +1566,40 @@ TEST(replay_share_leaves_the_snapshot_out) {
     CHECK(section && len == 4);
     free(section);
     CHECK(replay_file_snapshot(shared, &section, &len, theirs, err, sizeof err));
-    CHECK(section == NULL);
+    CHECK(section && len == 4 && memcmp(section, "snap", 4) == 0);
+    free(section);
     CHECK(replay_file_snapshot(again, &section, &len, again_id, err, sizeof err));
-    CHECK(section == NULL);
+    CHECK(section && len == 4 && memcmp(section, "snap", 4) == 0);
+    free(section);
     CHECK(memcmp(mine, theirs, 32) == 0);
     CHECK(memcmp(mine, again_id, 32) == 0);
+}
+
+/* A snapshot section with the license in it as text, which no replay of
+   this version writes, stays out of a shared copy. */
+TEST(replay_share_leaves_out_a_snapshot_holding_the_license) {
+    BEGIN_TEST();
+    CHECK(record_licensed("me@example.com", "123456789012"));
     static char buf[65536];
-    size_t n = gunzip_into(shared, buf, sizeof buf);
-    CHECK(n > 16);
-    CHECK(memcmp(buf + n - 8, "LWSTART6", 8) != 0);
+    size_t n = gunzip_into(file, buf, sizeof buf);
+    const char *section = "..ME@EXAMPLE.COM..";
+    size_t len = strlen(section);
+    CHECK(n + len + 16 < sizeof buf);
+    memcpy(buf + n, section, len);
+    for (int b = 0; b < 8; b++)
+        buf[n + len + (size_t)b] = (char)((uint64_t)len >> (8 * b));
+    memcpy(buf + n + len + 8, "LWSTART6", 8);
+    CHECK(gzip_to(file, buf, n + len + 16));
+    char shared[1300], err[256];
+    snprintf(shared, sizeof shared, "%s/shared.lwreplay", dir);
+    CHECK(replay_share(file, shared, err, sizeof err));
+    uint8_t *got, identity[32];
+    size_t got_len;
+    CHECK(replay_file_snapshot(file, &got, &got_len, identity, err, sizeof err));
+    CHECK(got && got_len == len);
+    free(got);
+    CHECK(replay_file_snapshot(shared, &got, &got_len, identity, err, sizeof err));
+    CHECK(got == NULL);
 }
 
 /* Format 5, which has no snapshot, reads as it did. */
