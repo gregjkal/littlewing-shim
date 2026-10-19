@@ -119,11 +119,12 @@ bool replay_find_recording(const char *dir, const char *game_id, time_t when, ch
    The game only checks the license, and never shows it, so the frames are
    the same. Everything else is shared as recorded: the high-score names,
    and anything typed while playing. A recording still being written copies
-   to its last frame check. The copy leaves out src's snapshot of the
-   game's start (replay_snapshot), which only the install that took it
-   uses (gamestart.h). False, with err, if src can't be read, was played
-   unregistered (with the viewer's license its replay would start
-   differently), or dst can't be written. */
+   to its last frame check. The copy keeps src's snapshot of the game's
+   start (replay_snapshot), which fits it too (replay_identity), so its
+   replay starts at the game on the recipient's Mac (gamestart.h); one
+   whose bytes hold the license as text is left out. False, with err, if
+   src can't be read, was played unregistered (with the viewer's license
+   its replay would start differently), or dst can't be written. */
 bool replay_share(const char *src, const char *dst, char *err, size_t errlen);
 
 /* After replay_open: the snapshot section of the file being replayed
@@ -147,8 +148,12 @@ bool replay_file_snapshot(const char *path, uint8_t **section, size_t *len,
    snapshot section, in its place (in format 6), keeping the file's mode
    and the time of its last write (which says which high score it holds).
    False, logged, when the recording has no end record yet, when section
-   holds the license (the recording's, or the one this replay gave the
-   game, in any case), or when the file can't be written. */
+   holds the license as text (the recording's, or the one this replay gave
+   the game, in any case), or when the file can't be written. That scan of
+   the section's bytes is only a backstop: it can't see into the guest
+   pages, which the section holds XORed with the baseline's. What keeps the
+   license out of those is the scan of the snapshot's changed pages at
+   capture (snapshot_changed_holds, gamestart.h). */
 bool replay_set_snapshot(const uint8_t *section, size_t len);
 
 /* Before the app restarts to watch path, so a file it can't play doesn't

@@ -7,6 +7,10 @@
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
 #include <mach/mach.h>
+#include <errno.h>
+#include <spawn.h>
+#include <signal.h>
+#include <sys/wait.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +20,7 @@
 
 #include "cf.h"
 #include "events.h"
+#include "export.h"
 #include "guest_mem.h"
 #include "replay.h"
 #include "rsrc.h"
@@ -53,6 +58,7 @@ typedef struct {
 
 static struct {
     bool on;
+    bool take; /* LOONY_GAMESTART=take: exit once done */
     trap_entry_fn next; /* the hook this one runs after it (seek's) */
     enum { TO_BASELINE, TO_START, VERIFYING, DONE } phase;
     uint64_t limit_us;  /* gamestart_limit's, or UINT64_MAX */
@@ -282,10 +288,15 @@ static bool same_recording(const section *s, const uint8_t identity[HASH_LEN], c
 
 /* ---- the baseline and the game's start ---- */
 
-/* Stops watching: the hook goes back to the one it runs after. */
+/* Stops watching: the hook goes back to the one it runs after. Taking
+   alone, the replay has done what it was for. */
 static void done(void) {
     G.phase = DONE;
     trap_on_entry(G.next);
+    if (G.take) {
+        log_msg("gamestart: done taking, at %.3f s", secs(replay_now_us()));
+        exit(0);
+    }
 }
 
 /* The snapshot in the recording, decoded at the baseline (where guest
@@ -509,6 +520,7 @@ static uint32_t on_entry(uint32_t index) {
 void gamestart_init(void) {
     const char *v = getenv("LOONY_GAMESTART");
     G.on = replay_playing() && !(v && strcmp(v, "0") == 0);
+    G.take = G.on && v && strcmp(v, "take") == 0;
     if (!G.on)
         return;
     G.phase = TO_BASELINE;
@@ -521,11 +533,87 @@ void gamestart_limit(uint64_t clock_us) {
         G.limit_us = clock_us;
 }
 
-void gamestart_reset(void) {
-    if (G.on && G.phase != DONE)
-        trap_on_entry(G.next);
-    snapshot_free(G.base);
-    snapshot_free(G.loaded);
-    memset(&G, 0, sizeof G);
-    G.limit_us = UINT64_MAX;
+void gamestart_memory_hash(uint8_t out[HASH_LEN]) { memory_hash(out); }
+
+bool gamestart_in_file(const char *path) {
+    uint8_t *section, identity[HASH_LEN];
+    size_t len;
+    char err[256];
+    bool has = replay_file_snapshot(path, &section, &len, identity, err, sizeof err) && section;
+    free(section);
+    return has;
+}
+
+/* The second copy taking a snapshot for a share. */
+static struct {
+    pid_t pid; /* 0: none */
+    char path[PATH_MAX];
+} child;
+
+extern char **environ;
+
+bool gamestart_take_start(const char *self, const char *path, char *err, size_t errlen) {
+    if (child.pid) {
+        snprintf(err, errlen, "a snapshot is being taken already");
+        return false;
+    }
+    char replay[PATH_MAX + 16];
+    snprintf(replay, sizeof replay, "LOONY_REPLAY=%s", path);
+    const char *set[] = {replay, "LOONY_GAMESTART=take", "LOONY_HD=off", "SDL_VIDEO_DRIVER=dummy",
+                         "SDL_AUDIO_DRIVER=dummy", "LOONY_LOG_INHERITED=1", NULL};
+    char **env = export_env_with(environ, set);
+    posix_spawn_file_actions_t actions;
+    posix_spawnattr_t attr;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawnattr_init(&attr);
+    /* Only stdin, and stderr (this program's log), reach it. */
+    posix_spawn_file_actions_addinherit_np(&actions, STDIN_FILENO);
+    posix_spawn_file_actions_addinherit_np(&actions, STDERR_FILENO);
+    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
+    sigset_t none, all;
+    sigemptyset(&none);
+    sigfillset(&all);
+    posix_spawnattr_setsigmask(&attr, &none);
+    posix_spawnattr_setsigdefault(&attr, &all);
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK |
+                                        POSIX_SPAWN_SETSIGDEF);
+    pid_t pid = 0;
+    int rc = env ? posix_spawn(&pid, self, &actions, &attr, (char *const[]){(char *)self, NULL}, env)
+                 : ENOMEM;
+    posix_spawn_file_actions_destroy(&actions);
+    posix_spawnattr_destroy(&attr);
+    export_free_env(env);
+    if (rc != 0) {
+        snprintf(err, errlen, "can't start %s: %s", self, strerror(rc));
+        return false;
+    }
+    child.pid = pid;
+    snprintf(child.path, sizeof child.path, "%s", path);
+    log_msg("gamestart: taking a snapshot of the game's start into %s (process %d)", path, (int)pid);
+    return true;
+}
+
+bool gamestart_take_poll(bool *kept) {
+    *kept = false;
+    if (!child.pid)
+        return true;
+    int st = 0;
+    pid_t r = waitpid(child.pid, &st, WNOHANG);
+    if (r == 0 || (r < 0 && errno == EINTR))
+        return false;
+    child.pid = 0;
+    *kept = gamestart_in_file(child.path);
+    if (!*kept)
+        log_msg("gamestart: no snapshot was taken into %s (%s %d)", child.path,
+                r > 0 && WIFSIGNALED(st) ? "signal" : "status",
+                r > 0 ? (WIFSIGNALED(st) ? WTERMSIG(st) : WEXITSTATUS(st)) : -1);
+    return true;
+}
+
+void gamestart_take_stop(void) {
+    if (!child.pid)
+        return;
+    kill(child.pid, SIGTERM); /* replay_set_snapshot finishes its rename first */
+    waitpid(child.pid, NULL, 0);
+    child.pid = 0;
 }

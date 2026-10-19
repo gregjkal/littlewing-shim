@@ -4,6 +4,7 @@
 #include <limits.h>
 #include <mach-o/dyld.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -99,6 +100,46 @@ void test_remove_tree(const char *path) {
         fprintf(stderr, "can't remove %s\n", path);
 }
 
+/* The output of the children test_run_child ran in the current test that
+   didn't exit with status 0, the last KEPT_CHILDREN of them, each its
+   last KEPT_BYTES: printed if the test fails, since a test keeps a child's
+   output in a buffer it checks, and a crash or an unexpected status
+   otherwise leaves nothing to go on. */
+#define KEPT_CHILDREN 4
+#define KEPT_BYTES 16384
+static struct {
+    char *text;
+    int status;
+} kept[KEPT_CHILDREN];
+static int nkept;
+
+static void keep_child(const char *out, int status) {
+    size_t len = strlen(out);
+    const char *from = len > KEPT_BYTES ? out + len - KEPT_BYTES : out;
+    int slot = nkept++ % KEPT_CHILDREN;
+    free(kept[slot].text);
+    kept[slot].text = strdup(from);
+    kept[slot].status = status;
+}
+
+static void print_kept(void) {
+    int first = nkept > KEPT_CHILDREN ? nkept - KEPT_CHILDREN : 0;
+    for (int k = first; k < nkept; k++) {
+        int slot = k % KEPT_CHILDREN;
+        fprintf(stderr, "  child %d of the test exited with status %d; its output%s:\n%s\n", k + 1,
+                kept[slot].status, strlen(kept[slot].text) >= KEPT_BYTES ? ", the end of it" : "",
+                kept[slot].text ? kept[slot].text : "");
+    }
+}
+
+static void forget_kept(void) {
+    for (int k = 0; k < KEPT_CHILDREN; k++) {
+        free(kept[k].text);
+        kept[k].text = NULL;
+    }
+    nkept = 0;
+}
+
 int test_run_child(void (*fn)(void *), void *arg, char *out, size_t outlen) {
     int fds[2];
     if (pipe(fds) != 0)
@@ -130,7 +171,10 @@ int test_run_child(void (*fn)(void *), void *arg, char *out, size_t outlen) {
     close(fds[0]);
     int status = 0;
     waitpid(pid, &status, 0);
-    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    int code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    if (code != 0)
+        keep_child(out, code);
+    return code;
 }
 
 /* Set in the forked child a test runs in (start_test). */
@@ -193,6 +237,8 @@ static pid_t start_test(int i, const char *data_dir, const char *out_path) {
     cur_failed = cur_skipped = false;
     forked = true;
     tests[i].fn();
+    if (cur_failed)
+        print_kept();
     fflush(stdout);
     fflush(stderr);
     _exit(cur_failed ? CHILD_FAILED : cur_skipped ? CHILD_SKIPPED : CHILD_PASSED);
@@ -243,10 +289,13 @@ int main(int argc, char **argv) {
             if (!selected(tests[i].name, filter))
                 continue;
             cur_failed = cur_skipped = false;
+            forget_kept();
             fprintf(stderr, "%s\n", tests[i].name);
             tests[i].fn();
-            if (cur_failed)
+            if (cur_failed) {
+                print_kept();
                 failures[failed++] = tests[i].name;
+            }
             else if (cur_skipped)
                 skipped++;
             else

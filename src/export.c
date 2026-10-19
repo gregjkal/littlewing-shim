@@ -154,25 +154,46 @@ static char *joined(const char *name, const char *value) {
     return s;
 }
 
-char **export_child_env(char *const *env, export_kind kind, const char *replay) {
-    size_t count = 0;
+/* Whether entry sets one of the names set sets. */
+static bool is_set(const char *entry, const char *const *set) {
+    for (size_t i = 0; set[i]; i++) {
+        size_t n = strcspn(set[i], "=");
+        if (strncmp(entry, set[i], n) == 0 && entry[n] == '=')
+            return true;
+    }
+    return false;
+}
+
+char **export_env_with(char *const *env, const char *const *set) {
+    size_t count = 0, nset = 0;
     while (env && env[count])
         count++;
-    char **out = calloc(count + 5, sizeof *out);
+    while (set[nset])
+        nset++;
+    char **out = calloc(count + nset + 1, sizeof *out);
     if (!out)
         return NULL;
     size_t n = 0;
     for (size_t i = 0; i < count; i++)
-        if (!is_dropped(env[i]) && !(out[n++] = strdup(env[i])))
+        if (!is_dropped(env[i]) && !is_set(env[i], set) && !(out[n++] = strdup(env[i])))
             goto fail;
-    if (!(out[n++] = joined("LOONY_CLIP", kind == EXPORT_MARKS ? "marks" : "clips")) ||
-        !(out[n++] = joined("LOONY_CLIP_PROGRESS", "1")) || !(out[n++] = joined("LOONY_REPLAY", replay)) ||
-        !(out[n++] = joined("LOONY_LOG_INHERITED", "1")))
-        goto fail;
+    for (size_t i = 0; i < nset; i++)
+        if (!(out[n++] = strdup(set[i])))
+            goto fail;
     return out;
 fail:
     export_free_env(out);
     return NULL;
+}
+
+char **export_child_env(char *const *env, export_kind kind, const char *replay) {
+    char *set[] = {joined("LOONY_CLIP", kind == EXPORT_MARKS ? "marks" : "clips"),
+                   joined("LOONY_CLIP_PROGRESS", "1"), joined("LOONY_REPLAY", replay),
+                   joined("LOONY_LOG_INHERITED", "1"), NULL};
+    char **out = set[0] && set[1] && set[2] && set[3] ? export_env_with(env, (const char *const *)set) : NULL;
+    for (int i = 0; i < 4; i++)
+        free(set[i]);
+    return out;
 }
 
 void export_free_env(char **env) {

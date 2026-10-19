@@ -11,13 +11,14 @@
 #include <unistd.h>
 #include <zlib.h>
 
-#include <CommonCrypto/CommonHMAC.h>
 
 #include "cgimage.h"
 #include "clip.h"
+#include "gamestart.h"
 #include "mp4.h"
 #include "plist.h"
 #include "recordings.h"
+#include "replay.h"
 #include "util.h"
 #include "watch.h"
 
@@ -2587,11 +2588,10 @@ TEST(run_three_minutes_of_monster_fair_match_the_recording) {
     CHECK_STR(got, "f0797114 9453e91a f7f53dc9 ef2e653a");
 }
 
-/* Changes byte at (from the start of the snapshot section) of the recording
-   at path, as a damaged file or a foreign baseline would; with sign, signs
-   the section again with this install's key (gamestart.h), so only the
-   byte is wrong. */
-static bool damage_section(const char *path, size_t at, bool sign) {
+/* Edits the snapshot section of the recording at path in place: edit gets
+   the section, its length and the room after it, and returns its new
+   length. False if the recording has no section, or can't be written. */
+static bool edit_section(const char *path, size_t (*edit)(uint8_t *section, size_t len, size_t room)) {
     static uint8_t buf[8 << 20];
     gzFile g = gzopen(path, "rb");
     int n = g ? gzread(g, buf, sizeof buf) : -1;
@@ -2602,27 +2602,69 @@ static bool damage_section(const char *path, size_t at, bool sign) {
     uint64_t len = 0;
     for (int b = 0; b < 8; b++)
         len |= (uint64_t)buf[n - 16 + b] << (8 * b);
-    uint8_t *section = buf + (size_t)n - 16 - len;
-    section[at] ^= 0xFF;
-    if (sign) {
-        char key_path[1100];
-        snprintf(key_path, sizeof key_path, "%s/Library/Application Support/littlewing-shim/snapshot.key",
-                 getenv("HOME"));
-        size_t key_len = 0;
-        uint8_t *key = read_file(key_path, &key_len);
-        if (!key || key_len != CC_SHA256_DIGEST_LENGTH) {
-            free(key);
-            return false;
-        }
-        CCHmac(kCCHmacAlgSHA256, key, key_len, section, len - CC_SHA256_DIGEST_LENGTH,
-               section + len - CC_SHA256_DIGEST_LENGTH);
-        free(key);
-    }
+    size_t at = (size_t)n - 16 - (size_t)len;
+    size_t new_len = edit(buf + at, (size_t)len, sizeof buf - at - 16);
+    for (int b = 0; b < 8; b++)
+        buf[at + new_len + (size_t)b] = (uint8_t)((uint64_t)new_len >> (8 * b));
+    memcpy(buf + at + new_len + 8, "LWSTART6", 8);
+    size_t total = at + new_len + 16;
     g = gzopen(path, "wb6");
-    bool ok = g && gzwrite(g, buf, (unsigned)n) == n;
+    bool ok = g && gzwrite(g, buf, (unsigned)total) == (int)total;
     if (g && gzclose(g) != Z_OK)
         ok = false;
     return ok;
+}
+
+static uint64_t le_at(const uint8_t *p, int bytes) {
+    uint64_t v = 0;
+    for (int i = 0; i < bytes; i++)
+        v |= (uint64_t)p[i] << (8 * i);
+    return v;
+}
+
+static void put_le(uint8_t *p, uint64_t v, int bytes) {
+    for (int i = 0; i < bytes; i++)
+        p[i] = (uint8_t)(v >> (8 * i));
+}
+
+/* Where the snapshot's encoding starts in a section (gamestart.c): after
+   the header, its 124 bytes ending with the count of resources left out,
+   those resources (12 bytes each) and the encoding's length. In the
+   encoding (snapshot.c): the program counter after 28 bytes of header and
+   the 64 general and floating-point registers, and the module state's
+   length after the CPU, both levels and the frame. */
+#define SECTION_BODY(s) (124 + 12 * (size_t)le_at((s) + 120, 4) + 8)
+#define BODY_PC (28 + 64 * 8)
+#define BODY_STATE_LEN (28 + 3 * 71 * 8 + 2 * 12 + 32)
+
+/* The baseline's hash, as another copy of the game's would be. */
+static size_t damage_baseline(uint8_t *section, size_t len, size_t room) {
+    (void)room;
+    section[8 + 16 + 32 + 16] ^= 0xFF;
+    return len;
+}
+
+/* The program counter, in the game's data. */
+static size_t pc_in_data(uint8_t *section, size_t len, size_t room) {
+    (void)room;
+    put_le(section + SECTION_BODY(section) + BODY_PC, 0x00500000u, 4);
+    return len;
+}
+
+/* One more page, the first of the game's code (the PEF's first section,
+   at the start of the image), with a byte changed. */
+static size_t code_page(uint8_t *section, size_t len, size_t room) {
+    size_t page = (size_t)getpagesize(), body = SECTION_BODY(section);
+    if (room < 4 + page)
+        return len;
+    uint64_t state_len = le_at(section + body + BODY_STATE_LEN, 8);
+    uint8_t *count = section + body + BODY_STATE_LEN + 8 + state_len;
+    put_le(count, le_at(count, 4) + 1, 4);
+    put_le(section + len, 0x00100000u / page, 4);
+    memset(section + len + 4, 0, page);
+    section[len + 4 + 0x100] = 1;
+    put_le(section + body - 8, le_at(section + body - 8, 8) + 4 + page, 8);
+    return len + 4 + page;
 }
 
 /* The preferences a replay in play_dir/data-name left. */
@@ -2637,37 +2679,40 @@ static char *prefs_of(const char *play_dir, const char *name) {
    the second goes to the game's start from the baseline and plays on with
    every frame check matching, to the same last frame and the same
    preferences. Verifying, a replay from launch is the snapshot where it
-   was taken. A snapshot this install didn't sign, or whose baseline
-   doesn't match, is said not to fit, and replaced; LOONY_GAMESTART=0
-   neither uses one nor takes one. */
+   was taken. A snapshot whose baseline doesn't match, whose program
+   counter is in the game's data, or which changes the game's code, is
+   said not to fit, and replaced; LOONY_GAMESTART=0 neither uses one nor
+   takes one. */
 TEST(run_a_recorded_game_starts_at_the_game_from_its_snapshot) {
     SKIP_UNLESS_GAME();
     SKIP_UNLESS_SLOW();
     char rec_dir[1024], play_dir[1024];
     test_tmp_dir(rec_dir, sizeof rec_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
-    static char out[7][65536];
+    static char out[8][65536];
     int rec_status = record_one_game(rec_dir, true, out[0], sizeof out[0]);
-    uint32_t shot[6], wav[6];
-    int status[6];
+    uint32_t shot[7], wav[7];
+    int status[7];
     status[0] = replay_hashed(play_dir, "first", out[1], sizeof out[1], &shot[0], &wav[0]);
     status[1] = replay_hashed(play_dir, "second", out[2], sizeof out[2], &shot[1], &wav[1]);
     setenv("LOONY_SNAPSHOT_VERIFY", "1", 1);
     status[2] = replay_hashed(play_dir, "verify", out[3], sizeof out[3], &shot[2], &wav[2]);
     unsetenv("LOONY_SNAPSHOT_VERIFY");
-    /* 8 + 16 + 32 + 16: the baseline's hash */
-    bool damaged = damage_section(replay_file, 72, false);
-    status[3] = replay_hashed(play_dir, "damaged", out[4], sizeof out[4], &shot[3], &wav[3]);
-    bool resigned = damage_section(replay_file, 72, true);
-    status[4] = replay_hashed(play_dir, "baseline", out[5], sizeof out[5], &shot[4], &wav[4]);
+    bool edited[3];
+    edited[0] = edit_section(replay_file, damage_baseline);
+    status[3] = replay_hashed(play_dir, "baseline", out[4], sizeof out[4], &shot[3], &wav[3]);
+    edited[1] = edit_section(replay_file, pc_in_data);
+    status[4] = replay_hashed(play_dir, "pc", out[5], sizeof out[5], &shot[4], &wav[4]);
+    edited[2] = edit_section(replay_file, code_page);
+    status[5] = replay_hashed(play_dir, "code", out[6], sizeof out[6], &shot[5], &wav[5]);
     setenv("LOONY_GAMESTART", "0", 1);
-    status[5] = replay_hashed(play_dir, "off", out[6], sizeof out[6], &shot[5], &wav[5]);
+    status[6] = replay_hashed(play_dir, "off", out[7], sizeof out[7], &shot[6], &wav[6]);
     unsetenv("LOONY_GAMESTART");
     char *prefs[2] = {prefs_of(play_dir, "first"), prefs_of(play_dir, "second")};
     test_remove_tree(rec_dir);
     test_remove_tree(play_dir);
     CHECK_EQ(rec_status, 0);
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 7; i++) {
         CHECK_EQ(status[i], 0);
         CHECK_CONTAINS(out[i + 1], "loony: replay: reached the end of the recording");
         CHECK(!strstr(out[i + 1], "replay: desync"));
@@ -2687,14 +2732,107 @@ TEST(run_a_recorded_game_starts_at_the_game_from_its_snapshot) {
     CHECK_CONTAINS(out[3], "gamestart: verify: decoded the recording's snapshot at the baseline");
     CHECK_CONTAINS(out[3], " the replay from launch is the recording's snapshot");
     CHECK_EQ(wav[2], wav[0]); /* from launch, it sounds the same */
-    CHECK(damaged);
-    CHECK_CONTAINS(out[4], "gamestart: the recording's snapshot can't be used: it wasn't taken by "
-                           "this install");
-    CHECK_CONTAINS(out[4], "; replaying from launch");
-    CHECK_CONTAINS(out[4], "gamestart: kept a snapshot of the game's start at ");
-    CHECK(resigned);
-    CHECK_CONTAINS(out[5], "gamestart: the recording's snapshot can't be used: the replay's baseline");
-    CHECK_CONTAINS(out[5], "gamestart: kept a snapshot of the game's start at ");
-    CHECK(!strstr(out[6], "gamestart:"));
-    CHECK_EQ(wav[5], wav[0]);
+    for (int i = 0; i < 3; i++)
+        CHECK(edited[i]);
+    CHECK_CONTAINS(out[4], "gamestart: the recording's snapshot can't be used: the replay's baseline");
+    CHECK_CONTAINS(out[5], "gamestart: the recording's snapshot can't be used: the CPU's pc is "
+                           "0x00500000, outside the game's code; replaying from launch");
+    CHECK_CONTAINS(out[6], "gamestart: the recording's snapshot can't be used: it changes the game's "
+                           "code, at 0x00100100; replaying from launch");
+    for (int i = 4; i <= 6; i++)
+        CHECK_CONTAINS(out[i], "gamestart: kept a snapshot of the game's start at ");
+    CHECK(!strstr(out[7], "gamestart:"));
+    CHECK_EQ(wav[6], wav[0]);
+}
+
+/* Writes Loony Labyrinth's preferences, registered to email with key,
+   into dir (made). */
+static bool write_license(const char *dir, const char *email, const char *key) {
+    char path[1200];
+    snprintf(path, sizeof path, "%s/prefs.plist", dir);
+    if (!make_dirs(dir))
+        return false;
+    FILE *f = fopen(path, "w");
+    if (!f)
+        return false;
+    fprintf(f, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>"
+               "<key>user email</key><string>%s</string><key>user id</key><string>%s</string>"
+               "</dict></plist>\n",
+            email, key);
+    return fclose(f) == 0;
+}
+
+/* A home folder of its own, as another Mac's, with Loony Labyrinth
+   registered there: its path in home. */
+static bool other_home(char *home, size_t cap, const char *email, const char *key) {
+    test_tmp_dir(home, cap);
+    char dir[1200];
+    snprintf(dir, sizeof dir, "%s/Library/Application Support/littlewing-shim/loony-labyrinth", home);
+    return write_license(dir, email, key);
+}
+
+/* A shared copy of a recorded game (replay_share) takes a snapshot of the
+   game's start the way the High Scores menu has it taken, by a second copy
+   of LittleWing replaying the shared copy (gamestart_take_start), under the
+   sharer's home folder. Replayed under another home folder, as on the
+   recipient's Mac, it goes to the game's start from that snapshot and
+   ends on the same frame as a replay of it from launch. */
+TEST(run_a_shared_game_starts_at_the_game_on_another_install) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_SLOW();
+    const char *email = getenv("LOONY_TEST_EMAIL"), *key = getenv("LOONY_TEST_KEY");
+    if (!email || !*email || !key || !*key) {
+        test_skip("LOONY_TEST_EMAIL and LOONY_TEST_KEY aren't set");
+        return;
+    }
+    char rec_dir[1024], play_dir[1024], sharer[1024], viewer[1024], shared[1200], err[1024];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    bool homes = write_license(rec_dir, email, key) && other_home(sharer, sizeof sharer, email, key) &&
+                 other_home(viewer, sizeof viewer, email, key);
+    static char out[3][65536];
+    int rec_status = record_one_game(rec_dir, true, out[0], sizeof out[0]);
+    snprintf(shared, sizeof shared, "%s/shared.lwreplay", play_dir);
+    bool share_ok = replay_share(replay_file, shared, err, sizeof err);
+    bool had = gamestart_in_file(shared);
+    setenv("HOME", sharer, 1);
+    bool started = gamestart_take_start(LOONY_BIN, shared, err, sizeof err), kept = false;
+    for (int i = 0; started && i < 6000 && !gamestart_take_poll(&kept); i++)
+        usleep(100000);
+    /* The replays below have a data folder of their own (LOONY_DATA_DIR), so
+       the viewer's license is named, as it would be found under HOME. */
+    char license[1300];
+    snprintf(license, sizeof license, "%s/Library/Application Support/littlewing-shim/loony-labyrinth/prefs.plist",
+             viewer);
+    setenv("HOME", viewer, 1);
+    setenv("LOONY_REPLAY_LICENSE", license, 1);
+    snprintf(replay_file, sizeof replay_file, "%s", shared);
+    uint32_t shot[2], wav[2];
+    int status[2];
+    status[0] = replay_hashed(play_dir, "viewer", out[1], sizeof out[1], &shot[0], &wav[0]);
+    setenv("LOONY_GAMESTART", "0", 1);
+    status[1] = replay_hashed(play_dir, "launch", out[2], sizeof out[2], &shot[1], &wav[1]);
+    unsetenv("LOONY_GAMESTART");
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    test_remove_tree(sharer);
+    test_remove_tree(viewer);
+    CHECK(homes);
+    CHECK_EQ(rec_status, 0);
+    CHECK(share_ok);
+    CHECK(!had);
+    CHECK(started);
+    CHECK(kept);
+    for (int i = 0; i < 2; i++) {
+        CHECK_EQ(status[i], 0);
+        CHECK_CONTAINS(out[i + 1], "loony: replay: reached the end of the recording");
+        CHECK(!strstr(out[i + 1], "replay: desync"));
+    }
+    CHECK_CONTAINS(out[1], "gamestart: going to the game's start at ");
+    CHECK(!strstr(out[1], "gamestart: kept"));
+    CHECK(shot[0] != 0);
+    CHECK_EQ(shot[0], shot[1]);
+    CHECK_EQ(frames_checked(out[1]), frames_checked(out[2]));
+    CHECK(!strstr(out[1], email));
+    CHECK(!strstr(out[1], key));
 }
