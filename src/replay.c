@@ -122,6 +122,7 @@ static struct {
     size_t nspans;
     size_t records_at;    /* where the records start in data (the header's length) */
     bool ended;           /* the records end with an end record */
+    uint64_t end_us;      /* the clock at the last record */
     const uint8_t *snap;  /* the snapshot section in data, or NULL */
     size_t snap_len;
     uint8_t identity[CC_SHA256_DIGEST_LENGTH]; /* replay_identity */
@@ -151,6 +152,7 @@ static void snap_walk(snapshot_walker *w) {
     SNAPSHOT_HOST(w, R.nmark_ticks);
     SNAPSHOT_HOST(w, R.nspans);
     SNAPSHOT_HOST(w, R.ended);
+    SNAPSHOT_HOST(w, R.end_us);
     snapshot_check(w, R.next.kind >= 0 && R.next.kind < REPLAY_KINDS &&
                           memchr(R.next.text, 0, sizeof R.next.text),
                    "the next record");
@@ -442,6 +444,8 @@ uint32_t replay_play_ticks(uint32_t clock_ticks) {
     return tick_of_us(replay_play_us(us_of_tick(clock_ticks)));
 }
 
+uint32_t replay_play_length(void) { return tick_of_us(play_us_in(R.spans, R.nspans, R.end_us)); }
+
 uint32_t replay_clock_ticks(uint32_t play_ticks) {
     uint64_t us = replay_clock_us(us_of_tick(play_ticks));
     return us >= us_of_tick(UINT32_MAX) ? UINT32_MAX : tick_of_us(us);
@@ -623,6 +627,7 @@ bool replay_open(char *err, size_t errlen) {
     R.spans = found.spans;
     R.nspans = found.nspans;
     R.ended = found.ended;
+    R.end_us = found.end_ms * 1000;
     identity_of(&R.h, R.data + R.records_at, R.in.len - R.records_at, R.identity);
     R.loaded = true;
     const char *game = getenv("LOONY_GAME");
