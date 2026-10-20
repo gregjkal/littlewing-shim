@@ -490,8 +490,8 @@ LOONY_REPLAY=game.lwreplay LOONY_CLIP=clips ./build-release/loony
 | Space, K | Pause, or go on |
 | J, L | Back or ahead 10 seconds (with Shift, a minute) |
 | Left, Right | Back or ahead 5 seconds |
-| `,` and `.` (comma, period) | While paused, back or ahead a frame (1/60 s) |
-| 0 to 9 | Go to that tenth of the recording: 0 is its start, 5 its middle |
+| `,` and `.` (comma, period) | While paused, back or ahead a frame (1/60 s); comma at the end too, which pauses there |
+| 0 to 9 (on the keypad too) | Go to that tenth of the recording: 0 is its start, 5 its middle |
 | `<`, `>` (Shift-comma, Shift-period) | Slower or faster: 1x, 2x, 4x, 8x, as fast as it can |
 | I, O | Where a clip starts, and where it ends (O saves it) |
 | E | Export the clips, as `LOONY_CLIP=clips` does |
@@ -540,7 +540,8 @@ frame stays up until you close the window or go back. At 1x each minute of
 play logs how long it took on the wall clock: within a few milliseconds.
 The keys of a `LOONY_SCRIPT` go to the viewer too (`60 down i`), at the
 replay's ticks, so after going back the next one comes when the replay
-gets there again; headless, the ones left at the end come at once.
+gets there again; headless, the ones left come at once at the end or
+while paused, and paused with none left, the viewer goes on.
 
 `LOONY_SNAPSHOT_VERIFY=1` checks the snapshots as they are used, for
 debugging a seek that desyncs. Each one is put back the moment it is taken
