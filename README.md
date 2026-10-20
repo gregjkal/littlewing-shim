@@ -490,7 +490,7 @@ LOONY_REPLAY=game.lwreplay LOONY_CLIP=clips ./build-release/loony
 | Space, K | Pause, or go on |
 | J, L | Back or ahead 10 seconds (with Shift, a minute) |
 | Left, Right | Back or ahead 5 seconds |
-| `,` and `.` (comma, period) | While paused, back or ahead a frame (1/60 s) |
+| `,` and `.` (comma, period) | While paused, back or ahead a frame (1/60 s); comma at the end too, which pauses there |
 | 0 to 9 (on the keypad too) | Go to that tenth of the recording: 0 is its start, 5 its middle |
 | `<`, `>` (Shift-comma, Shift-period) | Slower or faster: 1x, 2x, 4x, 8x, as fast as it can |
 | I, O | Where a clip starts, and where it ends (O saves it) |

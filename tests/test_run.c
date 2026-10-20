@@ -1138,6 +1138,9 @@ TEST(run_a_watched_game_steps_one_frame_at_a_time) {
                                       "2300 down z\n2310 up z\n2400 down slash\n2410 up slash\n"
                                       "2900 quit\n",
                                       out[0], sizeof out[0]);
+    replay_summary s = {0};
+    char err[256] = "";
+    bool summed = replay_summarize(replay_file, &s, err, sizeof err);
     setenv("LOONY_WATCH_FROM", "300", 1);
     setenv("LOONY_WATCH_PAUSED", "1", 1);
     watch_speed = "0";
@@ -1154,18 +1157,23 @@ TEST(run_a_watched_game_steps_one_frame_at_a_time) {
     test_remove_tree(rec_dir);
     test_remove_tree(play_dir);
     CHECK_EQ(rec_status, 0);
+    CHECK(summed);
     CHECK_EQ(watch_status, 0);
+    char before_end[64], t[32];
+    snprintf(before_end, sizeof before_end, "watch: back to %s\n",
+             clip_format_time(s.play_ticks - 1, t, sizeof t));
+    replay_summary_free(&s);
     const char *at = strstr(out[1], "watch: reached 0:05\n");
     CHECK(at);
     for (uint32_t tick = 301; at && tick <= 303; tick++) {
-        char want[64], t[32];
+        char want[64];
         snprintf(want, sizeof want, "watch: going to %s\n", clip_format_time(tick, t, sizeof t));
         at = strstr(at, want);
         CHECK(at);
     }
     /* comma at the end: a frame back, and paused there with the script
        spent, it goes on again to the end */
-    at = at ? strstr(at, "watch: back to ") : NULL;
+    at = at ? strstr(at, before_end) : NULL;
     CHECK(at);
     CHECK(strstr(at, "watch: going on at "));
     CHECK(strstr(at, "replay: reached the end of the recording"));

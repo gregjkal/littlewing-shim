@@ -151,8 +151,7 @@ TEST(watch_arrows_step_5_s_and_speed_is_on_angle_brackets) {
 
 /* The Replay menu is built from watch_bindings: each action has one row
    with a label, but the tenths (0 to 9), which have two keys each (the
-   digit and the keypad's) and no item,
-   and no key does two things. */
+   digit and the keypad's) and no item, and no key does two things. */
 TEST(watch_bindings_list_each_action_once) {
     for (int a = WATCH_PLAY_PAUSE; a <= WATCH_CANCEL_EXPORT; a++) {
         int labelled = 0, keys = 0;

@@ -320,7 +320,7 @@ static void pace(uint64_t clock_us) {
         anchor();
     }
     for (;;) {
-        if (W.going || W.seeking) { /* J or L while waiting: paused or not, it goes */
+        if (W.going || W.seeking) { /* a key while waiting: paused or not, it goes */
             pace(clock_us); /* from this read, which may already be there */
             return;
         }

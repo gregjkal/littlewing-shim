@@ -46,7 +46,7 @@
    otherwise just goes on without pacing. Until the seek is served, at the
    replay's next trap entry where one can be, nothing waits: a pause or the
    pacing let the replay run. The pause, the speed and a clip's start stay
-   as they were. LOONY_WATCH_FROM (ticks) is a time to start at,
+   as they were, but comma at the end pauses there. LOONY_WATCH_FROM (ticks) is a time to start at,
    LOONY_WATCH_SPEED (1, 2, 4, 8 or 0 for as fast as it can) the speed,
    LOONY_WATCH_PAUSED=1 pauses there, and LOONY_WATCH_IN (ticks) is a clip's
    start not yet ended. A LOONY_SCRIPT's actions go by the replay's clock, so
@@ -54,7 +54,8 @@
    At the replay's end, or when the game quits, the last frame stays up
    until the window is closed or a key goes back (with SDL_VIDEO_DRIVER=dummy
    the script's actions left come at once instead, and then it exits once an
-   export has finished). */
+   export has finished). Headless and paused, they come at once too, and
+   with none left the viewer goes on. */
 
 #define WATCH_MAX_LAG 0.1 /* seconds */
 #define WATCH_SMALL_STEP_TICKS 300  /* Left and Right: 5 s */
@@ -120,7 +121,8 @@ void watch_act(watch_action action, bool repeat);
 
 /* Whether the action can be done now, for its menu item: an export only
    while none runs, cancelling only while one does, pausing not at the
-   replay's end. */
+   replay's end, a frame back while paused or at the end, and a frame ahead
+   while paused but not at the end. */
 bool watch_can(watch_action action);
 
 /* After replay_open and clip_open: reads LOONY_WATCH and the settings a
