@@ -11,6 +11,8 @@
      Space, K      pause, or go on
      J, L          back or ahead 10 seconds (Shift: a minute)
      Left, Right   back or ahead 5 seconds
+     ",", "."      while paused, back or ahead a frame (a tick, 1/60 s)
+     0 to 9        to that tenth of the recording (replay_play_length)
      <, >          slower or faster: 1x, 2x, 4x, 8x, as fast as it can
      I, O          the start and end of a clip; O saves it
      E             export the clips (LOONY_CLIP=clips, export.h)
@@ -57,16 +59,31 @@
 #define WATCH_SMALL_STEP_TICKS 300  /* Left and Right: 5 s */
 #define WATCH_STEP_TICKS 600        /* J and L: 10 s */
 #define WATCH_BIG_STEP_TICKS 3600   /* with Shift: a minute */
+#define WATCH_FRAME_TICKS 1         /* comma and period: a frame */
 
 /* What the viewer's keys and the Replay menu's items do. */
 typedef enum {
     WATCH_PLAY_PAUSE,
+    /* the steps, which go on while their key is held: */
     WATCH_BACK_SMALL,   /* 5 s */
     WATCH_BACK,         /* 10 s */
     WATCH_BACK_BIG,     /* a minute */
     WATCH_AHEAD_SMALL,  /* 5 s */
     WATCH_AHEAD,        /* 10 s */
     WATCH_AHEAD_BIG,    /* a minute */
+    WATCH_FRAME_BACK,   /* while paused */
+    WATCH_FRAME_AHEAD,  /* while paused */
+    /* to a tenth of the recording, 0 to 9 */
+    WATCH_TENTH_0,
+    WATCH_TENTH_1,
+    WATCH_TENTH_2,
+    WATCH_TENTH_3,
+    WATCH_TENTH_4,
+    WATCH_TENTH_5,
+    WATCH_TENTH_6,
+    WATCH_TENTH_7,
+    WATCH_TENTH_8,
+    WATCH_TENTH_9,
     WATCH_SLOWER,
     WATCH_FASTER,
     WATCH_MARK_IN,
@@ -81,9 +98,10 @@ typedef enum {
    in this order, with the first key for it as the item's key equivalent.
    A key matches when the Shift, Ctrl, Alt and Cmd held are exactly mods
    (either side's), so a key with Cmd, Ctrl or Alt goes past the viewer to
-   the menus. A row without a label is a second key for its action (K);
-   scancode 0 is an item without a key (Export Marks). gap puts a
-   separator before the item. */
+   the menus. A row without a label is a second key for its action (K), or
+   a key the menu leaves out (0 to 9, which would be ten items); scancode 0
+   is an item without a key (Export Marks). gap puts a separator before the
+   item. */
 typedef struct {
     watch_action action;
     int scancode; /* SDL_Scancode */
