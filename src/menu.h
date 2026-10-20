@@ -31,8 +31,9 @@ void menu_add_high_scores(const char *game_id, const char *title, const char *re
    and ahead, Slower and Faster, Mark In and Mark Out, Export Clips, Export
    Marks and Cancel Export. Each does what its key does (watch_act), is
    enabled when watch_can says, and shows its key as its key equivalent,
-   as this keyboard types it. The menu never takes those keys itself: they
-   go to the viewer (watch_key), which would otherwise see them as well. */
+   as this keyboard types it. The keys themselves go to the viewer
+   (watch_key), and an item ignores its own key, which AppKit would
+   otherwise send it as well. */
 void menu_add_replay(void);
 
 /* Adds a Replays menu, before SDL's Window menu, and a File menu with Open

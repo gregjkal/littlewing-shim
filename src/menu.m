@@ -270,27 +270,25 @@ static void add_scores_menu(void) {
 }
 
 /* The Replay menu's items' target, each tagged with its watch_action: they
-   act as the viewer's keys do. Also the menu's delegate, so that it shows
-   the keys without taking them: SDL has passed each key to the viewer
-   already (watch_key) by the time AppKit would match it to an item. */
-@interface LoonyReplayMenu : NSObject <NSMenuDelegate, NSMenuItemValidation>
+   act as the viewer's keys do. An item's own key does nothing here: SDL has
+   passed the key to the viewer already (watch_key) by the time AppKit
+   matches it to the item, and acting again would step twice. (A delegate's
+   menuHasKeyEquivalent: can't stop that, since AppKit still searches the
+   items a menu has.) */
+@interface LoonyReplayMenu : NSObject <NSMenuItemValidation>
 @end
 
 @implementation LoonyReplayMenu
 - (void)act:(NSMenuItem *)item {
+    NSEvent *e = NSApp.currentEvent;
+    if (e.type == NSEventTypeKeyDown && item.keyEquivalent.length &&
+        [e.charactersIgnoringModifiers caseInsensitiveCompare:item.keyEquivalent] == NSOrderedSame)
+        return;
     watch_act((watch_action)item.tag, false);
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     return watch_can((watch_action)item.tag);
-}
-
-- (BOOL)menuHasKeyEquivalent:(NSMenu *)menu
-                    forEvent:(NSEvent *)event
-                      target:(id _Nullable *)target
-                      action:(SEL _Nullable *)action {
-    (void)menu, (void)event, (void)target, (void)action;
-    return NO;
 }
 @end
 
@@ -339,7 +337,6 @@ static void add_replay_menu(void) {
         return;
     replay_menu = [[LoonyReplayMenu alloc] init];
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Replay"];
-    menu.delegate = replay_menu;
     for (size_t i = 0; i < watch_nbindings; i++) {
         const watch_binding *b = &watch_bindings[i];
         if (!b->label)
