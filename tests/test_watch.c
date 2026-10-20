@@ -55,10 +55,8 @@ TEST(watch_open_checks_its_settings) {
     watch_reset();
 }
 
-/* Pressing keys: K pauses as Space does (YouTube's key), a repeat or a
-   release does nothing, and Right speeds up. Logged by watch_key. */
-static void child_press_keys(void *unused) {
-    (void)unused;
+/* Watching game.lwreplay, which isn't there: enough for the keys. */
+static void start_watching(void) {
     char err[256];
     clear_env();
     setenv("LOONY_WATCH", "1", 1);
@@ -66,11 +64,17 @@ static void child_press_keys(void *unused) {
     if (!watch_open(err, sizeof err))
         _exit(1);
     watch_start("Game");
+}
+
+/* Pressing keys: K pauses as Space does (YouTube's key), and a repeat or a
+   release does nothing. Logged by watch_key. */
+static void child_press_keys(void *unused) {
+    (void)unused;
+    start_watching();
     watch_key(SDL_SCANCODE_K, true, false);
     watch_key(SDL_SCANCODE_K, true, true);   /* held: no change */
     watch_key(SDL_SCANCODE_K, false, false); /* released */
     watch_key(SDL_SCANCODE_SPACE, true, false);
-    watch_key(SDL_SCANCODE_RIGHT, true, false);
     _exit(0);
 }
 
@@ -81,7 +85,62 @@ TEST(watch_k_pauses_like_space) {
     CHECK(paused);
     CHECK(paused && !strstr(paused + 1, "watch: paused"));
     CHECK_CONTAINS(out, "watch: going on at 0:00");
-    CHECK_CONTAINS(out, "watch: 2x");
+}
+
+/* Right goes ahead 5 s and Left back 5 s, from the time going to; speed
+   is on Shift-comma and Shift-period, as on YouTube; Shift-L goes ahead a
+   minute, and a key with Cmd isn't the viewer's. */
+static void child_press_moved_keys(void *unused) {
+    (void)unused;
+    start_watching();
+    watch_key(SDL_SCANCODE_RIGHT, true, false);
+    watch_key(SDL_SCANCODE_LEFT, true, false);
+    watch_key(SDL_SCANCODE_LGUI, true, false);
+    watch_key(SDL_SCANCODE_L, true, false); /* Cmd-L: not the viewer's */
+    watch_key(SDL_SCANCODE_LGUI, false, false);
+    watch_key(SDL_SCANCODE_RSHIFT, true, false);
+    watch_key(SDL_SCANCODE_PERIOD, true, false);
+    watch_key(SDL_SCANCODE_PERIOD, true, true); /* held: no change */
+    watch_key(SDL_SCANCODE_L, true, false);
+    watch_key(SDL_SCANCODE_RSHIFT, false, false);
+    watch_key(SDL_SCANCODE_PERIOD, true, false); /* without Shift: nothing yet */
+    watch_key(SDL_SCANCODE_LSHIFT, true, false);
+    watch_key(SDL_SCANCODE_COMMA, true, false);
+    _exit(0);
+}
+
+TEST(watch_arrows_step_5_s_and_speed_is_on_angle_brackets) {
+    char out[4096];
+    CHECK_EQ(test_run_child(child_press_moved_keys, NULL, out, sizeof out), 0);
+    const char *ahead = strstr(out, "watch: going to 0:05");
+    CHECK(ahead);
+    const char *left = strstr(ahead, "watch: going to 0:00"); /* back from 0:05, not yet reached */
+    CHECK(left);
+    const char *faster = strstr(left, "watch: 2x");
+    CHECK(faster);
+    CHECK(!strstr(faster + 1, "watch: 2x"));
+    CHECK(!strstr(ahead, "going to 0:15")); /* Cmd-L */
+    const char *minute = strstr(faster, "watch: going to 1:00");
+    CHECK(minute);
+    CHECK(strstr(minute, "watch: 1x"));
+    CHECK(!strstr(out, "back to"));
+}
+
+/* The Replay menu is built from watch_bindings: each action has one row
+   with a label, and no key does two things. */
+TEST(watch_bindings_list_each_action_once) {
+    for (int a = WATCH_PLAY_PAUSE; a <= WATCH_CANCEL_EXPORT; a++) {
+        int labelled = 0;
+        for (size_t i = 0; i < watch_nbindings; i++)
+            if ((int)watch_bindings[i].action == a && watch_bindings[i].label)
+                labelled++;
+        CHECK_EQ(labelled, 1);
+    }
+    for (size_t i = 0; i < watch_nbindings; i++)
+        for (size_t j = i + 1; j < watch_nbindings; j++) {
+            const watch_binding *a = &watch_bindings[i], *b = &watch_bindings[j];
+            CHECK(!a->scancode || a->scancode != b->scancode || a->mods != b->mods);
+        }
 }
 
 /* Each frame at 1x and 2x, one a frame of wall clock above, a few a second

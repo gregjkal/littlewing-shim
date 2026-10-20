@@ -3,6 +3,7 @@
 #import <AppKit/AppKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <SDL3/SDL.h>
+#include <ctype.h>
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -268,55 +269,87 @@ static void add_scores_menu(void) {
     log_msg("menu: High Scores added");
 }
 
-/* The Replay menu's items' target: they act as the viewer's keys do. */
+/* The Replay menu's items' target, each tagged with its watch_action: they
+   act as the viewer's keys do. An item's own key does nothing here: SDL has
+   passed the key to the viewer already (watch_key) by the time AppKit
+   matches it to the item, and acting again would step twice. (A delegate's
+   menuHasKeyEquivalent: can't stop that, since AppKit still searches the
+   items a menu has.) */
 @interface LoonyReplayMenu : NSObject <NSMenuItemValidation>
 @end
 
 @implementation LoonyReplayMenu
-- (void)exportClips:(NSMenuItem *)item {
-    (void)item;
-    watch_export(false);
-}
-
-- (void)exportMarks:(NSMenuItem *)item {
-    (void)item;
-    watch_export(true);
-}
-
-- (void)cancelExport:(NSMenuItem *)item {
-    (void)item;
-    watch_cancel_export();
+- (void)act:(NSMenuItem *)item {
+    NSEvent *e = NSApp.currentEvent;
+    if (e.type == NSEventTypeKeyDown && item.keyEquivalent.length &&
+        [e.charactersIgnoringModifiers caseInsensitiveCompare:item.keyEquivalent] == NSOrderedSame)
+        return;
+    watch_act((watch_action)item.tag, false);
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
-    if (item.action == @selector(cancelExport:))
-        return watch_exporting();
-    return !watch_exporting();
+    return watch_can((watch_action)item.tag);
 }
 @end
 
 static bool replay_wanted;          /* menu_add_replay was called */
 static LoonyReplayMenu *replay_menu; /* its items' target, once added */
 
-/* The Replay menu, after the Sound menu. */
+/* The key equivalent that shows b's key, with its modifiers in *mask: a
+   shifted key shows what it types on this keyboard ("<" for Shift-comma),
+   unless that is only its capital (Shift-J shows as Shift and J). "" for
+   none. */
+static NSString *key_equivalent(const watch_binding *b, NSEventModifierFlags *mask) {
+    *mask = 0;
+    if (b->mods & SDL_KMOD_CTRL)
+        *mask |= NSEventModifierFlagControl;
+    if (b->mods & SDL_KMOD_ALT)
+        *mask |= NSEventModifierFlagOption;
+    if (b->mods & SDL_KMOD_GUI)
+        *mask |= NSEventModifierFlagCommand;
+    unichar c;
+    if (b->scancode == SDL_SCANCODE_RIGHT) {
+        c = NSRightArrowFunctionKey;
+    } else if (b->scancode == SDL_SCANCODE_LEFT) {
+        c = NSLeftArrowFunctionKey;
+    } else {
+        SDL_Keycode base = SDL_GetKeyFromScancode((SDL_Scancode)b->scancode, SDL_KMOD_NONE, false);
+        SDL_Keycode typed = SDL_GetKeyFromScancode((SDL_Scancode)b->scancode, b->mods, false);
+        if (base == SDLK_UNKNOWN || (base & SDLK_SCANCODE_MASK) || base > 0xFFFF)
+            return @"";
+        c = (unichar)base;
+        if (b->mods & SDL_KMOD_SHIFT) {
+            bool capital = typed < 0x80 && base < 0x80 && toupper((int)base) == (int)typed;
+            if (!capital && typed != base && typed != SDLK_UNKNOWN && typed <= 0xFFFF &&
+                !(typed & SDLK_SCANCODE_MASK))
+                c = (unichar)typed;
+            else
+                *mask |= NSEventModifierFlagShift;
+        }
+    }
+    return [NSString stringWithCharacters:&c length:1];
+}
+
+/* The Replay menu, after the Sound menu: watch_bindings' labelled rows. */
 static void add_replay_menu(void) {
     NSMenu *bar = NSApp.mainMenu;
     if (replay_menu || !sound_item || !bar)
         return;
     replay_menu = [[LoonyReplayMenu alloc] init];
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Replay"];
-    struct {
-        NSString *title;
-        SEL action;
-    } items[] = {{@"Export Clips", @selector(exportClips:)},
-                 {@"Export Marks", @selector(exportMarks:)},
-                 {@"Cancel Export", @selector(cancelExport:)}};
-    for (size_t i = 0; i < sizeof items / sizeof items[0]; i++) {
-        if (i == 2)
+    for (size_t i = 0; i < watch_nbindings; i++) {
+        const watch_binding *b = &watch_bindings[i];
+        if (!b->label)
+            continue;
+        if (b->gap)
             [menu addItem:[NSMenuItem separatorItem]];
-        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:items[i].title
-                                                      action:items[i].action
-                                               keyEquivalent:@""];
+        NSEventModifierFlags mask;
+        NSString *key = key_equivalent(b, &mask);
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:@(b->label)
+                                                      action:@selector(act:)
+                                               keyEquivalent:key];
+        item.keyEquivalentModifierMask = mask;
+        item.tag = b->action;
         item.target = replay_menu;
         [menu addItem:item];
     }
