@@ -2859,6 +2859,56 @@ TEST(run_a_recorded_game_starts_at_the_game_from_its_snapshot) {
     CHECK_EQ(wav[6], wav[0]);
 }
 
+/* Copies the file at from to to: false if it can't. */
+static bool copy_file_to(const char *from, const char *to) {
+    size_t len;
+    uint8_t *data = read_file(from, &len);
+    FILE *f = data ? fopen(to, "wb") : NULL;
+    bool ok = f && fwrite(data, 1, len, f) == len;
+    if (f && fclose(f) != 0)
+        ok = false;
+    free(data);
+    return ok;
+}
+
+/* A take (LOONY_GAMESTART=take, gamestart_take_start), which draws
+   nothing, keeps the same snapshot of the game's start, byte for byte, as
+   a replay that draws every frame. */
+TEST(run_a_take_keeps_the_snapshot_a_drawing_replay_keeps) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_SLOW();
+    char rec_dir[1024], play_dir[1024], taken[1200], err[256] = "";
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    static char out[2][65536];
+    int rec_status = record_one_game(rec_dir, true, out[0], sizeof out[0]);
+    snprintf(taken, sizeof taken, "%s/taken.lwreplay", play_dir);
+    bool copied = copy_file_to(replay_file, taken);
+    uint32_t shot, wav;
+    int status = replay_hashed(play_dir, "drawing", out[1], sizeof out[1], &shot, &wav);
+    bool started = copied && gamestart_take_start(LOONY_BIN, taken, err, sizeof err), kept = false;
+    for (int i = 0; started && i < 6000 && !gamestart_take_poll(&kept); i++)
+        usleep(100000);
+    uint8_t *drawn = NULL, *took = NULL, id[2][32];
+    size_t drawn_len = 0, took_len = 0;
+    bool read[2] = {replay_file_snapshot(replay_file, &drawn, &drawn_len, id[0], err, sizeof err),
+                    replay_file_snapshot(taken, &took, &took_len, id[1], err, sizeof err)};
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK(copied);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out[1], "gamestart: kept a snapshot of the game's start at ");
+    CHECK(started);
+    CHECK(kept);
+    CHECK(read[0] && read[1]);
+    CHECK(drawn && took);
+    CHECK_EQ(took_len, drawn_len);
+    CHECK(drawn && took && took_len == drawn_len && memcmp(drawn, took, took_len) == 0);
+    free(drawn);
+    free(took);
+}
+
 /* Writes Loony Labyrinth's preferences, registered to email with key,
    into dir (made). */
 static bool write_license(const char *dir, const char *email, const char *key) {
