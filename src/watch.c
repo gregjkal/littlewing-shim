@@ -108,6 +108,7 @@ static const char *fmt_seconds(uint32_t ticks, char *buf, size_t cap) {
 /* ---- the window ---- */
 
 static void tend_export(void);
+static void toggle_pause(void);
 
 /* Sets the title to what it says now. */
 static void set_title(void) {
@@ -201,13 +202,13 @@ void watch_present(bool dirty) {
     }
 }
 
-/* Waiting: the window stays live (and opens, if nothing was drawn yet). */
 /* No window (SDL_VIDEO_DRIVER=dummy): nobody but the script presses keys. */
 static bool headless(void) {
     const char *video = getenv("SDL_VIDEO_DRIVER");
     return video && strcmp(video, "dummy") == 0;
 }
 
+/* Waiting: the window stays live (and opens, if nothing was drawn yet). */
 static void idle(void) {
     display_poll();
     if (W.pending || !W.drawn)
@@ -319,13 +320,18 @@ static void pace(uint64_t clock_us) {
         anchor();
     }
     for (;;) {
-        if (W.going || W.seeking) /* J or L while waiting: paused or not, it goes */
-            break;
+        if (W.going || W.seeking) { /* a key while waiting: paused or not, it goes */
+            pace(clock_us); /* from this read, which may already be there */
+            return;
+        }
         if (W.paused) {
             /* headless, the script's next action comes now: its clock has
-               stopped, and nothing else would go on */
-            if (!(headless() && events_script_rest()))
+               stopped, and nothing else would go on. With none left, nobody
+               can press Space, so it goes on by itself. */
+            if (!headless())
                 idle();
+            else if (!events_script_rest())
+                toggle_pause();
             continue;
         }
         int speed = speeds[W.speed];
@@ -622,6 +628,16 @@ const watch_binding watch_bindings[] = {
     {WATCH_TENTH_7, SDL_SCANCODE_7, 0, NULL, false},
     {WATCH_TENTH_8, SDL_SCANCODE_8, 0, NULL, false},
     {WATCH_TENTH_9, SDL_SCANCODE_9, 0, NULL, false},
+    {WATCH_TENTH_0, SDL_SCANCODE_KP_0, 0, NULL, false}, /* and on the keypad */
+    {WATCH_TENTH_1, SDL_SCANCODE_KP_1, 0, NULL, false},
+    {WATCH_TENTH_2, SDL_SCANCODE_KP_2, 0, NULL, false},
+    {WATCH_TENTH_3, SDL_SCANCODE_KP_3, 0, NULL, false},
+    {WATCH_TENTH_4, SDL_SCANCODE_KP_4, 0, NULL, false},
+    {WATCH_TENTH_5, SDL_SCANCODE_KP_5, 0, NULL, false},
+    {WATCH_TENTH_6, SDL_SCANCODE_KP_6, 0, NULL, false},
+    {WATCH_TENTH_7, SDL_SCANCODE_KP_7, 0, NULL, false},
+    {WATCH_TENTH_8, SDL_SCANCODE_KP_8, 0, NULL, false},
+    {WATCH_TENTH_9, SDL_SCANCODE_KP_9, 0, NULL, false},
     {WATCH_SLOWER, SDL_SCANCODE_COMMA, SDL_KMOD_SHIFT, "Slower", true}, /* <, as on YouTube */
     {WATCH_FASTER, SDL_SCANCODE_PERIOD, SDL_KMOD_SHIFT, "Faster", false}, /* > */
     {WATCH_MARK_IN, SDL_SCANCODE_I, 0, "Mark In", true},
