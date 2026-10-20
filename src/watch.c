@@ -60,6 +60,7 @@ static struct {
     bool skipping; /* what isn't play, without pacing, drawing or sound */
     bool have_in;
     uint32_t in;
+    SDL_Keymod held; /* the modifier keys down, as watch_key has seen them */
     char list[PATH_MAX]; /* the clips' list */
     char replay[PATH_MAX]; /* the recording, as an absolute path, for an export */
     double export_polled; /* the wall clock when the export was last read */
@@ -409,8 +410,9 @@ static void landed(uint64_t clock_us, bool restored, unsigned generation) {
     update_title();
 }
 
-/* J and L: by step ticks back (step < 0) or ahead, from the time going to
-   while going. Back, or ahead past a snapshot, goes through a seek. */
+/* J, L and the arrows: by step ticks back (step < 0) or ahead, from the time
+   going to while going. Back, or ahead past a snapshot, goes through a
+   seek. */
 static void step_by(int64_t step) {
     int64_t to = (int64_t)(W.going || W.seeking ? W.from : now_tick()) + step;
     uint32_t tick = to < 0 ? 0 : to > UINT32_MAX ? UINT32_MAX : (uint32_t)to;
@@ -586,62 +588,129 @@ void watch_stop_export(void) {
         log_msg("watch: the export hasn't stopped after %.0f s", EXPORT_STOP_WAIT);
 }
 
-void watch_key(int scancode, bool down, bool repeat) {
-    if (!W.started || !down)
-        return;
-    bool shift = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
-    int64_t step = shift ? WATCH_BIG_STEP_TICKS : WATCH_STEP_TICKS;
+const watch_binding watch_bindings[] = {
+    {WATCH_PLAY_PAUSE, SDL_SCANCODE_SPACE, 0, "Play/Pause", false},
+    {WATCH_PLAY_PAUSE, SDL_SCANCODE_K, 0, NULL, false}, /* as on YouTube */
+    {WATCH_BACK_SMALL, SDL_SCANCODE_LEFT, 0, "Back 5 s", true},
+    {WATCH_BACK, SDL_SCANCODE_J, 0, "Back 10 s", false},
+    {WATCH_BACK_BIG, SDL_SCANCODE_J, SDL_KMOD_SHIFT, "Back 1 min", false},
+    {WATCH_AHEAD_SMALL, SDL_SCANCODE_RIGHT, 0, "Ahead 5 s", false},
+    {WATCH_AHEAD, SDL_SCANCODE_L, 0, "Ahead 10 s", false},
+    {WATCH_AHEAD_BIG, SDL_SCANCODE_L, SDL_KMOD_SHIFT, "Ahead 1 min", false},
+    {WATCH_SLOWER, SDL_SCANCODE_COMMA, SDL_KMOD_SHIFT, "Slower", true}, /* <, as on YouTube */
+    {WATCH_FASTER, SDL_SCANCODE_PERIOD, SDL_KMOD_SHIFT, "Faster", false}, /* > */
+    {WATCH_MARK_IN, SDL_SCANCODE_I, 0, "Mark In", true},
+    {WATCH_MARK_OUT, SDL_SCANCODE_O, 0, "Mark Out", false},
+    {WATCH_EXPORT_CLIPS, SDL_SCANCODE_E, 0, "Export Clips", true},
+    {WATCH_EXPORT_MARKS, 0, 0, "Export Marks", false},
+    {WATCH_CANCEL_EXPORT, SDL_SCANCODE_ESCAPE, 0, "Cancel Export", true},
+};
+const size_t watch_nbindings = sizeof watch_bindings / sizeof watch_bindings[0];
+
+static void toggle_pause(void) {
     char t[32];
-    switch (scancode) {
-    case SDL_SCANCODE_SPACE:
-    case SDL_SCANCODE_K: /* as on YouTube */
-        if (repeat || W.at_end)
-            break;
-        W.paused = !W.paused;
-        log_msg("watch: %s at %s", W.paused ? "paused" : "going on",
-                clip_format_time(now_tick(), t, sizeof t));
-        if (W.paused)
-            log_run("the last stretch");
-        anchor();
+    W.paused = !W.paused;
+    log_msg("watch: %s at %s", W.paused ? "paused" : "going on",
+            clip_format_time(now_tick(), t, sizeof t));
+    if (W.paused)
+        log_run("the last stretch");
+    anchor();
+}
+
+static void mark_in(void) {
+    char t[32];
+    W.in = now_tick();
+    W.have_in = true;
+    log_msg("watch: a clip starts at %s", clip_format_time(W.in, t, sizeof t));
+    flash("a clip starts at %s: O ends it", t);
+}
+
+bool watch_can(watch_action action) {
+    if (!W.started)
+        return false;
+    switch (action) {
+    case WATCH_PLAY_PAUSE: return !W.at_end;
+    case WATCH_EXPORT_CLIPS:
+    case WATCH_EXPORT_MARKS: return !export_running();
+    case WATCH_CANCEL_EXPORT: return export_running();
+    default: return true;
+    }
+}
+
+void watch_act(watch_action action, bool repeat) {
+    bool step = action >= WATCH_BACK_SMALL && action <= WATCH_AHEAD_BIG;
+    if (!W.started || (repeat && !step)) /* only the steps go on while their key is held */
+        return;
+    switch (action) {
+    case WATCH_PLAY_PAUSE:
+        if (!W.at_end)
+            toggle_pause();
         break;
-    case SDL_SCANCODE_RIGHT:
-        if (!repeat && W.speed + 1 < NSPEEDS)
-            set_speed(W.speed + 1);
-        break;
-    case SDL_SCANCODE_LEFT:
-        if (!repeat && W.speed > 0)
+    case WATCH_BACK_SMALL: step_by(-WATCH_SMALL_STEP_TICKS); break;
+    case WATCH_BACK: step_by(-WATCH_STEP_TICKS); break;
+    case WATCH_BACK_BIG: step_by(-WATCH_BIG_STEP_TICKS); break;
+    case WATCH_AHEAD_SMALL: step_by(WATCH_SMALL_STEP_TICKS); break;
+    case WATCH_AHEAD: step_by(WATCH_STEP_TICKS); break;
+    case WATCH_AHEAD_BIG: step_by(WATCH_BIG_STEP_TICKS); break;
+    case WATCH_SLOWER:
+        if (W.speed > 0)
             set_speed(W.speed - 1);
         break;
-    case SDL_SCANCODE_I:
-        if (repeat)
-            break;
-        W.in = now_tick();
-        W.have_in = true;
-        log_msg("watch: a clip starts at %s", clip_format_time(W.in, t, sizeof t));
-        flash("a clip starts at %s: O ends it", t);
+    case WATCH_FASTER:
+        if (W.speed + 1 < NSPEEDS)
+            set_speed(W.speed + 1);
         break;
-    case SDL_SCANCODE_O:
-        if (!repeat)
-            save_clip();
-        break;
-    case SDL_SCANCODE_J:
-        step_by(-step);
-        break;
-    case SDL_SCANCODE_L:
-        step_by(step);
-        break;
-    case SDL_SCANCODE_E:
-        if (!repeat)
-            watch_export(false);
-        break;
-    case SDL_SCANCODE_ESCAPE:
-        if (!repeat)
-            watch_cancel_export();
-        break;
-    default:
-        break;
+    case WATCH_MARK_IN: mark_in(); break;
+    case WATCH_MARK_OUT: save_clip(); break;
+    case WATCH_EXPORT_CLIPS: watch_export(false); break;
+    case WATCH_EXPORT_MARKS: watch_export(true); break;
+    case WATCH_CANCEL_EXPORT: watch_cancel_export(); break;
     }
     update_title();
+}
+
+/* The modifier a key is, or 0. */
+static SDL_Keymod modifier(int scancode) {
+    switch (scancode) {
+    case SDL_SCANCODE_LSHIFT: return SDL_KMOD_LSHIFT;
+    case SDL_SCANCODE_RSHIFT: return SDL_KMOD_RSHIFT;
+    case SDL_SCANCODE_LCTRL: return SDL_KMOD_LCTRL;
+    case SDL_SCANCODE_RCTRL: return SDL_KMOD_RCTRL;
+    case SDL_SCANCODE_LALT: return SDL_KMOD_LALT;
+    case SDL_SCANCODE_RALT: return SDL_KMOD_RALT;
+    case SDL_SCANCODE_LGUI: return SDL_KMOD_LGUI;
+    case SDL_SCANCODE_RGUI: return SDL_KMOD_RGUI;
+    default: return 0;
+    }
+}
+
+/* Shift, Ctrl, Alt and Cmd as held, whichever side: as watch_bindings'
+   mods say them. */
+static uint16_t held_mods(void) {
+    static const SDL_Keymod each[] = {SDL_KMOD_SHIFT, SDL_KMOD_CTRL, SDL_KMOD_ALT, SDL_KMOD_GUI};
+    uint16_t mods = 0;
+    for (size_t i = 0; i < sizeof each / sizeof each[0]; i++)
+        if (W.held & each[i])
+            mods |= each[i];
+    return mods;
+}
+
+void watch_key(int scancode, bool down, bool repeat) {
+    /* The modifiers are followed from the keys, not SDL's state, so that a
+       script's (LOONY_SCRIPT) count too. */
+    SDL_Keymod m = modifier(scancode);
+    if (m) {
+        W.held = down ? W.held | m : W.held & ~m;
+        return;
+    }
+    if (!W.started || !down)
+        return;
+    uint16_t mods = held_mods();
+    for (size_t i = 0; i < watch_nbindings; i++)
+        if (watch_bindings[i].scancode == scancode && watch_bindings[i].mods == mods) {
+            watch_act(watch_bindings[i].action, repeat);
+            return;
+        }
 }
 
 /* ---- setup ---- */
