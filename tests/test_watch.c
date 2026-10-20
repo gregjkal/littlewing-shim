@@ -103,10 +103,33 @@ static void child_press_moved_keys(void *unused) {
     watch_key(SDL_SCANCODE_PERIOD, true, true); /* held: no change */
     watch_key(SDL_SCANCODE_L, true, false);
     watch_key(SDL_SCANCODE_RSHIFT, false, false);
-    watch_key(SDL_SCANCODE_PERIOD, true, false); /* without Shift: nothing yet */
+    watch_key(SDL_SCANCODE_PERIOD, true, false); /* without Shift, playing: nothing */
     watch_key(SDL_SCANCODE_LSHIFT, true, false);
     watch_key(SDL_SCANCODE_COMMA, true, false);
     _exit(0);
+}
+
+/* Comma and period step a frame only while paused, as on YouTube. */
+static void child_step_frames(void *unused) {
+    (void)unused;
+    start_watching();
+    watch_key(SDL_SCANCODE_PERIOD, true, false); /* playing: nothing */
+    watch_key(SDL_SCANCODE_COMMA, true, false);
+    watch_key(SDL_SCANCODE_SPACE, true, false);
+    watch_key(SDL_SCANCODE_PERIOD, true, false);
+    watch_key(SDL_SCANCODE_PERIOD, true, true); /* held: another */
+    _exit(0);
+}
+
+TEST(watch_comma_and_period_step_a_frame_while_paused) {
+    char out[4096];
+    CHECK_EQ(test_run_child(child_step_frames, NULL, out, sizeof out), 0);
+    const char *paused = strstr(out, "watch: paused at 0:00");
+    CHECK(paused);
+    CHECK(!strstr(out, "watch: going to") || strstr(out, "watch: going to") > paused);
+    const char *one = paused ? strstr(paused, "watch: going to 0:00.01\n") : NULL;
+    CHECK(one);
+    CHECK(one && strstr(one, "watch: going to 0:00.03\n"));
 }
 
 TEST(watch_arrows_step_5_s_and_speed_is_on_angle_brackets) {
@@ -127,14 +150,20 @@ TEST(watch_arrows_step_5_s_and_speed_is_on_angle_brackets) {
 }
 
 /* The Replay menu is built from watch_bindings: each action has one row
-   with a label, and no key does two things. */
+   with a label, but the tenths (0 to 9), which have a key each and no item,
+   and no key does two things. */
 TEST(watch_bindings_list_each_action_once) {
     for (int a = WATCH_PLAY_PAUSE; a <= WATCH_CANCEL_EXPORT; a++) {
-        int labelled = 0;
+        int labelled = 0, keys = 0;
         for (size_t i = 0; i < watch_nbindings; i++)
-            if ((int)watch_bindings[i].action == a && watch_bindings[i].label)
-                labelled++;
-        CHECK_EQ(labelled, 1);
+            if ((int)watch_bindings[i].action == a) {
+                labelled += watch_bindings[i].label != NULL;
+                keys += watch_bindings[i].scancode != 0;
+            }
+        bool tenth = a >= WATCH_TENTH_0 && a <= WATCH_TENTH_9;
+        CHECK_EQ(labelled, tenth ? 0 : 1);
+        if (tenth)
+            CHECK_EQ(keys, 1);
     }
     for (size_t i = 0; i < watch_nbindings; i++)
         for (size_t j = i + 1; j < watch_nbindings; j++) {

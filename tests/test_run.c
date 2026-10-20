@@ -1074,6 +1074,53 @@ TEST(run_a_watched_replay_goes_ahead_and_back) {
     CHECK(!strstr(out[2], "replay: desync"));
 }
 
+/* Paused at 1 s (headless, the script's keys come at once while paused):
+   period goes a frame ahead twice, comma a frame back through a seek, 5 to
+   the middle of the recording, 0 back to its start (as near as its first
+   snapshot, 0.4 s in, since play starts at launch here), and Space plays on
+   to the end without a desync. */
+TEST(run_a_watched_replay_steps_frames_and_goes_to_tenths) {
+    SKIP_UNLESS_GAME();
+    char rec_dir[1024], play_dir[1024];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    char out[2][32768], err[256] = "";
+    double seconds;
+    int rec_status = record_for_clips(rec_dir, "330 quit\n", out[0], sizeof out[0]);
+    replay_summary s = {0};
+    bool summed = replay_summarize(replay_file, &s, err, sizeof err);
+    setenv("LOONY_WATCH_FROM", "60", 1);
+    setenv("LOONY_WATCH_PAUSED", "1", 1);
+    /* past the recording's end, so each comes while paused and none as the
+       clock passes it */
+    int watch_status = watch_recording("1000 down period\n1001 up period\n1002 down period\n1003 up period\n"
+                                       "1004 down comma\n1005 up comma\n1006 down 5\n1007 up 5\n"
+                                       "1008 down 0\n1009 up 0\n1010 down space\n1011 up space\n",
+                                       play_dir, out[1], sizeof out[1], &seconds);
+    unsetenv("LOONY_WATCH_FROM");
+    unsetenv("LOONY_WATCH_PAUSED");
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK(summed);
+    CHECK_EQ(watch_status, 0);
+    char half[64], t[32];
+    snprintf(half, sizeof half, "watch: going to %s\n", clip_format_time(s.play_ticks / 2, t, sizeof t));
+    replay_summary_free(&s);
+    const char *at = strstr(out[1], "watch: reached 0:01\n");
+    CHECK(at);
+    const char *steps[] = {"watch: going to 0:01.01\n", "watch: going to 0:01.03\n",
+                           "watch: back to 0:01.01\n", half, "watch: back to 0:00\n",
+                           "watch: going on at "};
+    for (size_t i = 0; at && i < sizeof steps / sizeof steps[0]; i++) {
+        at = strstr(at, steps[i]);
+        CHECK(at);
+    }
+    CHECK_CONTAINS(out[1], "loony: replay: reached the end of the recording");
+    CHECK(!strstr(out[1], "restarting"));
+    CHECK(!strstr(out[1], "replay: desync"));
+}
+
 /* J while going: the unpaced stretch so far is logged as such, not as a
    paced one, before the seek. */
 TEST(run_a_watched_replay_logs_the_stretch_when_it_goes_back_while_going) {

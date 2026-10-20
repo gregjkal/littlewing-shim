@@ -268,6 +268,10 @@ bool replay_in_play(uint64_t clock_us, uint64_t *next_on_us);
 uint32_t replay_play_ticks(uint32_t clock_ticks);
 uint32_t replay_clock_ticks(uint32_t play_ticks);
 
+/* After replay_open: the recording's length in play time, in ticks, to its
+   last record (as replay_summary's play_ticks). */
+uint32_t replay_play_length(void);
+
 /* Replay: takes the next record if it is of this kind and at this step. A
    record left behind at an earlier step is a desync. */
 bool replay_take(replay_kind kind, uint32_t *values);

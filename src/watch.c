@@ -202,6 +202,12 @@ void watch_present(bool dirty) {
 }
 
 /* Waiting: the window stays live (and opens, if nothing was drawn yet). */
+/* No window (SDL_VIDEO_DRIVER=dummy): nobody but the script presses keys. */
+static bool headless(void) {
+    const char *video = getenv("SDL_VIDEO_DRIVER");
+    return video && strcmp(video, "dummy") == 0;
+}
+
 static void idle(void) {
     display_poll();
     if (W.pending || !W.drawn)
@@ -316,7 +322,10 @@ static void pace(uint64_t clock_us) {
         if (W.going || W.seeking) /* J or L while waiting: paused or not, it goes */
             break;
         if (W.paused) {
-            idle();
+            /* headless, the script's next action comes now: its clock has
+               stopped, and nothing else would go on */
+            if (!(headless() && events_script_rest()))
+                idle();
             continue;
         }
         int speed = speeds[W.speed];
@@ -410,12 +419,9 @@ static void landed(uint64_t clock_us, bool restored, unsigned generation) {
     update_title();
 }
 
-/* J, L and the arrows: by step ticks back (step < 0) or ahead, from the time
-   going to while going. Back, or ahead past a snapshot, goes through a
+/* To tick of play time. Back, or ahead past a snapshot, goes through a
    seek. */
-static void step_by(int64_t step) {
-    int64_t to = (int64_t)(W.going || W.seeking ? W.from : now_tick()) + step;
-    uint32_t tick = to < 0 ? 0 : to > UINT32_MAX ? UINT32_MAX : (uint32_t)to;
+static void go_to(uint32_t tick) {
     bool back = tick < now_tick();
     if (W.at_end && !back) /* nothing ahead */
         return;
@@ -440,6 +446,13 @@ static void step_by(int64_t step) {
         begin_stretch();
     }
     sound_monitor(sound_on());
+}
+
+/* J, L, the arrows, comma and period: by step ticks back (step < 0) or
+   ahead, from the time going to while going. */
+static void step_by(int64_t step) {
+    int64_t to = (int64_t)(W.going || W.seeking ? W.from : now_tick()) + step;
+    go_to(to < 0 ? 0 : to > UINT32_MAX ? UINT32_MAX : (uint32_t)to);
 }
 
 /* The clips in the list, or -1 if it can't be read. */
@@ -597,6 +610,18 @@ const watch_binding watch_bindings[] = {
     {WATCH_AHEAD_SMALL, SDL_SCANCODE_RIGHT, 0, "Ahead 5 s", false},
     {WATCH_AHEAD, SDL_SCANCODE_L, 0, "Ahead 10 s", false},
     {WATCH_AHEAD_BIG, SDL_SCANCODE_L, SDL_KMOD_SHIFT, "Ahead 1 min", false},
+    {WATCH_FRAME_BACK, SDL_SCANCODE_COMMA, 0, "Frame Back", true}, /* as on YouTube */
+    {WATCH_FRAME_AHEAD, SDL_SCANCODE_PERIOD, 0, "Frame Ahead", false},
+    {WATCH_TENTH_0, SDL_SCANCODE_0, 0, NULL, false}, /* as on YouTube */
+    {WATCH_TENTH_1, SDL_SCANCODE_1, 0, NULL, false},
+    {WATCH_TENTH_2, SDL_SCANCODE_2, 0, NULL, false},
+    {WATCH_TENTH_3, SDL_SCANCODE_3, 0, NULL, false},
+    {WATCH_TENTH_4, SDL_SCANCODE_4, 0, NULL, false},
+    {WATCH_TENTH_5, SDL_SCANCODE_5, 0, NULL, false},
+    {WATCH_TENTH_6, SDL_SCANCODE_6, 0, NULL, false},
+    {WATCH_TENTH_7, SDL_SCANCODE_7, 0, NULL, false},
+    {WATCH_TENTH_8, SDL_SCANCODE_8, 0, NULL, false},
+    {WATCH_TENTH_9, SDL_SCANCODE_9, 0, NULL, false},
     {WATCH_SLOWER, SDL_SCANCODE_COMMA, SDL_KMOD_SHIFT, "Slower", true}, /* <, as on YouTube */
     {WATCH_FASTER, SDL_SCANCODE_PERIOD, SDL_KMOD_SHIFT, "Faster", false}, /* > */
     {WATCH_MARK_IN, SDL_SCANCODE_I, 0, "Mark In", true},
@@ -630,6 +655,8 @@ bool watch_can(watch_action action) {
         return false;
     switch (action) {
     case WATCH_PLAY_PAUSE: return !W.at_end;
+    case WATCH_FRAME_BACK: return W.paused || W.at_end;
+    case WATCH_FRAME_AHEAD: return W.paused && !W.at_end;
     case WATCH_EXPORT_CLIPS:
     case WATCH_EXPORT_MARKS: return !export_running();
     case WATCH_CANCEL_EXPORT: return export_running();
@@ -638,7 +665,7 @@ bool watch_can(watch_action action) {
 }
 
 void watch_act(watch_action action, bool repeat) {
-    bool step = action >= WATCH_BACK_SMALL && action <= WATCH_AHEAD_BIG;
+    bool step = action >= WATCH_BACK_SMALL && action <= WATCH_FRAME_AHEAD;
     if (!W.started || (repeat && !step)) /* only the steps go on while their key is held */
         return;
     switch (action) {
@@ -652,6 +679,28 @@ void watch_act(watch_action action, bool repeat) {
     case WATCH_AHEAD_SMALL: step_by(WATCH_SMALL_STEP_TICKS); break;
     case WATCH_AHEAD: step_by(WATCH_STEP_TICKS); break;
     case WATCH_AHEAD_BIG: step_by(WATCH_BIG_STEP_TICKS); break;
+    case WATCH_FRAME_BACK:
+        if (watch_can(action)) {
+            W.paused = true; /* from the end too: the frame stays up */
+            step_by(-WATCH_FRAME_TICKS);
+        }
+        break;
+    case WATCH_FRAME_AHEAD:
+        if (watch_can(action))
+            step_by(WATCH_FRAME_TICKS);
+        break;
+    case WATCH_TENTH_0:
+    case WATCH_TENTH_1:
+    case WATCH_TENTH_2:
+    case WATCH_TENTH_3:
+    case WATCH_TENTH_4:
+    case WATCH_TENTH_5:
+    case WATCH_TENTH_6:
+    case WATCH_TENTH_7:
+    case WATCH_TENTH_8:
+    case WATCH_TENTH_9:
+        go_to((uint32_t)((uint64_t)replay_play_length() * (action - WATCH_TENTH_0) / 10));
+        break;
     case WATCH_SLOWER:
         if (W.speed > 0)
             set_speed(W.speed - 1);
@@ -835,8 +884,7 @@ void watch_hold(void) {
         log_run("the last stretch");
     W.at_end = true;
     W.going = W.skipping = false;
-    const char *video = getenv("SDL_VIDEO_DRIVER");
-    if (video && strcmp(video, "dummy") == 0) { /* headless: nobody to close the window */
+    if (headless()) { /* nobody to close the window */
         /* or to press a key but the script, whose actions left come now */
         while (!W.seeking && events_script_rest())
             ;
