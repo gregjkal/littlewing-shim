@@ -1121,6 +1121,57 @@ TEST(run_a_watched_replay_steps_frames_and_goes_to_tenths) {
     CHECK(!strstr(out[1], "replay: desync"));
 }
 
+/* In a game, where the game reads the clock once a tick, period lands on
+   the frame it goes to, not the one after: each goes a tick past the last.
+   Comma at the end goes a frame back from it, and headless, a viewer paused
+   with no keys left in its script goes on rather than wait forever. */
+TEST(run_a_watched_game_steps_one_frame_at_a_time) {
+    SKIP_UNLESS_GAME();
+    char rec_dir[1024], play_dir[1024];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    char out[2][32768];
+    int rec_status = record_for_clips(rec_dir,
+                                      "1720 down esc\n1724 up esc\n1800 down esc\n1804 up esc\n"
+                                      "1900 down return\n1906 up return\n2000 down return\n"
+                                      "2006 up return\n2100 down return\n2180 up return\n"
+                                      "2300 down z\n2310 up z\n2400 down slash\n2410 up slash\n"
+                                      "2900 quit\n",
+                                      out[0], sizeof out[0]);
+    setenv("LOONY_WATCH_FROM", "300", 1);
+    setenv("LOONY_WATCH_PAUSED", "1", 1);
+    watch_speed = "0";
+    double seconds;
+    int watch_status = watch_recording("100000 down period\n100001 up period\n"
+                                       "100002 down period\n100003 up period\n"
+                                       "100004 down period\n100005 up period\n"
+                                       "100006 down space\n100007 up space\n"
+                                       "100008 down comma\n100009 up comma\n",
+                                       play_dir, out[1], sizeof out[1], &seconds);
+    watch_speed = NULL;
+    unsetenv("LOONY_WATCH_FROM");
+    unsetenv("LOONY_WATCH_PAUSED");
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(watch_status, 0);
+    const char *at = strstr(out[1], "watch: reached 0:05\n");
+    CHECK(at);
+    for (uint32_t tick = 301; at && tick <= 303; tick++) {
+        char want[64], t[32];
+        snprintf(want, sizeof want, "watch: going to %s\n", clip_format_time(tick, t, sizeof t));
+        at = strstr(at, want);
+        CHECK(at);
+    }
+    /* comma at the end: a frame back, and paused there with the script
+       spent, it goes on again to the end */
+    at = at ? strstr(at, "watch: back to ") : NULL;
+    CHECK(at);
+    CHECK(strstr(at, "watch: going on at "));
+    CHECK(strstr(at, "replay: reached the end of the recording"));
+    CHECK(!strstr(out[1], "replay: desync"));
+}
+
 /* J while going: the unpaced stretch so far is logged as such, not as a
    paced one, before the seek. */
 TEST(run_a_watched_replay_logs_the_stretch_when_it_goes_back_while_going) {

@@ -12,7 +12,8 @@
      J, L          back or ahead 10 seconds (Shift: a minute)
      Left, Right   back or ahead 5 seconds
      ",", "."      while paused, back or ahead a frame (a tick, 1/60 s)
-     0 to 9        to that tenth of the recording (replay_play_length)
+     0 to 9        to that tenth of the recording (replay_play_length); the
+                   keypad's too
      <, >          slower or faster: 1x, 2x, 4x, 8x, as fast as it can
      I, O          the start and end of a clip; O saves it
      E             export the clips (LOONY_CLIP=clips, export.h)
