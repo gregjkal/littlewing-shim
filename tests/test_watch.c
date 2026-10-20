@@ -87,9 +87,9 @@ TEST(watch_k_pauses_like_space) {
     CHECK_CONTAINS(out, "watch: going on at 0:00");
 }
 
-/* Right goes ahead 5 s and Left does nothing (it only flashes, until #34);
-   speed is on Shift-comma and Shift-period, as on YouTube; Shift-L goes
-   ahead a minute, and a key with Cmd isn't the viewer's. */
+/* Right goes ahead 5 s and Left back 5 s, from the time going to; speed
+   is on Shift-comma and Shift-period, as on YouTube; Shift-L goes ahead a
+   minute, and a key with Cmd isn't the viewer's. */
 static void child_press_moved_keys(void *unused) {
     (void)unused;
     start_watching();
@@ -109,30 +109,32 @@ static void child_press_moved_keys(void *unused) {
     _exit(0);
 }
 
-TEST(watch_right_goes_ahead_and_speed_is_on_angle_brackets) {
+TEST(watch_arrows_step_5_s_and_speed_is_on_angle_brackets) {
     char out[4096];
     CHECK_EQ(test_run_child(child_press_moved_keys, NULL, out, sizeof out), 0);
     const char *ahead = strstr(out, "watch: going to 0:05");
     CHECK(ahead);
-    const char *faster = strstr(ahead, "watch: 2x");
+    const char *left = strstr(ahead, "watch: going to 0:00"); /* back from 0:05, not yet reached */
+    CHECK(left);
+    const char *faster = strstr(left, "watch: 2x");
     CHECK(faster);
     CHECK(!strstr(faster + 1, "watch: 2x"));
     CHECK(!strstr(ahead, "going to 0:15")); /* Cmd-L */
-    const char *minute = strstr(faster, "watch: going to 1:05");
+    const char *minute = strstr(faster, "watch: going to 1:00");
     CHECK(minute);
     CHECK(strstr(minute, "watch: 1x"));
     CHECK(!strstr(out, "back to"));
 }
 
 /* The Replay menu is built from watch_bindings: each action has one row
-   with a label, but Left's, which isn't in it, and no key does two things. */
+   with a label, and no key does two things. */
 TEST(watch_bindings_list_each_action_once) {
-    for (int a = WATCH_PLAY_PAUSE; a <= WATCH_LEFT_LATER; a++) {
+    for (int a = WATCH_PLAY_PAUSE; a <= WATCH_CANCEL_EXPORT; a++) {
         int labelled = 0;
         for (size_t i = 0; i < watch_nbindings; i++)
             if ((int)watch_bindings[i].action == a && watch_bindings[i].label)
                 labelled++;
-        CHECK_EQ(labelled, a == WATCH_LEFT_LATER ? 0 : 1);
+        CHECK_EQ(labelled, 1);
     }
     for (size_t i = 0; i < watch_nbindings; i++)
         for (size_t j = i + 1; j < watch_nbindings; j++) {

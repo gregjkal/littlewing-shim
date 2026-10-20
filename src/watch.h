@@ -10,7 +10,7 @@
 
      Space, K      pause, or go on
      J, L          back or ahead 10 seconds (Shift: a minute)
-     Right         ahead 5 seconds (Left only says to use J, until #34)
+     Left, Right   back or ahead 5 seconds
      <, >          slower or faster: 1x, 2x, 4x, 8x, as fast as it can
      I, O          the start and end of a clip; O saves it
      E             export the clips (LOONY_CLIP=clips, export.h)
@@ -54,13 +54,14 @@
    export has finished). */
 
 #define WATCH_MAX_LAG 0.1 /* seconds */
-#define WATCH_SMALL_STEP_TICKS 300  /* Right: 5 s */
+#define WATCH_SMALL_STEP_TICKS 300  /* Left and Right: 5 s */
 #define WATCH_STEP_TICKS 600        /* J and L: 10 s */
 #define WATCH_BIG_STEP_TICKS 3600   /* with Shift: a minute */
 
 /* What the viewer's keys and the Replay menu's items do. */
 typedef enum {
     WATCH_PLAY_PAUSE,
+    WATCH_BACK_SMALL,   /* 5 s */
     WATCH_BACK,         /* 10 s */
     WATCH_BACK_BIG,     /* a minute */
     WATCH_AHEAD_SMALL,  /* 5 s */
@@ -73,7 +74,6 @@ typedef enum {
     WATCH_EXPORT_CLIPS,
     WATCH_EXPORT_MARKS,
     WATCH_CANCEL_EXPORT,
-    WATCH_LEFT_LATER,   /* only says what to press instead, until #34 binds Left */
 } watch_action;
 
 /* The one table of the viewer's keys: watch_key looks each key up in it,
@@ -81,9 +81,9 @@ typedef enum {
    in this order, with the first key for it as the item's key equivalent.
    A key matches when the Shift, Ctrl, Alt and Cmd held are exactly mods
    (either side's), so a key with Cmd, Ctrl or Alt goes past the viewer to
-   the menus. A row without a label is a second key for its action (K) or
-   isn't in the menu (Left); scancode 0 is an item without a key (Export
-   Marks). gap puts a separator before the item. */
+   the menus. A row without a label is a second key for its action (K);
+   scancode 0 is an item without a key (Export Marks). gap puts a
+   separator before the item. */
 typedef struct {
     watch_action action;
     int scancode; /* SDL_Scancode */

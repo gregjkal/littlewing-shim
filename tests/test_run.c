@@ -1032,9 +1032,9 @@ TEST(run_a_listed_recording_plays_from_its_mark) {
     recordings_forget();
 }
 
-/* L goes ahead without pacing; J goes back by putting back a snapshot in
-   place (seek.h), without a restart, keeping the speed, and plays on from
-   there to the end without a desync. */
+/* L goes ahead without pacing; J, and then Left, go back by putting back a
+   snapshot in place (seek.h), without a restart, keeping the speed, and
+   play on from there to the end without a desync. */
 TEST(run_a_watched_replay_goes_ahead_and_back) {
     SKIP_UNLESS_GAME();
     char rec_dir[1024], play_dir[1024];
@@ -1048,7 +1048,7 @@ TEST(run_a_watched_replay_goes_ahead_and_back) {
     test_remove_tree(play_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
     int back_status = watch_recording("30 down lshift\n30 down period\n34 up period\n34 up lshift\n"
-                                      "150 down j\n154 up j\n", /* > for 2x */
+                                      "150 down j\n154 up j\n240 down left\n244 up left\n", /* > for 2x */
                                       play_dir, out[2], sizeof out[2], &back_seconds);
     test_remove_tree(rec_dir);
     test_remove_tree(play_dir);
@@ -1065,7 +1065,10 @@ TEST(run_a_watched_replay_goes_ahead_and_back) {
         CHECK_CONTAINS(back, "in place, in ");
         CHECK_CONTAINS(back, "watch: reached 0:00");
         CHECK_CONTAINS(back, "loony: replay: reached the end of the recording");
-        CHECK(!strstr(back + 1, "watch: back to")); /* the script's J doesn't come again */
+        const char *left = strstr(back + 1, "watch: back to 0:00\n"); /* Left from 0:04 */
+        CHECK(left);
+        CHECK(left && strstr(left, "in place, in "));
+        CHECK(left && !strstr(left + 1, "watch: back to")); /* nor do the script's keys come again */
     }
     CHECK(!strstr(out[2], "restarting"));
     CHECK(!strstr(out[2], "replay: desync"));

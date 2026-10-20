@@ -410,7 +410,7 @@ static void landed(uint64_t clock_us, bool restored, unsigned generation) {
     update_title();
 }
 
-/* J, L and Right: by step ticks back (step < 0) or ahead, from the time
+/* J, L and the arrows: by step ticks back (step < 0) or ahead, from the time
    going to while going. Back, or ahead past a snapshot, goes through a
    seek. */
 static void step_by(int64_t step) {
@@ -591,7 +591,8 @@ void watch_stop_export(void) {
 const watch_binding watch_bindings[] = {
     {WATCH_PLAY_PAUSE, SDL_SCANCODE_SPACE, 0, "Play/Pause", false},
     {WATCH_PLAY_PAUSE, SDL_SCANCODE_K, 0, NULL, false}, /* as on YouTube */
-    {WATCH_BACK, SDL_SCANCODE_J, 0, "Back 10 s", true},
+    {WATCH_BACK_SMALL, SDL_SCANCODE_LEFT, 0, "Back 5 s", true},
+    {WATCH_BACK, SDL_SCANCODE_J, 0, "Back 10 s", false},
     {WATCH_BACK_BIG, SDL_SCANCODE_J, SDL_KMOD_SHIFT, "Back 1 min", false},
     {WATCH_AHEAD_SMALL, SDL_SCANCODE_RIGHT, 0, "Ahead 5 s", false},
     {WATCH_AHEAD, SDL_SCANCODE_L, 0, "Ahead 10 s", false},
@@ -603,7 +604,6 @@ const watch_binding watch_bindings[] = {
     {WATCH_EXPORT_CLIPS, SDL_SCANCODE_E, 0, "Export Clips", true},
     {WATCH_EXPORT_MARKS, 0, 0, "Export Marks", false},
     {WATCH_CANCEL_EXPORT, SDL_SCANCODE_ESCAPE, 0, "Cancel Export", true},
-    {WATCH_LEFT_LATER, SDL_SCANCODE_LEFT, 0, NULL, false},
 };
 const size_t watch_nbindings = sizeof watch_bindings / sizeof watch_bindings[0];
 
@@ -638,7 +638,7 @@ bool watch_can(watch_action action) {
 }
 
 void watch_act(watch_action action, bool repeat) {
-    bool step = action >= WATCH_BACK && action <= WATCH_AHEAD_BIG;
+    bool step = action >= WATCH_BACK_SMALL && action <= WATCH_AHEAD_BIG;
     if (!W.started || (repeat && !step)) /* only the steps go on while their key is held */
         return;
     switch (action) {
@@ -646,6 +646,7 @@ void watch_act(watch_action action, bool repeat) {
         if (!W.at_end)
             toggle_pause();
         break;
+    case WATCH_BACK_SMALL: step_by(-WATCH_SMALL_STEP_TICKS); break;
     case WATCH_BACK: step_by(-WATCH_STEP_TICKS); break;
     case WATCH_BACK_BIG: step_by(-WATCH_BIG_STEP_TICKS); break;
     case WATCH_AHEAD_SMALL: step_by(WATCH_SMALL_STEP_TICKS); break;
@@ -664,9 +665,6 @@ void watch_act(watch_action action, bool repeat) {
     case WATCH_EXPORT_CLIPS: watch_export(false); break;
     case WATCH_EXPORT_MARKS: watch_export(true); break;
     case WATCH_CANCEL_EXPORT: watch_cancel_export(); break;
-    case WATCH_LEFT_LATER:
-        flash("Left will seek back once seeking is fast; J goes back 10 s");
-        break;
     }
     update_title();
 }
