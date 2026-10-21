@@ -74,7 +74,7 @@ void recordings_leave_env(void);
    calls NSFileManager's trashItemAtURL, so a slip can be undone), and its
    list of clips (clip_list_path) after it, but not the clips exported
    from it: they are what it was kept for. A take of its snapshot of the
-   game's start that waits is dropped, and one running is stopped first
+   game's start that waits is dropped, and one running is killed first
    (gamestart_take_forget), so it doesn't put the file back. When this
    program is watching it, the viewer closes (display_request_close),
    saying why. False, with err, if path can't be deleted or moved; the

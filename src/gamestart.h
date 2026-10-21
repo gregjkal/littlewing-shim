@@ -123,10 +123,15 @@ bool gamestart_in_file(const char *path);
    snapshot is kept or none can be. gamestart_take_start starts it (false,
    with err, if it can't, or a share's is running); gamestart_take_poll
    returns whether it has ended, without waiting, and then in *kept whether
-   path holds a snapshot; gamestart_take_stop ends it (SIGTERM, which a
-   take's write of the file waits out, then SIGKILL after 3 s, removing the
-   hidden file that leaves). One take runs at a time: a background one
-   running (below) is stopped for a share's, and starts again after it. */
+   path holds a snapshot (true at once, with none, if no share's take was
+   started); gamestart_take_stop ends it (SIGTERM, which a take's write of
+   the file waits out, then SIGKILL after 3 s, removing the hidden file
+   that leaves). One take runs at a time: a background one running (below)
+   is stopped for a share's, and starts again after it. That stop doesn't
+   wait, since play goes on after the share: the share's take starts from
+   gamestart_take_poll once the background one has ended, which can be up
+   to those 3 s if it was writing, and a gamestart_take_stop before then
+   only forgets the share's. */
 bool gamestart_take_start(const char *self, const char *path, char *err, size_t errlen);
 bool gamestart_take_poll(bool *kept);
 void gamestart_take_stop(void);
@@ -150,7 +155,7 @@ void gamestart_take_stop(void);
 bool gamestart_take_later(const char *self, const char *path, uint64_t play_on_us);
 void gamestart_tend(void);
 /* A recording deleted (recordings_delete): no take of path waits, and one
-   running is stopped first (stop_child's wait), so none puts the file back
-   with its rename. */
+   running is killed first (SIGKILL, no wait: what it was writing is going
+   anyway), so none puts the file back with its rename. */
 void gamestart_take_forget(const char *path);
 void gamestart_take_end(void);

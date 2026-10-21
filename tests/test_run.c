@@ -618,6 +618,133 @@ TEST(run_a_short_prelude_starts_no_take) {
     CHECK(!gamestart_take_later(LOONY_BIN, "/nonexistent/game.lwreplay", UINT64_MAX));
 }
 
+/* A stand-in for this program in a take: a shell script in dir, named
+   name, running body. */
+static void fake_take(char *out, size_t cap, const char *dir, const char *name, const char *body) {
+    snprintf(out, cap, "%s/%s", dir, name);
+    FILE *f = fopen(out, "w");
+    if (f) {
+        fprintf(f, "#!/bin/sh\n%s\n", body);
+        fclose(f);
+    }
+    chmod(out, 0755);
+}
+
+/* The number of lines in path, and the number on the last, in *last. */
+static int lines_of(const char *path, int *last) {
+    FILE *f = fopen(path, "r");
+    int n = 0, v;
+    *last = 0;
+    while (f && fscanf(f, "%d", &v) == 1) {
+        n++;
+        *last = v;
+    }
+    if (f)
+        fclose(f);
+    return n;
+}
+
+/* A take in the background writing its file, which waits out SIGTERM
+   (here: ignores it), doesn't hold up a share: the share's start returns
+   at once, its poll says it hasn't ended until the background one is
+   killed TAKE_STOP_WAIT (3 s) on, and then the share's runs, and the
+   background one starts again after it. A second share meanwhile is
+   refused. */
+TEST(run_a_share_doesnt_wait_for_a_take_in_the_background) {
+    char dir[1024], bg[1100], share[1100], rec[1100], copy[1100], started[1100], err[256];
+    test_tmp_dir(dir, sizeof dir);
+    snprintf(started, sizeof started, "%s/started", dir);
+    char body[1300];
+    snprintf(body, sizeof body, "echo $$ >> '%s'\ntrap '' TERM\nexec sleep 30", started);
+    fake_take(bg, sizeof bg, dir, "background", body);
+    fake_take(share, sizeof share, dir, "share", "exit 0");
+    snprintf(rec, sizeof rec, "%s/game.lwreplay", dir);
+    snprintf(copy, sizeof copy, "%s/shared.lwreplay", dir);
+    fclose(fopen(rec, "w"));
+    bool queued = gamestart_take_later(bg, rec, GAMESTART_MIN_PRELUDE_US);
+    for (int i = 0; i < 500 && access(started, F_OK) != 0; i++)
+        usleep(10000);
+    double t0 = wall_seconds();
+    bool started_share = gamestart_take_start(share, copy, err, sizeof err);
+    double start_took = wall_seconds() - t0;
+    bool second = gamestart_take_start(share, copy, err, sizeof err);
+    bool ended = false, kept = true;
+    for (int i = 0; started_share && i < 200 && !(ended = gamestart_take_poll(&kept)); i++)
+        usleep(50000);
+    double poll_took = wall_seconds() - t0;
+    gamestart_tend(); /* the background one again */
+    int last, before = lines_of(started, &last);
+    for (int i = 0; i < 500 && lines_of(started, &last) == before; i++)
+        usleep(10000);
+    int runs = lines_of(started, &last);
+    t0 = wall_seconds();
+    gamestart_take_end();
+    double end_took = wall_seconds() - t0;
+    bool gone = last > 0 && kill(last, 0) != 0 && errno == ESRCH;
+    test_remove_tree(dir);
+    CHECK(queued);
+    CHECK(started_share);
+    CHECK(start_took < 0.5);
+    CHECK(!second);
+    CHECK_CONTAINS(err, "being taken already");
+    CHECK(ended);
+    CHECK(!kept);
+    CHECK(poll_took > 2.5);
+    CHECK_EQ(runs, 2);
+    CHECK(end_took > 2.5); /* at exit, the app waits out a write */
+    CHECK(gone);
+}
+
+/* A share cancelled while it waits for a take in the background to stop
+   doesn't wait either, and a share again after takes the background
+   one's place once, not twice. */
+TEST(run_a_cancelled_share_doesnt_wait_for_a_take_in_the_background) {
+    char dir[1024], bg[1100], share[1100], rec[1100], copy[1100], started[1100], err[256];
+    test_tmp_dir(dir, sizeof dir);
+    snprintf(started, sizeof started, "%s/started", dir);
+    char body[1300];
+    snprintf(body, sizeof body, "echo $$ >> '%s'\ntrap '' TERM\nexec sleep 30", started);
+    fake_take(bg, sizeof bg, dir, "background", body);
+    fake_take(share, sizeof share, dir, "share", "exit 0");
+    snprintf(rec, sizeof rec, "%s/game.lwreplay", dir);
+    snprintf(copy, sizeof copy, "%s/shared.lwreplay", dir);
+    fclose(fopen(rec, "w"));
+    bool queued = gamestart_take_later(bg, rec, GAMESTART_MIN_PRELUDE_US);
+    for (int i = 0; i < 500 && access(started, F_OK) != 0; i++)
+        usleep(10000);
+    bool first = gamestart_take_start(share, copy, err, sizeof err);
+    double t0 = wall_seconds();
+    gamestart_take_stop();
+    double stop_took = wall_seconds() - t0;
+    bool again = gamestart_take_start(share, copy, err, sizeof err), kept = true, ended = false;
+    for (int i = 0; again && i < 200 && !(ended = gamestart_take_poll(&kept)); i++)
+        usleep(50000);
+    int last;
+    for (int i = 0; i < 500 && lines_of(started, &last) < 2; i++) {
+        gamestart_tend();
+        usleep(10000);
+    }
+    /* the queue holds nothing more, so none starts after this one */
+    t0 = wall_seconds();
+    gamestart_take_forget(rec);
+    double forget_took = wall_seconds() - t0;
+    gamestart_tend();
+    usleep(300000);
+    int runs = lines_of(started, &last);
+    bool gone = last > 0 && kill(last, 0) != 0 && errno == ESRCH;
+    gamestart_take_end();
+    test_remove_tree(dir);
+    CHECK(queued);
+    CHECK(first);
+    CHECK(stop_took < 0.5);
+    CHECK(again);
+    CHECK(ended);
+    CHECK(!kept);
+    CHECK_EQ(runs, 2);
+    CHECK(forget_took < 0.5); /* a deleted recording's take is killed, not waited for */
+    CHECK(gone);
+}
+
 /* A clip of a few seconds of a recording (clip.h): one frame a tick for
    exactly the span, in HD at 2x scaled to 1280x960, with the opening's
    music. */
