@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <copyfile.h>
 #include <time.h>
 #include <unistd.h>
 #include <zlib.h>
@@ -1441,6 +1442,83 @@ static int replay_hashed(const char *play_dir, const char *name, char *out, size
     return status;
 }
 
+/* One of the replays replays_side_by_side runs: of the recording file, in
+   a data folder of its own in play_dir named for tag, either replayed with
+   sound as replay_hashed does (keys NULL), or watched with keys as
+   watch_fastest does; with name set to value as well, unless name is
+   NULL. */
+typedef struct {
+    const char *file, *tag, *keys, *name, *value;
+    char data[1100], shot[1100], wav[1100], script[1100];
+} side_replay;
+
+static void run_side_replay(void *arg) {
+    side_replay *r = arg;
+    snprintf(replay_file, sizeof replay_file, "%s", r->file);
+    snprintf(run_data, sizeof run_data, "%s", r->data);
+    if (r->name)
+        setenv(r->name, r->value, 1);
+    if (r->keys) {
+        snprintf(script_path, sizeof script_path, "%s", r->script);
+        watch_speed = "0";
+        setenv("LOONY_SNAPSHOT_VERIFY", "1", 1);
+        run_loony_watching(NULL);
+    } else {
+        snprintf(replay_shot, sizeof replay_shot, "%s", r->shot);
+        run_loony_replaying_with_sound(r->wav);
+    }
+}
+
+/* Runs the n replays at once (test_run_children), since a slow test's
+   replays are most of its time: each one's log in out[i], its status, and
+   for one replayed with sound, its last frame's and its sound's hashes.
+   Replays of one file side by side must not take a snapshot of the game's
+   start into it (gamestart.h): give each a copy, or let one replay take
+   it first. */
+static void replays_side_by_side(const char *play_dir, side_replay *r, size_t n, char (*out)[65536],
+                                 int *status, uint32_t *shot, uint32_t *wav) {
+    void *args[8];
+    char *outs[8];
+    if (n > 8)
+        n = 8;
+    for (size_t i = 0; i < n; i++) {
+        snprintf(r[i].data, sizeof r[i].data, "%s/data-%s", play_dir, r[i].tag);
+        snprintf(r[i].shot, sizeof r[i].shot, "%s/%s.png", play_dir, r[i].tag);
+        snprintf(r[i].wav, sizeof r[i].wav, "%s/%s.wav", play_dir, r[i].tag);
+        r[i].script[0] = '\0';
+        if (r[i].keys) {
+            tmp_name(r[i].script, sizeof r[i].script, "script");
+            FILE *f = fopen(r[i].script, "w");
+            if (f) {
+                fputs(r[i].keys, f);
+                fclose(f);
+            }
+        }
+        args[i] = &r[i];
+        outs[i] = out[i];
+    }
+    test_run_children(n, run_side_replay, args, outs, sizeof out[0], status);
+    for (size_t i = 0; i < n; i++) {
+        if (r[i].script[0])
+            unlink(r[i].script);
+        if (r[i].keys)
+            continue;
+        size_t len = 0;
+        uint8_t *png = read_file(r[i].shot, &len);
+        shot[i] = png ? fnv1a32(png, len) : 0;
+        free(png);
+        uint8_t *sound = read_file(r[i].wav, &len);
+        wav[i] = sound ? fnv1a32(sound, len) : 0;
+        free(sound);
+    }
+}
+
+/* A copy of the recording at path, as dir/name: its path in out. */
+static bool copy_recording(const char *path, const char *dir, const char *name, char *out, size_t cap) {
+    snprintf(out, cap, "%s/%s.lwreplay", dir, name);
+    return copyfile(path, out, NULL, COPYFILE_DATA) == 0;
+}
+
 /* A replay that takes snapshots, and puts each back the moment it is
    taken (LOONY_SNAPSHOT_VERIFY), plays exactly as one that takes none: the
    same frame checks, the same last frame, the same sound. A capture or a
@@ -1455,13 +1533,17 @@ TEST(run_a_replay_with_snapshots_plays_as_one_without) {
     int rec_status = record_one_game(rec_dir, true, out[0], sizeof out[0]);
     uint32_t shot[2], wav[2];
     int status[2];
-    status[0] = replay_hashed(play_dir, "without", out[1], sizeof out[1], &shot[0], &wav[0]);
-    setenv("LOONY_SNAPSHOT_VERIFY", "1", 1);
-    status[1] = replay_hashed(play_dir, "with", out[2], sizeof out[2], &shot[1], &wav[1]);
-    unsetenv("LOONY_SNAPSHOT_VERIFY");
+    /* At once, each of a copy of its own, so both play from launch. */
+    char files[2][1200];
+    bool copied = copy_recording(replay_file, rec_dir, "without", files[0], sizeof files[0]) &&
+                  copy_recording(replay_file, rec_dir, "with", files[1], sizeof files[1]);
+    side_replay r[2] = {{.file = files[0], .tag = "without"},
+                        {.file = files[1], .tag = "with", .name = "LOONY_SNAPSHOT_VERIFY", .value = "1"}};
+    replays_side_by_side(play_dir, r, 2, out + 1, status, shot, wav);
     test_remove_tree(rec_dir);
     test_remove_tree(play_dir);
     CHECK_EQ(rec_status, 0);
+    CHECK(copied);
     CHECK_EQ(status[0], 0);
     CHECK_EQ(status[1], 0);
     CHECK(!strstr(out[1], "seek: snapshot at"));
@@ -1492,7 +1574,11 @@ static uint32_t png_width(const char *path, uint32_t *hash) {
 /* In HD, the picture after going back is the straight run's at the same
    tick: in the game, where the snapshot goes back in place and HD keeps
    its copies (Spike C), and at the end again after going back from the
-   end, where it goes back from main. */
+   end, where it goes back from main. The recording ends a few to a
+   hundred ticks after the quit at 10200, so the J after its end and the
+   screenshot of the end are far past it, as in
+   run_a_watched_game_goes_back. The straight run takes the snapshot of
+   the game's start; the other two, at once, verify it (watch_fastest). */
 TEST(run_a_watched_game_in_hd_looks_the_same_after_going_back) {
     SKIP_UNLESS_GAME();
     SKIP_UNLESS_SLOW();
@@ -1505,17 +1591,19 @@ TEST(run_a_watched_game_in_hd_looks_the_same_after_going_back) {
     for (int i = 0; i < 4; i++)
         snprintf(shots[i], sizeof shots[i], "%s/shot%d.png", play_dir, i);
     /* Straight; back in the game; back from the end. */
-    snprintf(keys[0], sizeof keys[0], "4600 screenshot %s\n10400 screenshot %s\n", shots[0], shots[1]);
+    snprintf(keys[0], sizeof keys[0], "4600 screenshot %s\n20100 screenshot %s\n", shots[0], shots[1]);
     snprintf(keys[1], sizeof keys[1], "4500 down j\n4504 up j\n4600 screenshot %s\n", shots[2]);
-    snprintf(keys[2], sizeof keys[2], "10300 down j\n10301 up j\n10400 screenshot %s\n", shots[3]);
+    snprintf(keys[2], sizeof keys[2], "20000 down j\n20001 up j\n20100 screenshot %s\n", shots[3]);
     setenv("LOONY_HD", LOONY_SRC_DIR "/hd-art/loony-labyrinth", 1);
     int status[3];
-    for (int i = 0; i < 3; i++) {
-        char dir[1100];
-        snprintf(dir, sizeof dir, "%s/%d", play_dir, i);
-        mkdir(dir, 0700);
-        status[i] = watch_fastest(keys[i], dir, out[i + 1], sizeof out[i + 1]);
-    }
+    char dir[1100];
+    snprintf(dir, sizeof dir, "%s/0", play_dir);
+    mkdir(dir, 0700);
+    status[0] = watch_fastest(keys[0], dir, out[1], sizeof out[1]);
+    side_replay r[2] = {{.file = replay_file, .tag = "in-the-game", .keys = keys[1]},
+                        {.file = replay_file, .tag = "from-the-end", .keys = keys[2]}};
+    uint32_t unused[2];
+    replays_side_by_side(play_dir, r, 2, out + 2, status + 1, unused, unused);
     unsetenv("LOONY_HD");
     uint32_t hash[4], width[4];
     for (int i = 0; i < 4; i++)
@@ -1534,6 +1622,9 @@ TEST(run_a_watched_game_in_hd_looks_the_same_after_going_back) {
     CHECK(hash[0] != hash[1]);
     CHECK_EQ(hash[2], hash[0]); /* 4600, after going back in the game */
     CHECK_EQ(hash[3], hash[1]); /* the end, after going back from it */
+    CHECK_CONTAINS(out[1], "gamestart: kept a snapshot of the game's start at ");
+    for (int i = 2; i <= 3; i++) /* verifying, they play from launch to it */
+        CHECK_CONTAINS(out[i], " the replay from launch is the recording's snapshot");
 }
 
 /* The file the first clip in rec_dir/game.clips is exported to, or "". */
@@ -2808,24 +2899,28 @@ TEST(run_a_recorded_game_starts_at_the_game_from_its_snapshot) {
     uint32_t shot[7], wav[7];
     int status[7];
     status[0] = replay_hashed(play_dir, "first", out[1], sizeof out[1], &shot[0], &wav[0]);
-    status[1] = replay_hashed(play_dir, "second", out[2], sizeof out[2], &shot[1], &wav[1]);
-    setenv("LOONY_SNAPSHOT_VERIFY", "1", 1);
-    status[2] = replay_hashed(play_dir, "verify", out[3], sizeof out[3], &shot[2], &wav[2]);
-    unsetenv("LOONY_SNAPSHOT_VERIFY");
-    bool edited[3];
-    edited[0] = edit_section(replay_file, damage_baseline);
-    status[3] = replay_hashed(play_dir, "baseline", out[4], sizeof out[4], &shot[3], &wav[3]);
-    edited[1] = edit_section(replay_file, pc_in_data);
-    status[4] = replay_hashed(play_dir, "pc", out[5], sizeof out[5], &shot[4], &wav[4]);
-    edited[2] = edit_section(replay_file, code_page);
-    status[5] = replay_hashed(play_dir, "code", out[6], sizeof out[6], &shot[5], &wav[5]);
-    setenv("LOONY_GAMESTART", "0", 1);
-    status[6] = replay_hashed(play_dir, "off", out[7], sizeof out[7], &shot[6], &wav[6]);
-    unsetenv("LOONY_GAMESTART");
+    /* The rest at once, each of a copy of the recording with the snapshot
+       the first kept, edited for the ones it shouldn't fit. */
+    side_replay r[6] = {{.tag = "second"},
+                        {.tag = "verify", .name = "LOONY_SNAPSHOT_VERIFY", .value = "1"},
+                        {.tag = "baseline"},
+                        {.tag = "pc"},
+                        {.tag = "code"},
+                        {.tag = "off", .name = "LOONY_GAMESTART", .value = "0"}};
+    char files[6][1200];
+    bool copied = true;
+    for (int i = 0; i < 6; i++) {
+        copied = copy_recording(replay_file, rec_dir, r[i].tag, files[i], sizeof files[i]) && copied;
+        r[i].file = files[i];
+    }
+    bool edited[3] = {edit_section(files[2], damage_baseline), edit_section(files[3], pc_in_data),
+                      edit_section(files[4], code_page)};
+    replays_side_by_side(play_dir, r, 6, out + 2, status + 1, shot + 1, wav + 1);
     char *prefs[2] = {prefs_of(play_dir, "first"), prefs_of(play_dir, "second")};
     test_remove_tree(rec_dir);
     test_remove_tree(play_dir);
     CHECK_EQ(rec_status, 0);
+    CHECK(copied);
     for (int i = 0; i < 7; i++) {
         CHECK_EQ(status[i], 0);
         CHECK_CONTAINS(out[i + 1], "loony: replay: reached the end of the recording");
@@ -2923,10 +3018,10 @@ TEST(run_a_shared_game_starts_at_the_game_on_another_install) {
     snprintf(replay_file, sizeof replay_file, "%s", shared);
     uint32_t shot[2], wav[2];
     int status[2];
-    status[0] = replay_hashed(play_dir, "viewer", out[1], sizeof out[1], &shot[0], &wav[0]);
-    setenv("LOONY_GAMESTART", "0", 1);
-    status[1] = replay_hashed(play_dir, "launch", out[2], sizeof out[2], &shot[1], &wav[1]);
-    unsetenv("LOONY_GAMESTART");
+    /* At once: the second neither uses the snapshot nor takes one. */
+    side_replay r[2] = {{.file = shared, .tag = "viewer"},
+                        {.file = shared, .tag = "launch", .name = "LOONY_GAMESTART", .value = "0"}};
+    replays_side_by_side(play_dir, r, 2, out + 1, status, shot, wav);
     test_remove_tree(rec_dir);
     test_remove_tree(play_dir);
     test_remove_tree(sharer);
