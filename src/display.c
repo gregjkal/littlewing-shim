@@ -26,6 +26,10 @@ static struct {
     bool open_pending;
     char open_path[4096];
     uint32_t open_from;
+    void (*close)(const char *why);
+    /* The replay to close once display_poll's events are handled, saying why. */
+    bool close_pending;
+    char close_why[256];
     bool no_vsync;
     bool cursor_hidden;
     bool raise; /* on opening */
@@ -142,6 +146,10 @@ static bool open_window(int w, int h) {
     SDL_SetRenderVSync(D.renderer, D.no_vsync ? 0 : 1);
     if (D.raise)
         SDL_RaiseWindow(D.window);
+    const char *flash = getenv("LOONY_FLASH");
+    if (flash && *flash)
+        display_flash(flash);
+    unsetenv("LOONY_FLASH"); /* said once: a later restart doesn't say it again */
     return true;
 }
 
@@ -283,8 +291,25 @@ void display_request_open(const char *path, uint32_t from_ticks) {
     D.open_pending = true;
 }
 
-/* Opens the file display_request_open asked for, if any. */
+void display_set_close(void (*fn)(const char *why)) { D.close = fn; }
+
+void display_request_close(const char *why) {
+    snprintf(D.close_why, sizeof D.close_why, "%s", why);
+    D.close_pending = true;
+}
+
+/* Closes the replay display_request_close asked for, else opens the file
+   display_request_open asked for, if any. */
 static void open_pending(void) {
+    if (D.close_pending) {
+        char why[sizeof D.close_why];
+        snprintf(why, sizeof why, "%s", D.close_why);
+        D.close_pending = false;
+        D.open_pending = false;
+        if (D.close)
+            D.close(why); /* restarts the program */
+        return;
+    }
     if (!D.open_pending)
         return;
     char path[sizeof D.open_path];

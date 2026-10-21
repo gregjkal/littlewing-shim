@@ -370,6 +370,16 @@ void menu_add_replay(void) {
    ago is in it, and the File menu's Open Recent, rebuilt the same way: the
    menus' delegate and their items' target. An item's representedObject
    holds the recording's path and where to start, in ticks of play. */
+/* recordings_delete's trash: the Finder's, so a slip can be undone. */
+static bool trash(const char *path, char *err, size_t errlen) {
+    NSError *error = nil;
+    NSURL *url = [NSURL fileURLWithFileSystemRepresentation:path isDirectory:NO relativeToURL:nil];
+    if ([[NSFileManager defaultManager] trashItemAtURL:url resultingItemURL:nil error:&error])
+        return true;
+    snprintf(err, errlen, "%s", error.localizedDescription.UTF8String ?: "unknown error");
+    return false;
+}
+
 @interface LoonyRecordings : NSObject <NSMenuDelegate>
 @property(nonatomic, strong) NSMenu *recent; /* Open Recent; the other is Replays */
 @end
@@ -420,6 +430,15 @@ static NSMenuItem *open_item(NSString *title, const char *path, uint32_t from, i
             at.indentationLevel = 1;
             [menu addItem:at];
         }
+        if (!recordings_deletable(list[i].path))
+            continue;
+        NSMenuItem *del = [[NSMenuItem alloc] initWithTitle:@"Delete"
+                                                     action:@selector(delete:)
+                                              keyEquivalent:@""];
+        del.target = self;
+        del.representedObject = @(list[i].path);
+        del.indentationLevel = 1;
+        [menu addItem:del];
     }
     [menu addItem:[NSMenuItem separatorItem]];
     NSMenuItem *show = [[NSMenuItem alloc] initWithTitle:@"Show Recordings in Finder"
@@ -458,6 +477,17 @@ static NSMenuItem *open_item(NSString *title, const char *path, uint32_t from, i
 - (void)open:(NSMenuItem *)item {
     NSDictionary *info = item.representedObject;
     display_request_open([info[@"path"] fileSystemRepresentation], [info[@"from"] unsignedIntValue]);
+}
+
+- (void)delete:(NSMenuItem *)item {
+    char err[512];
+    const char *path = [item.representedObject fileSystemRepresentation];
+    if (!recordings_delete(path, trash, err, sizeof err)) {
+        log_msg("menu: can't delete %s: %s", path, err);
+        char msg[600];
+        snprintf(msg, sizeof msg, "Can't delete the recording: %s", err);
+        display_flash(msg);
+    }
 }
 
 - (void)showFolder:(NSMenuItem *)item {

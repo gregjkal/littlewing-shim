@@ -133,6 +133,9 @@ bool watch_open(char *err, size_t errlen);
 /* True when a replay is being watched. */
 bool watch_on(void);
 
+/* The recording being watched, or NULL when none is. */
+const char *watch_replay_path(void);
+
 /* Once the window and sound are set up: starts watching, and taking
    snapshots (seek_start), with the game's title for the window's. */
 void watch_start(const char *title);

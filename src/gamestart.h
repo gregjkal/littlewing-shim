@@ -149,4 +149,8 @@ void gamestart_take_stop(void);
    crash or a force quit skips it, and the take ends itself. */
 bool gamestart_take_later(const char *self, const char *path, uint64_t play_on_us);
 void gamestart_tend(void);
+/* A recording deleted (recordings_delete): no take of path waits, and one
+   running is stopped first (stop_child's wait), so none puts the file back
+   with its rename. */
+void gamestart_take_forget(const char *path);
 void gamestart_take_end(void);
