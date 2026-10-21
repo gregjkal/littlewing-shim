@@ -698,7 +698,8 @@ static pid_t reap(int *st) {
             return 0;
         log_msg("gamestart: the take of %s hasn't ended, killing it", child.path);
         kill(child.pid, SIGKILL);
-        r = waitpid(child.pid, st, 0);
+        while ((r = waitpid(child.pid, st, 0)) < 0 && errno == EINTR)
+            ;
         remove_temp(child.path);
     }
     child.pid = 0;
@@ -732,7 +733,8 @@ static void kill_child(void) {
     if (!child.pid)
         return;
     kill(child.pid, SIGKILL);
-    waitpid(child.pid, NULL, 0);
+    while (waitpid(child.pid, NULL, 0) < 0 && errno == EINTR)
+        ;
     remove_temp(child.path);
     child.pid = 0;
     child.stop_by = 0;

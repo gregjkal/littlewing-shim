@@ -754,9 +754,10 @@ TEST(run_a_cancelled_share_doesnt_wait_for_a_take_in_the_background) {
     double cancel_took = wall_seconds() - t0;
     bool cancelled = writer > 0 && kill(writer, 0) != 0 && errno == ESRCH;
     /* a deleted recording's take */
-    gamestart_take_later(bg, rec, GAMESTART_MIN_PRELUDE_US);
+    bool fourth = gamestart_take_later(bg, rec, GAMESTART_MIN_PRELUDE_US);
     for (int i = 0; i < 500 && lines_of(started, &last) < 3; i++)
         usleep(10000);
+    int runs3 = lines_of(started, &last);
     t0 = wall_seconds();
     gamestart_take_forget(rec);
     double forget_took = wall_seconds() - t0;
@@ -774,6 +775,8 @@ TEST(run_a_cancelled_share_doesnt_wait_for_a_take_in_the_background) {
     CHECK(third);
     CHECK(cancel_took < 0.5);
     CHECK(cancelled);
+    CHECK(fourth);
+    CHECK_EQ(runs3, 3);
     CHECK(forget_took < 0.5); /* a deleted recording's take is killed, not waited for */
     CHECK(gone);
 }
