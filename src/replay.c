@@ -104,6 +104,8 @@ static struct {
     uint64_t session_step;   /* the step of its last record */
     char path[PATH_MAX];     /* the file being written */
     gzFile out;              /* or NULL (auto, between games) */
+    uint64_t game_play_ms;   /* auto: where play first went on in its file, or UINT64_MAX */
+    void (*game_recorded)(const char *path, uint64_t play_on_us);
     uint64_t last_step;
     bool write_failed;
     char cut_text[REPLAY_MAX_TEXT];
@@ -159,6 +161,8 @@ static void snap_walk(snapshot_walker *w) {
     SNAPSHOT_HOST(w, R.header);
     SNAPSHOT_HOST(w, R.session);
     SNAPSHOT_HOST(w, R.out);
+    SNAPSHOT_HOST(w, R.game_play_ms);
+    SNAPSHOT_HOST(w, R.game_recorded);
     SNAPSHOT_HOST(w, R.started_wall);
     SNAPSHOT_HOST(w, R.data);
     SNAPSHOT_HOST(w, R.in.data);
@@ -1332,6 +1336,7 @@ static void open_game_file(void) {
     }
     R.write_failed = false;
     R.marks = 0;
+    R.game_play_ms = UINT64_MAX;
     R.out = gzopen(R.path, "wb6");
     if (!R.out) {
         log_msg("replay: can't create %s: this game isn't recorded", R.path);
@@ -1348,6 +1353,17 @@ static void close_file(void) {
     if (gzclose(R.out) != Z_OK)
         log_msg("replay: can't finish the recording");
     R.out = NULL;
+}
+
+/* Ends a game's file with its end record and closes it (saying so, if
+   say), and says it is recorded (replay_set_game_recorded). */
+static void end_game_file(bool say) {
+    replay_log(REPLAY_END, NULL);
+    close_file();
+    if (say)
+        log_msg("replay: recorded the game to %s", R.path);
+    if (R.game_recorded && !R.write_failed)
+        R.game_recorded(R.path, R.game_play_ms == UINT64_MAX ? UINT64_MAX : R.game_play_ms * 1000);
 }
 
 bool replay_start(const char *game_id, const uint8_t *exe, size_t exe_len, const char *data_dir,
@@ -1501,21 +1517,22 @@ void replay_game(bool started) {
     if (R.mode != RECORDING)
         return;
     if (started && R.auto_dir[0]) {
-        if (R.out) { /* the last game's file, if it never ended */
-            replay_log(REPLAY_END, NULL);
-            close_file();
-        }
+        if (R.out) /* the last game's file, if it never ended */
+            end_game_file(false);
         open_game_file();
     }
     replay_log(REPLAY_GAME, (uint32_t[1]){started});
-    if (!started && R.auto_dir[0] && R.out) {
-        replay_log(REPLAY_END, NULL);
-        close_file();
-        log_msg("replay: recorded the game to %s", R.path);
-    }
+    if (!started && R.auto_dir[0] && R.out)
+        end_game_file(true);
 }
 
-void replay_play(bool on) { replay_log(REPLAY_PLAY, (uint32_t[1]){on}); }
+void replay_play(bool on) {
+    if (on && R.mode == RECORDING && R.out && R.game_play_ms == UINT64_MAX)
+        R.game_play_ms = R.clock_ms;
+    replay_log(REPLAY_PLAY, (uint32_t[1]){on});
+}
+
+void replay_set_game_recorded(void (*fn)(const char *path, uint64_t play_on_us)) { R.game_recorded = fn; }
 
 void replay_no_games(void) {
     if (R.mode != RECORDING || !R.auto_dir[0])

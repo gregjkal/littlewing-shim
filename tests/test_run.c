@@ -1,6 +1,7 @@
 #include "test.h"
 
 #include <dirent.h>
+#include <errno.h>
 #include <math.h>
 #include <poll.h>
 #include <signal.h>
@@ -435,6 +436,186 @@ TEST(run_each_game_is_recorded_into_a_file_of_its_own) {
     CHECK(start && reached && start < reached);
     CHECK_CONTAINS(out[3], "loony: clip: wrote 0:00-0:02");
     CHECK_CONTAINS(out[3], "120 frames");
+}
+
+/* Copies the file at from to to: false if it can't. */
+static bool copy_file_to(const char *from, const char *to) {
+    size_t len;
+    uint8_t *data = read_file(from, &len);
+    FILE *f = data ? fopen(to, "wb") : NULL;
+    bool ok = f && fwrite(data, 1, len, f) == len;
+    if (f && fclose(f) != 0)
+        ok = false;
+    free(data);
+    return ok;
+}
+
+/* Records two_games' script, cut to script, into rec_dir's recordings
+   folder, one file a game: the recording's status, its names (the first
+   game first) in names and their count in *n. */
+static int record_games(const char *rec_dir, const char *script, char names[2][256], int *n, char *out,
+                        size_t cap) {
+    tmp_name(script_path, sizeof script_path, "script");
+    FILE *f = fopen(script_path, "w");
+    fputs(script, f);
+    fclose(f);
+    snprintf(run_data, sizeof run_data, "%s", rec_dir);
+    int status = test_run_child(run_loony_recording_games, (void *)test_game_dir(), out, cap);
+    run_data[0] = '\0';
+    unlink(script_path);
+    char recs[1100];
+    snprintf(recs, sizeof recs, "%s/recordings", rec_dir);
+    *n = 0;
+    DIR *d = opendir(recs);
+    struct dirent *e;
+    while (d && (e = readdir(d)))
+        if (strncmp(e->d_name, "loony-labyrinth-", 16) == 0 && *n < 2)
+            snprintf(names[(*n)++], 256, "%s", e->d_name);
+    if (d)
+        closedir(d);
+    if (*n == 2 && strcmp(names[0], names[1]) > 0) {
+        char t[256];
+        snprintf(t, sizeof t, "%s", names[0]);
+        snprintf(names[0], 256, "%s", names[1]);
+        snprintf(names[1], 256, "%s", t);
+    }
+    return status;
+}
+
+/* Files in dir whose names start with a dot, as a take's unfinished one. */
+static int hidden_files(const char *dir) {
+    int n = 0;
+    DIR *d = opendir(dir);
+    struct dirent *e;
+    while (d && (e = readdir(d)))
+        if (e->d_name[0] == '.' && strcmp(e->d_name, ".") != 0 && strcmp(e->d_name, ".."))
+            n++;
+    if (d)
+        closedir(d);
+    return n;
+}
+
+/* A game recorded into a file of its own gets its snapshot of the game's
+   start as soon as it ends, from a take in the background
+   (gamestart_take_later), so its first replay starts at the game; the
+   second game, which the quit ends, gets none. A share's take while a
+   background one runs puts it off until after. */
+TEST(run_a_recorded_game_gets_its_snapshot_when_it_ends) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_SLOW();
+    char rec_dir[1024], play_dir[1024], names[2][256], path[2][1400], recs[1100];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    static char out[2][65536];
+    int n;
+    /* two_games, but the second game goes on long enough for the take of
+       the first, in a sanitizer build at utility priority (17 s), to end */
+    char script[sizeof two_games + 16];
+    snprintf(script, sizeof script, "%.*s7200 quit\n", (int)(strstr(two_games, "3300 quit") - two_games),
+             two_games);
+    int rec_status = record_games(rec_dir, script, names, &n, out[0], sizeof out[0]);
+    snprintf(recs, sizeof recs, "%s/recordings", rec_dir);
+    bool has[2] = {false, false};
+    for (int i = 0; i < n; i++) {
+        snprintf(path[i], sizeof path[i], "%s/%s", recs, names[i]);
+        has[i] = gamestart_in_file(path[i]);
+    }
+    int hidden = hidden_files(recs), status = -1;
+    /* A share while the second game's take runs in the background: the
+       share's goes first, and the background one starts again after it. */
+    bool queued = false, started = false, shared_kept = false, later_kept = false;
+    if (n == 2) {
+        char copy[1100], err[256];
+        snprintf(copy, sizeof copy, "%s/shared.lwreplay", play_dir);
+        if (copy_file_to(path[1], copy)) {
+            queued = gamestart_take_later(LOONY_BIN, path[1], GAMESTART_MIN_PRELUDE_US);
+            started = gamestart_take_start(LOONY_BIN, copy, err, sizeof err);
+            for (int i = 0; started && i < 6000 && !gamestart_take_poll(&shared_kept); i++)
+                usleep(100000);
+            for (int i = 0; i < 6000 && !(later_kept = gamestart_in_file(path[1])); i++) {
+                gamestart_tend();
+                usleep(100000);
+            }
+        }
+    }
+    if (n == 2) {
+        snprintf(replay_file, sizeof replay_file, "%s", path[0]);
+        tmp_name(replay_shot, sizeof replay_shot, "shot");
+        snprintf(run_data, sizeof run_data, "%s/data", play_dir);
+        status = test_run_child(run_loony_replaying, NULL, out[1], sizeof out[1]);
+        run_data[0] = '\0';
+        unlink(replay_shot);
+    }
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(n, 2);
+    CHECK_CONTAINS(out[0], "in the background (process ");
+    CHECK_CONTAINS(out[0], "has its snapshot of the game's start");
+    CHECK_EQ(count_of(out[0], "gamestart: taking a snapshot of the game's start into"), 1);
+    CHECK(has[0]);
+    CHECK(!has[1]);
+    CHECK_EQ(hidden, 0);
+    CHECK(queued);
+    CHECK(started);
+    CHECK(shared_kept);
+    CHECK(later_kept);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out[1], "gamestart: going to the game's start at ");
+    CHECK_CONTAINS(out[1], "loony: replay: reached the end of the recording");
+    CHECK(!strstr(out[1], "replay: desync"));
+}
+
+/* Quitting while a take runs in the background stops it: the recording
+   is left as it was (it replays to its end), with no hidden file beside
+   it, and no take is left running. */
+TEST(run_a_quit_stops_a_take_in_the_background) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_SLOW();
+    char rec_dir[1024], play_dir[1024], names[2][256], path[1400], recs[1100];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    static char out[2][65536];
+    int n;
+    /* two_games' first game, thrown away with Esc at 2400, and a quit a
+       moment after: the take has barely started */
+    int rec_status = record_games(rec_dir,
+                                  "1720 down esc\n1724 up esc\n1800 down esc\n1804 up esc\n1900 down return\n"
+                                  "1906 up return\n2100 down return\n2190 up return\n2400 down esc\n"
+                                  "2404 up esc\n2412 quit\n",
+                                  names, &n, out[0], sizeof out[0]);
+    snprintf(recs, sizeof recs, "%s/recordings", rec_dir);
+    int hidden = hidden_files(recs), status = -1;
+    const char *pid_at = strstr(out[0], "in the background (process ");
+    int pid = pid_at ? atoi(pid_at + strlen("in the background (process ")) : 0;
+    bool gone = pid > 0 && kill(pid, 0) != 0 && errno == ESRCH;
+    if (n == 1) {
+        snprintf(path, sizeof path, "%s/%s", recs, names[0]);
+        snprintf(replay_file, sizeof replay_file, "%s", path);
+        tmp_name(replay_shot, sizeof replay_shot, "shot");
+        snprintf(run_data, sizeof run_data, "%s/data", play_dir);
+        status = test_run_child(run_loony_replaying, NULL, out[1], sizeof out[1]);
+        run_data[0] = '\0';
+        unlink(replay_shot);
+    }
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(rec_status, 0);
+    CHECK_EQ(n, 1);
+    CHECK(pid > 0);
+    CHECK_CONTAINS(out[0], "gamestart: stopping the take of ");
+    CHECK(gone);
+    CHECK_EQ(hidden, 0);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out[1], "loony: replay: reached the end of the recording");
+    CHECK(!strstr(out[1], "replay: desync"));
+}
+
+/* A game whose play starts within GAMESTART_MIN_PRELUDE_US of launch, or
+   that has no play, gets no take (a replay wouldn't keep a snapshot). */
+TEST(run_a_short_prelude_starts_no_take) {
+    CHECK(!gamestart_take_later(LOONY_BIN, "/nonexistent/game.lwreplay", GAMESTART_MIN_PRELUDE_US - 1));
+    CHECK(!gamestart_take_later(LOONY_BIN, "/nonexistent/game.lwreplay", UINT64_MAX));
 }
 
 /* A clip of a few seconds of a recording (clip.h): one frame a tick for
@@ -2952,18 +3133,6 @@ TEST(run_a_recorded_game_starts_at_the_game_from_its_snapshot) {
         CHECK_CONTAINS(out[i], "gamestart: kept a snapshot of the game's start at ");
     CHECK(!strstr(out[7], "gamestart:"));
     CHECK_EQ(wav[6], wav[0]);
-}
-
-/* Copies the file at from to to: false if it can't. */
-static bool copy_file_to(const char *from, const char *to) {
-    size_t len;
-    uint8_t *data = read_file(from, &len);
-    FILE *f = data ? fopen(to, "wb") : NULL;
-    bool ok = f && fwrite(data, 1, len, f) == len;
-    if (f && fclose(f) != 0)
-        ok = false;
-    free(data);
-    return ok;
 }
 
 /* A take (LOONY_GAMESTART=take, gamestart_take_start), which draws

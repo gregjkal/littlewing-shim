@@ -120,6 +120,22 @@ static void present_frame(void) {
     measure_present();
 }
 
+/* The event pump's poll: the window's events, and the takes of the
+   games recorded, in the background (gamestart.h). */
+static void poll_host(void) {
+    display_poll();
+    gamestart_tend();
+}
+
+/* A game's recording has ended (replay_set_game_recorded): its snapshot
+   of the game's start is taken in the background. */
+static void take_later(const char *path, uint64_t play_on_us) {
+    char self[PATH_MAX];
+    uint32_t size = sizeof self;
+    if (_NSGetExecutablePath(self, &size) == 0)
+        gamestart_take_later(self, path, play_on_us);
+}
+
 /* An error before the game starts: printed, and shown when running as the
    app or reported to the program running an export (clip_progress_error). */
 static int startup_error(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -179,6 +195,7 @@ static void restart_self(const char *why) {
         setenv("LOONY_LOG_INHERITED", "1", 1);
     display_log_stats(); /* exec skips the atexit handlers */
     replay_finish();
+    gamestart_take_end();
     log_msg("%s", why);
     fflush(stderr);
     execv(self, (char *const[]){self, NULL});
@@ -376,8 +393,10 @@ int main(int argc, char **argv) {
             snprintf(prefs, sizeof prefs, "%s/prefs.plist", data_dir);
             nscores = game_high_score_times(prefs, scores, 16);
         }
-        if (rec_dir[0])
+        if (rec_dir[0]) {
             replay_record_into(rec_dir, game->id, scores, nscores);
+            replay_set_game_recorded(take_later);
+        }
         const char *replay = getenv("LOONY_REPLAY");
         if (rec_dir[0] && (!replay || !*replay) && !clip_on())
             menu_add_high_scores(game->id, game->title, rec_dir);
@@ -404,7 +423,7 @@ int main(int argc, char **argv) {
     measure_init();
     display_set_title(game->title);
     events_set_present(present_frame);
-    events_set_poll(display_poll);
+    events_set_poll(poll_host);
     events_set_screenshot(display_write_png);
     events_set_cursor(display_set_cursor);
     static const display_input input = {events_host_key, events_host_activation,
