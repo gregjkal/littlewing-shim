@@ -1,8 +1,10 @@
 #pragma once
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "display.h"
+#include "watch.h"
 
 /* The replay viewer's controls: a strip STRIP_HEIGHT points tall, below
    the game in a window and over its bottom edge in full screen, which the
@@ -12,6 +14,14 @@
    and a bar of how far the replay has got. A button does what its key does
    (watch_act), dimmed when watch_can says it can't, and the pointer resting
    on one says its name and key, from watch_bindings.
+
+   The bar is the recording's timeline: the marks (Cmd-S while recording)
+   are diamonds on it, the saved clips tinted spans, and a clip's start not
+   yet ended (I) a bracket, with the span from it to now tinted lighter. The
+   pointer over the bar says the time under it at once, or a mark's number
+   and time, or a clip's number and span when it's on the mark or the
+   clip's start; a click goes there (watch_go_to): to a mark or a clip's
+   start exactly, and elsewhere to the time under the pointer.
 
    The strip comes up when the pointer moves over the window or one of the
    viewer's keys is pressed (strip_poke), and goes STRIP_HIDE_AFTER seconds
@@ -44,6 +54,29 @@ typedef enum {
 
 /* The button at (x, y) in the window's pixels, or STRIP_NONE. */
 strip_button strip_button_at(const display_layout *l, float x, float y);
+
+/* What's on the bar at a point: nothing (off the bar), a time, a mark
+   (index in watch_state's marks), or a clip's start (index in its clips).
+   tick is where a click there goes. */
+typedef enum { STRIP_ON_NOTHING, STRIP_ON_TIME, STRIP_ON_MARK, STRIP_ON_CLIP } strip_on;
+typedef struct {
+    strip_on on;
+    int index;
+    uint32_t tick;
+} strip_spot;
+
+/* The spot at (x, y) in the window's pixels: a mark or a clip's start
+   within STRIP_SNAP points of x, the nearest, marks first; else the time
+   under x, on the bar or the strip's height above and below it. */
+#define STRIP_SNAP 5 /* points */
+strip_spot strip_spot_at(const display_layout *l, const watch_state *w, float x, float y);
+
+/* What the bar's tip says at a spot: "9:40", "Mark 2: 3:12" or
+   "Clip 1: 2:58-3:20", in whole seconds. */
+void strip_spot_tip(const strip_spot *s, const watch_state *w, char *out, size_t cap);
+
+/* For tests: the bar, in the window's pixels. */
+display_rect strip_bar(const display_layout *l, const watch_state *w);
 
 /* What a button's tip says: its name and its key, "Back 10 s (J)". */
 void strip_tip(strip_button b, char *out, size_t cap);

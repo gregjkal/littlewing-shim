@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "clip.h"
+
 /* Watching a replay (a prototype): with LOONY_REPLAY, LOONY_WATCH=1 shows it
    in the window at the speed it was played, with its sound, to find a
    moment in a long game and mark a clip of it. The host takes the keys (a
@@ -12,6 +14,8 @@
      J, L          back or ahead 10 seconds (Shift: a minute)
      Left, Right   back or ahead 5 seconds
      ",", "."      while paused, back or ahead a frame (a tick, 1/60 s)
+     [, ]          to the mark before or after (Cmd-S while recording;
+                   replay_marks)
      0 to 9        to that tenth of the recording (replay_play_length); the
                    keypad's too
      <, >          slower or faster: 1x, 2x, 4x, 8x, as fast as it can
@@ -64,6 +68,9 @@
 #define WATCH_STEP_TICKS 600        /* J and L: 10 s */
 #define WATCH_BIG_STEP_TICKS 3600   /* with Shift: a minute */
 #define WATCH_FRAME_TICKS 1         /* comma and period: a frame */
+/* [ passes over a mark this close behind, so that pressed again just after
+   landing on one, it goes on to the one before. */
+#define WATCH_MARK_GRACE_TICKS 60
 
 /* What the viewer's keys and the Replay menu's items do. */
 typedef enum {
@@ -88,6 +95,8 @@ typedef enum {
     WATCH_TENTH_7,
     WATCH_TENTH_8,
     WATCH_TENTH_9,
+    WATCH_PREV_MARK,
+    WATCH_NEXT_MARK,
     WATCH_SLOWER,
     WATCH_FASTER,
     WATCH_MARK_IN,
@@ -117,14 +126,29 @@ typedef struct {
 extern const watch_binding watch_bindings[];
 extern const size_t watch_nbindings;
 
-/* What the viewer shows (strip.h). */
+/* What the viewer shows (strip.h). Times are ticks of play. */
 typedef struct {
-    uint32_t now;    /* ticks of play: the time, or the one being gone to */
-    uint32_t length; /* ticks of play in the recording (replay_play_length) */
+    uint32_t now;    /* the time, or the one being gone to */
+    uint32_t length; /* the recording's (replay_play_length) */
     bool paused, at_end;
     int speed; /* 1, 2, 4 or 8, or 0 for as fast as it can */
+    bool have_in;
+    uint32_t in; /* a clip's start, I, not yet ended */
+    const uint32_t *marks; /* the replay's, in order */
+    size_t nmarks;
+    const clip_span *clips; /* the list's, in its order, as read at the start and at O */
+    size_t nclips;
 } watch_state;
 void watch_get_state(watch_state *s);
+
+/* The mark [ (dir < 0) or ] (dir > 0) goes to from s->now: the last before
+   it by more than WATCH_MARK_GRACE_TICKS, or the first after it. Its index,
+   or -1 for none. */
+int watch_mark_from(const watch_state *s, int dir);
+
+/* To tick, as a click on the strip's bar goes. Does nothing until
+   watch_start. */
+void watch_go_to(uint32_t tick);
 
 /* Does what the action does, as its key would (repeat: the key is held).
    Does nothing until watch_start. */

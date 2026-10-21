@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "strip.h"
 #include "watch.h"
@@ -150,4 +151,89 @@ TEST(strip_buttons_do_what_their_keys_do) {
     watch_get_state(&s);
     CHECK(s.paused);
     watch_reset();
+}
+
+/* A 15-minute recording with 3 marks and 2 clips, the second clip starting
+   on the third mark. */
+static const uint32_t marks[] = {3600, 18000, 36000};
+static const clip_span clips[] = {{6000, 9000, 0, 0}, {36000, 39000, 0, 0}};
+static watch_state timeline(void) {
+    watch_state w;
+    memset(&w, 0, sizeof w);
+    w.length = 54000;
+    w.speed = 1;
+    w.marks = marks;
+    w.nmarks = 3;
+    w.clips = clips;
+    w.nclips = 2;
+    return w;
+}
+
+/* On the bar: a mark or a clip's start within STRIP_SNAP points, marks
+   first, else the time under the pointer; off it, nothing. */
+TEST(strip_spot_at_finds_marks_clips_and_times) {
+    strip_reset(fake_now);
+    display_layout l = window_layout();
+    watch_state w = timeline();
+    display_rect bar = strip_bar(&l, &w);
+    CHECK(bar.w > 300);
+    float y = 600 + STRIP_HEIGHT / 2;
+#define AT(tick) (bar.x + bar.w * (float)(tick) / 54000)
+    strip_spot s = strip_spot_at(&l, &w, AT(18000) + STRIP_SNAP - 1, y);
+    CHECK_EQ(s.on, STRIP_ON_MARK);
+    CHECK_EQ(s.index, 1);
+    CHECK_EQ(s.tick, 18000);
+    s = strip_spot_at(&l, &w, AT(6000) - 2, 600 + 2); /* the strip's height counts */
+    CHECK_EQ(s.on, STRIP_ON_CLIP);
+    CHECK_EQ(s.index, 0);
+    CHECK_EQ(s.tick, 6000);
+    s = strip_spot_at(&l, &w, AT(36000), y); /* a mark and a clip's start: the mark */
+    CHECK_EQ(s.on, STRIP_ON_MARK);
+    CHECK_EQ(s.index, 2);
+    s = strip_spot_at(&l, &w, AT(27000), y);
+    CHECK_EQ(s.on, STRIP_ON_TIME);
+    CHECK(s.tick > 26800 && s.tick < 27200);
+    s = strip_spot_at(&l, &w, bar.x - 2, y); /* just before the bar: the start */
+    CHECK_EQ(s.on, STRIP_ON_TIME);
+    CHECK_EQ(s.tick, 0);
+    s = strip_spot_at(&l, &w, bar.x + bar.w + 2, y);
+    CHECK_EQ(s.tick, 54000);
+    CHECK_EQ(strip_spot_at(&l, &w, AT(27000), 300).on, STRIP_ON_NOTHING); /* the game */
+    CHECK_EQ(strip_spot_at(&l, &w, 10, y).on, STRIP_ON_NOTHING);         /* the buttons */
+#undef AT
+}
+
+TEST(strip_spot_tip_says_the_time_a_mark_or_a_clip) {
+    watch_state w = timeline();
+    char tip[64];
+    strip_spot s = {STRIP_ON_TIME, -1, 34830};
+    strip_spot_tip(&s, &w, tip, sizeof tip);
+    CHECK_STR(tip, "9:40");
+    s = (strip_spot){STRIP_ON_MARK, 1, 18000};
+    strip_spot_tip(&s, &w, tip, sizeof tip);
+    CHECK_STR(tip, "Mark 2: 5:00");
+    s = (strip_spot){STRIP_ON_CLIP, 0, 6000};
+    strip_spot_tip(&s, &w, tip, sizeof tip);
+    CHECK_STR(tip, "Clip 1: 1:40-2:30");
+    s = (strip_spot){STRIP_ON_NOTHING, -1, 0};
+    strip_spot_tip(&s, &w, tip, sizeof tip);
+    CHECK_STR(tip, "");
+}
+
+/* [ goes to the last mark more than WATCH_MARK_GRACE_TICKS before now, so
+   that pressed again just after landing on one it goes on to the one
+   before; ] to the first after now. */
+TEST(watch_mark_from_finds_the_marks_before_and_after) {
+    watch_state w = timeline();
+    w.now = 18000;
+    CHECK_EQ(watch_mark_from(&w, 1), 2);
+    CHECK_EQ(watch_mark_from(&w, -1), 0);
+    w.now = 18000 + WATCH_MARK_GRACE_TICKS + 1;
+    CHECK_EQ(watch_mark_from(&w, -1), 1);
+    w.now = 36000;
+    CHECK_EQ(watch_mark_from(&w, 1), -1);
+    w.now = 3600;
+    CHECK_EQ(watch_mark_from(&w, -1), -1);
+    w.nmarks = 0;
+    CHECK_EQ(watch_mark_from(&w, 1), -1);
 }
