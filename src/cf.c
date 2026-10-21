@@ -6,6 +6,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "cgimage.h"
+#include "files.h"
 #include "guest_mem.h"
 #include "snapshot.h"
 #include "memmgr.h"
@@ -270,16 +272,41 @@ static bool is_constant_string(uint32_t ref) {
     return C.class_ref && gm_is_backed(ref, 16) && gm_r32(ref) == C.class_ref;
 }
 
+/* The flags word's bit for text in UTF-16 (0x7D0, where 8-bit text is
+   0x7C8): the compiler's form for a CFSTR with a non-ASCII character, its
+   length in UniChars, big-endian like the rest of guest memory. */
+#define CONST_UNICODE 0x10u
+
+/* UTF-16 text as Mac Roman, the strings' encoding here, with '?' for a
+   character Mac Roman doesn't have. */
+static void utf16_to_mac(const uint8_t *src, uint32_t len, char *out) {
+    uint32_t o = 0;
+    for (uint32_t i = 0; i < len; i++) {
+        uint32_t c = rd_be16(src + 2 * i);
+        if (c >= 0xD800 && c < 0xDC00 && i + 1 < len && (rd_be16(src + 2 * i + 2) & 0xFC00) == 0xDC00)
+            i++; /* a surrogate pair: outside Mac Roman */
+        int m = c >= 0xD800 && c < 0xE000 ? -1 : files_unicode_to_mac(c);
+        out[o++] = m < 0 ? '?' : (char)m;
+    }
+    out[o] = '\0';
+}
+
 static const char *constant_text(uint32_t ref) {
     for (uint32_t i = 0; i < C.nconsts; i++)
         if (C.consts[i].addr == ref)
             return C.consts[i].text;
-    uint32_t bytes = gm_r32(ref + 8), len = gm_r32(ref + 12);
+    uint32_t flags = gm_r32(ref + 4), bytes = gm_r32(ref + 8), len = gm_r32(ref + 12);
     char *text = malloc((size_t)len + 1);
     if (!text)
         fatal("out of memory");
-    memcpy(text, gm_ptr(bytes, len ? len : 1), len);
-    text[len] = '\0';
+    if (flags & CONST_UNICODE) {
+        if (len > UINT32_MAX / 2)
+            trap_crash("constant string at 0x%08x: %u UniChars", ref, len);
+        utf16_to_mac(gm_ptr(bytes, len ? 2 * len : 1), len, text);
+    } else {
+        memcpy(text, gm_ptr(bytes, len ? len : 1), len);
+        text[len] = '\0';
+    }
     if (C.nconsts == C.consts_cap) {
         C.consts_cap = C.consts_cap ? C.consts_cap * 2 : 16;
         C.consts = realloc(C.consts, C.consts_cap * sizeof *C.consts);
@@ -382,7 +409,8 @@ static void h_string_get_type_id(void) { trap_return(CF_STRING_TYPE_ID); }
 
 static void h_get_type_id(void) {
     uint32_t ref = trap_arg(0);
-    trap_return(is_constant_string(ref) ? CF_STRING_TYPE_ID : need("CFGetTypeID", ref)->type_id);
+    uint32_t cg = cgimage_type_id(ref);
+    trap_return(is_constant_string(ref) ? CF_STRING_TYPE_ID : cg ? cg : need("CFGetTypeID", ref)->type_id);
 }
 
 /* CFNumberCreate(alloc, theType, valuePtr): integer types only. */
@@ -408,10 +436,13 @@ static void h_number_create(void) {
     trap_return(new_obj(CF_NUMBER_TYPE_ID, NULL, v));
 }
 
-/* A constant string lives as long as the program: releasing it does nothing. */
+/* A constant string lives as long as the program: releasing it does
+   nothing. A CGImage or data provider is cgimage's to release. */
 static void h_release(void) {
     uint32_t ref = trap_arg(0);
-    if (!is_constant_string(ref))
+    if (cgimage_type_id(ref))
+        cgimage_release(ref);
+    else if (!is_constant_string(ref))
         release(need("CFRelease", ref));
 }
 
@@ -564,11 +595,19 @@ static void set_pref(const char *key, uint32_t value) {
     C.prefs[C.nprefs++] = (pref){copy, value};
 }
 
-/* CFPreferencesSetAppValue(key, value, appID). A NULL value removes the key. */
+/* CFPreferencesSetAppValue(key, value, appID). A NULL value removes the
+   key. A constant string is stored as a copy, since the preferences hold
+   only objects. */
 static void h_prefs_set_app_value(void) {
     const char *key = key_string("CFPreferencesSetAppValue", trap_arg(0));
     uint32_t value = trap_arg(1);
     need_current_app("CFPreferencesSetAppValue", trap_arg(2));
+    if (value && is_constant_string(value)) {
+        uint32_t copy = cf_string(constant_text(value));
+        set_pref(key, copy);
+        release(lookup(copy));
+        return;
+    }
     if (value)
         need("CFPreferencesSetAppValue", value);
     set_pref(key, value);

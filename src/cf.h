@@ -79,8 +79,10 @@ uint32_t cf_string(const char *s);
 /* The text of a CFString: a live CFString object, or one of the program's
    constant strings (a guest struct whose isa is
    __CFConstantStringClassReference, then flags, a pointer to the bytes and
-   a length). Crashes, naming call, for anything else. The text stays valid
-   until cf_init(). */
+   a length). A constant string whose flags say UTF-16 (non-ASCII text) is
+   converted to Mac Roman, '?' standing for a character it doesn't have.
+   Crashes, naming call, for anything else. The text stays valid until
+   cf_init(). */
 const char *cf_string_text(const char *call, uint32_t ref);
 
 /* A Mach-O game's bundle: CFBundleGetMainBundle's, whose resources are in
@@ -108,5 +110,7 @@ int cf_retain_count(uint32_t ref);
 uint32_t cf_live_objects(void);
 
 /* Registers the CFString, CFNumber, CFRelease, CFGetTypeID, CFPreferences,
-   CFBundle and CFURL imports. */
+   CFBundle and CFURL imports. CFRelease and CFGetTypeID also take a CGImage
+   or data provider (cgimage.h), and CFPreferencesSetAppValue a constant
+   string as a value. */
 void cf_register(void);

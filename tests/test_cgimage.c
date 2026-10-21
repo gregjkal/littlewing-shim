@@ -11,7 +11,7 @@
 
 static const char *const names[] = {
     "CGDataProviderCreateWithURL", "CGDataProviderRelease", "CGImageCreateWithPNGDataProvider",
-    "CGImageRelease",
+    "CGImageRelease", "CFRelease", "CFGetTypeID",
 };
 
 /* A 2x2 PNG: red, green / blue, transparent. */
@@ -67,6 +67,34 @@ TEST(cgimage_guest_calls_make_an_image_from_a_url) {
     cgimage_release(img);
     CHECK(cgimage_get(img) == NULL);
     call_import("CGImageRelease", 1, 0u);
+}
+
+TEST(cgimage_cf_release_and_type_id_take_images_and_providers) {
+    harness_init(names, sizeof names / sizeof names[0]);
+    mm_init();
+    cf_init();
+    cf_register();
+    cgimage_init();
+    cgimage_register();
+    char path[1024];
+    write_test_png(path, sizeof path);
+    uint32_t prov = call_import("CGDataProviderCreateWithURL", 1, cf_url(path));
+    uint32_t img = call_import("CGImageCreateWithPNGDataProvider", 4, prov, 0u, 1u, 0u);
+    unlink(path);
+    CHECK_EQ(call_import("CFGetTypeID", 1, img), CGIMAGE_TYPE_ID);
+    CHECK_EQ(call_import("CFGetTypeID", 1, prov), CGDATAPROVIDER_TYPE_ID);
+    CHECK(CGIMAGE_TYPE_ID != CF_STRING_TYPE_ID && CGIMAGE_TYPE_ID != CF_NUMBER_TYPE_ID &&
+          CGIMAGE_TYPE_ID != CF_URL_TYPE_ID && CGIMAGE_TYPE_ID != CF_BUNDLE_TYPE_ID &&
+          CGDATAPROVIDER_TYPE_ID != CF_STRING_TYPE_ID && CGDATAPROVIDER_TYPE_ID != CF_NUMBER_TYPE_ID &&
+          CGDATAPROVIDER_TYPE_ID != CF_URL_TYPE_ID && CGDATAPROVIDER_TYPE_ID != CF_BUNDLE_TYPE_ID);
+    call_import("CFRelease", 1, prov);
+    CHECK_EQ(cgimage_type_id(prov), 0);
+    cgimage_retain(img);
+    call_import("CFRelease", 1, img);
+    CHECK(cgimage_get(img) != NULL);
+    call_import("CFRelease", 1, img);
+    CHECK(cgimage_get(img) == NULL);
+    CHECK_EQ(cgimage_type_id(img), 0);
 }
 
 TEST(cgimage_reads_monster_fairs_icon) {
