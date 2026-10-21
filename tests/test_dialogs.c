@@ -305,7 +305,7 @@ static const char *const nib_names[] = {
     "InstallEventHandler", "ShowWindow", "DisposeWindow", "RunAppModalLoopForWindow",
     "QuitAppModalLoopForWindow", "GetEventParameter", "GetControlByID", "GetControlData",
     "HIViewGetRoot", "HIViewFindByID", "HIViewSetVisible", "CreateStandardAlert", "RunStandardAlert",
-    "Alert",
+    "Alert", "ParamText",
 };
 
 /* A window like MONSTER FAIR's Register window: a label, an edit text with
@@ -355,8 +355,8 @@ static const char ask_xib[] =
 #define HICOMMAND   (GUEST_IMAGE_BASE + 0x8300) /* what the handler was sent */
 #define THE_WINDOW  (GUEST_IMAGE_BASE + 0x8320)
 
-/* A bundle in a new temporary folder whose main.nib holds ask_xib. */
-static void write_bundle(char *dir, size_t cap) {
+/* A bundle in a new temporary folder whose main.nib holds xib. */
+static void write_bundle_with(char *dir, size_t cap, const char *xib) {
     test_tmp_dir(dir, cap);
     char path[1200];
     const char *parts[] = {"/Contents", "/Resources", "/English.lproj", "/main.nib"};
@@ -369,9 +369,11 @@ static void write_bundle(char *dir, size_t cap) {
     FILE *f = fopen(path, "w");
     if (!f)
         fatal("can't write %s", path);
-    fputs(ask_xib, f);
+    fputs(xib, f);
     fclose(f);
 }
+
+static void write_bundle(char *dir, size_t cap) { write_bundle_with(dir, cap, ask_xib); }
 
 /* A Mach-O style machine (direct calls) with a 32-bit screen and the
    bundle's nib. Fixed clock: the modal loop runs the script. */
@@ -435,15 +437,15 @@ static void emit_command_handler(void) {
     memset(gm_ptr(HICOMMAND, 16), 0xEE, 16);
 }
 
-/* Opens the Ask window, with the command handler installed on it, and
-   shows it. */
-static uint32_t open_ask_window(void) {
+/* Opens the nib's window called name, with the command handler installed
+   on it, and shows it. */
+static uint32_t open_window(const char *name) {
     emit_command_handler();
     uint32_t out = scratch(4);
     if (call_import("CreateNibReference", 2, cf_string("main"), out) != 0)
         fatal("CreateNibReference failed");
     uint32_t nib = gm_r32(out);
-    if (call_import("CreateWindowFromNib", 3, nib, cf_string("Ask"), out) != 0)
+    if (call_import("CreateWindowFromNib", 3, nib, cf_string(name), out) != 0)
         fatal("CreateWindowFromNib failed");
     uint32_t w = gm_r32(out);
     gm_w32(THE_WINDOW, w);
@@ -456,6 +458,8 @@ static uint32_t open_ask_window(void) {
     call_import("ShowWindow", 1, w);
     return w;
 }
+
+static uint32_t open_ask_window(void) { return open_window("Ask"); }
 
 static void child_nib_button(void *bundle) {
     nib_setup(bundle);
@@ -611,4 +615,108 @@ TEST(dialogs_standard_alert_shows_its_text_and_answers_ok) {
     CHECK_CONTAINS(out, "standard alert: Unexpected operating system error occurred [1:2] | Try again.");
     CHECK_CONTAINS(out, "standard alert: answered item 1");
     CHECK_CONTAINS(out, "hit: 1");
+}
+
+/* A window whose OK button's title has non-ASCII text, raw UTF-8 and an
+   entity, and a ParamText marker; and two edit texts, 'User' 1 and 2. */
+static const char two_fields_xib[] =
+    "<?xml version=\"1.0\" standalone=\"yes\"?>\n"
+    "<object class=\"NSIBObjectData\">\n"
+    "  <object name=\"rootObject\" class=\"NSCustomObject\" id=\"1\">\n  </object>\n"
+    "  <array count=\"1\" name=\"allObjects\">\n"
+    "    <object class=\"IBCarbonWindow\" id=\"200\">\n"
+    "      <string name=\"title\">Two</string>\n"
+    "      <object name=\"rootControl\" class=\"IBCarbonRootControl\" id=\"201\">\n"
+    "        <array count=\"3\" name=\"subviews\">\n"
+    "          <object class=\"IBCarbonEditText\" id=\"202\">\n"
+    "            <ostype name=\"controlSignature\">User</ostype>\n"
+    "            <int name=\"controlID\">1</int>\n"
+    "            <string name=\"bounds\">20 120 36 280 </string>\n"
+    "          </object>\n"
+    "          <object class=\"IBCarbonEditText\" id=\"203\">\n"
+    "            <ostype name=\"controlSignature\">User</ostype>\n"
+    "            <int name=\"controlID\">2</int>\n"
+    "            <string name=\"bounds\">40 120 56 280 </string>\n"
+    "          </object>\n"
+    "          <object class=\"IBCarbonButton\" id=\"204\">\n"
+    "            <ostype name=\"command\">ok  </ostype>\n"
+    "            <string name=\"title\">Caf\xC3\xA9 ^0 &#8594;</string>\n"
+    "            <string name=\"bounds\">60 120 80 280 </string>\n"
+    "          </object>\n"
+    "        </array>\n"
+    "        <string name=\"bounds\">0 0 100 300 </string>\n"
+    "      </object>\n"
+    "      <string name=\"windowRect\">100 100 200 400 </string>\n"
+    "    </object>\n"
+    "  </array>\n"
+    "  <dictionary count=\"1\" name=\"nameTable\">\n"
+    "    <string>Two</string>\n"
+    "    <reference idRef=\"200\"/>\n"
+    "  </dictionary>\n"
+    "</object>\n";
+
+/* Edit text 'User' id's text, as GetControlData's 'text' tag gives it. */
+static void print_field(uint32_t w, int32_t id) {
+    uint32_t cid = scratch(8), out = scratch(4), buf = scratch(64), actual = scratch(4);
+    gm_w32(cid, FOURCC('U', 's', 'e', 'r'));
+    gm_w32(cid + 4, (uint32_t)id);
+    call_import("GetControlByID", 3, w, cid, out);
+    call_import("GetControlData", 6, gm_r32(out), 0u, FOURCC('t', 'e', 'x', 't'), 64u, buf, actual);
+    fprintf(stderr, "field %d: \"%.*s\"\n", id, (int)gm_r32(actual), (const char *)gm_ptr(buf, 64));
+}
+
+static void child_nib_text(void *bundle) {
+    setenv("LOONY_AUTO_ALERTS", "1", 1);
+    nib_setup(bundle);
+    uint32_t p = scratch(16);
+    gm_write_pstr(p, "X");
+    call_import("ParamText", 4, p, p, p, p);
+    uint32_t w = open_window("Two");
+    call_import("RunAppModalLoopForWindow", 1, w);
+}
+
+/* A nib's text is UTF-8, shown as Mac Roman (spelled in ASCII here), and
+   ^0 in it is just text. */
+TEST(dialogs_nib_text_is_mac_roman_without_param_text) {
+    char bundle[1024], out[16384];
+    write_bundle_with(bundle, sizeof bundle, two_fields_xib);
+    int status = test_run_child(child_nib_text, bundle, out, sizeof out);
+    test_remove_tree(bundle);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "nib window Two: command 'ok  ' (Cafe ^0 ?)");
+}
+
+static void child_hide_focused_field(void *bundle) {
+    nib_setup(bundle);
+    uint32_t w = open_window("Two");
+    uint32_t cid = scratch(8), out = scratch(4);
+    gm_w32(cid, FOURCC('U', 's', 'e', 'r'));
+    gm_w32(cid + 4, 1);
+    call_import("GetControlByID", 3, w, cid, out);
+    call_import("HIViewSetVisible", 2, gm_r32(out), 0u); /* the first field, which has the focus */
+    script("10 type Bob\n20 down return\n22 up return\n");
+    call_import("RunAppModalLoopForWindow", 1, w);
+    print_field(w, 1);
+    print_field(w, 2);
+    /* With the only other field hidden too, typing goes nowhere. */
+    gm_w32(cid + 4, 2);
+    call_import("GetControlByID", 3, w, cid, out);
+    call_import("HIViewSetVisible", 2, gm_r32(out), 0u);
+    script("40 type Eve\n50 down return\n52 up return\n");
+    call_import("RunAppModalLoopForWindow", 1, w);
+    print_field(w, 1);
+    print_field(w, 2);
+}
+
+/* Hiding the focused edit text moves the focus to the next visible one,
+   or to none, so typing never changes a hidden field. */
+TEST(dialogs_hiding_the_focused_field_moves_the_focus) {
+    char bundle[1024], out[16384];
+    write_bundle_with(bundle, sizeof bundle, two_fields_xib);
+    int status = test_run_child(child_hide_focused_field, bundle, out, sizeof out);
+    test_remove_tree(bundle);
+    CHECK_EQ(status, 0);
+    const char *a = strstr(out, "field 1: \"\"\nfield 2: \"Bob\"\n");
+    CHECK(a != NULL);
+    CHECK_CONTAINS(a + 1, "field 1: \"\"\nfield 2: \"Bob\"\n");
 }

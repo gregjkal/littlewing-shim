@@ -537,6 +537,12 @@ void misc_exit(const char *why, int status) {
     exit(status);
 }
 
+void misc_main_returned(int32_t status) {
+    char why[32];
+    snprintf(why, sizeof why, "main returned %d", status);
+    misc_exit(why, status & 0xFF);
+}
+
 static void h_exit_to_shell(void) {
     misc_exit("ExitToShell", 0);
 }

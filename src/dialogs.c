@@ -9,6 +9,7 @@
 #include "cf.h"
 #include "cgimage.h"
 #include "events.h"
+#include "files.h"
 #include "font.h"
 #include "guest_mem.h"
 #include "keymap.h"
@@ -202,12 +203,16 @@ static void append(char *out, size_t cap, const uint8_t *text, size_t n) {
     out[o] = '\0';
 }
 
-/* Like append, but keeps carriage returns and spells the result in ASCII. */
-static void display_text(const item *it, char *out, size_t cap) {
+/* An item's text as drawn: spelled in ASCII, with carriage returns kept.
+   Only a DITL's items (an Alert's or a DLOG's) get the ParamText
+   substitutions; a nib's text and a standard alert's are shown as they are. */
+static void display_text(const dialog *d, const item *it, char *out, size_t cap) {
+    bool params = d->kind == KIND_DLOG || d->kind == KIND_ALERT;
     uint8_t mac[1024];
     size_t o = 0;
     for (int i = 0; i < it->len && o < sizeof mac; i++) {
-        if (it->text[i] == '^' && i + 1 < it->len && it->text[i + 1] >= '0' && it->text[i + 1] <= '3') {
+        if (params && it->text[i] == '^' && i + 1 < it->len && it->text[i + 1] >= '0' &&
+            it->text[i + 1] <= '3') {
             for (const char *p = G.param[it->text[++i] - '0']; *p && o < sizeof mac; p++)
                 mac[o++] = (uint8_t)*p;
         } else {
@@ -426,7 +431,7 @@ static void draw_item(dialog *d, int i) {
         return;
     qd_rect r = offset(it->r, d->bounds.left, d->bounds.top);
     char text[1024];
-    display_text(it, text, sizeof text);
+    display_text(d, it, text, sizeof text);
     switch (it->type) {
     case DLG_ITEM_BUTTON:
     case DLG_ITEM_CHECKBOX:
@@ -566,6 +571,17 @@ static void press(dialog *d, int item1) {
         d->hit = item1;
 }
 
+/* The next visible edit text after item from, going forward (step 1) or
+   back (step nitems - 1) and coming round to from itself; -1 if none. */
+static int next_field(const dialog *d, int from, int step) {
+    for (int k = 1, i = from; k <= d->nitems; k++) {
+        i = (i + step) % d->nitems;
+        if (d->items[i].type == DLG_ITEM_EDIT_TEXT && !d->items[i].hidden)
+            return i;
+    }
+    return -1;
+}
+
 static void set_focus(dialog *d, int i) {
     int old = d->focus;
     d->focus = i;
@@ -600,14 +616,9 @@ static void on_key(uint32_t vkey, uint8_t chr, uint32_t mods) {
     } else if (vkey == VK_ESCAPE || (cmd && vkey == VK_PERIOD)) {
         press(d, d->cancel_item);
     } else if (vkey == VK_TAB) {
-        int n = d->nitems, step = (mods & KM_SHIFT) ? n - 1 : 1;
-        for (int k = 1, i = d->focus; k <= n && d->focus >= 0; k++) {
-            i = (i + step) % n;
-            if (d->items[i].type == DLG_ITEM_EDIT_TEXT && !d->items[i].hidden) {
-                set_focus(d, i);
-                break;
-            }
-        }
+        int i = d->focus >= 0 ? next_field(d, d->focus, (mods & KM_SHIFT) ? d->nitems - 1 : 1) : -1;
+        if (i >= 0)
+            set_focus(d, i);
     } else if (vkey == VK_DELETE) {
         type_char(d, 0x08);
     } else if (!cmd && chr >= 0x20 && chr < 0x7F) {
@@ -674,7 +685,7 @@ static int run_modal(dialog *d) {
 static const char *button_title(dialog *d, int item1, char *buf, size_t cap) {
     buf[0] = '\0';
     if (item1 >= 1 && item1 <= d->nitems)
-        display_text(&d->items[item1 - 1], buf, cap);
+        display_text(d, &d->items[item1 - 1], buf, cap);
     return buf;
 }
 
@@ -835,13 +846,45 @@ static void fourcc_text(uint32_t c, char out[5]) {
     out[4] = '\0';
 }
 
-/* Sets an item's text from UTF-8, with line breaks as carriage returns (the
-   8x8 font is ASCII, which is all the game's dialogs use). */
+/* Sets an item's text from Mac Roman (a CFString's text, cf.h), with line
+   breaks as carriage returns. */
 static void set_text(item *it, const char *s) {
     int n = 0;
     for (; s[n] && n < TEXT_CAP; n++)
         it->text[n] = s[n] == '\n' ? '\r' : (uint8_t)s[n];
     it->len = n;
+}
+
+/* The code point of the UTF-8 sequence at *p, which moves past it; -1 for
+   a malformed one (*p then moves one byte on). */
+static int32_t utf8_next(const uint8_t **p) {
+    const uint8_t *s = *p;
+    int more = s[0] < 0x80 ? 0 : s[0] < 0xC0 ? -1 : s[0] < 0xE0 ? 1 : s[0] < 0xF0 ? 2 : s[0] < 0xF8 ? 3 : -1;
+    int32_t c = s[0] & (0x7F >> (more > 0 ? more + 1 : 0));
+    (*p)++;
+    if (more < 0)
+        return -1;
+    for (int i = 1; i <= more; i++) {
+        if ((s[i] & 0xC0) != 0x80)
+            return -1;
+        c = c << 6 | (s[i] & 0x3F);
+    }
+    *p = s + more + 1;
+    return c;
+}
+
+/* Sets an item's text from a nib's UTF-8, converted to Mac Roman as the
+   Dialog Manager's text is, '?' standing for a character it doesn't have. */
+static void set_nib_text(item *it, const char *utf8) {
+    char mac[TEXT_CAP + 1];
+    int n = 0;
+    for (const uint8_t *p = (const uint8_t *)utf8; *p && n < TEXT_CAP;) {
+        int32_t c = utf8_next(&p);
+        int m = c < 0 ? -1 : files_unicode_to_mac((uint32_t)c);
+        mac[n++] = m < 0 ? '?' : (char)m;
+    }
+    mac[n] = '\0';
+    set_text(it, mac);
 }
 
 static uint32_t control_ref(dialog *d, int index) {
@@ -992,7 +1035,7 @@ static void h_create_window_from_nib(void) {
         switch (c->kind) {
         case NIB_BUTTON:
             it->type = DLG_ITEM_BUTTON;
-            set_text(it, c->title);
+            set_nib_text(it, c->title);
             if (c->command == CMD_OK && !d->default_item)
                 d->default_item = i + 1;
             if (c->command == CMD_CANCEL && !d->cancel_item)
@@ -1004,7 +1047,7 @@ static void h_create_window_from_nib(void) {
             break;
         case NIB_STATIC_TEXT:
             it->type = DLG_ITEM_STATIC_TEXT;
-            set_text(it, c->title);
+            set_nib_text(it, c->title);
             break;
         case NIB_EDIT_TEXT:
             it->type = DLG_ITEM_EDIT_TEXT;
@@ -1032,7 +1075,7 @@ static void h_create_window_from_nib(void) {
 static void send_item_command(dialog *d, int i) {
     item *it = &d->items[i];
     char title[TEXT_CAP + 1], cmd[5];
-    display_text(it, title, sizeof title);
+    display_text(d, it, title, sizeof title);
     fourcc_text(it->command, cmd);
     log_msg("nib window %s: command '%s' (%s)", d->name, cmd, title);
     if (it->command)
@@ -1129,7 +1172,9 @@ static void h_get_control_by_id(void) {
     find_control(d, gm_r32(id), (int32_t)gm_r32(id + 4), trap_arg(2));
 }
 
-/* HIViewSetVisible(HIViewRef, Boolean) -> OSStatus */
+/* HIViewSetVisible(HIViewRef, Boolean) -> OSStatus. Hiding the edit text
+   with the focus moves it on to the next visible one, as Tab would, or
+   leaves none. */
 static void h_hiview_set_visible(void) {
     int i;
     dialog *d = need_control("HIViewSetVisible", trap_arg(0), &i);
@@ -1138,6 +1183,8 @@ static void h_hiview_set_visible(void) {
     bool hidden = (trap_arg(1) & 0xFF) == 0;
     if (d->items[i].hidden != hidden) {
         d->items[i].hidden = hidden;
+        if (hidden && d->focus == i)
+            d->focus = next_field(d, i, 1);
         if (d->shown)
             draw_all(d);
     }
@@ -1230,7 +1277,7 @@ static int add_alert_text(dialog *d, int y, const char *s) {
     it->type = DLG_ITEM_STATIC_TEXT;
     set_text(it, s);
     char text[1024];
-    display_text(it, text, sizeof text);
+    display_text(d, it, text, sizeof text);
     int w = STD_ALERT_W - 2 * STD_ALERT_MARGIN, starts[32], lens[32];
     int lines = font_wrap(text, w, 32, starts, lens);
     it->r = (qd_rect){(int16_t)y, STD_ALERT_MARGIN, (int16_t)(y + lines * FONT_LINE + 2),
@@ -1279,7 +1326,7 @@ static void h_run_standard_alert(void) {
     char text[1024] = "";
     for (int k = 1; k < d->nitems; k++) {
         char part[TEXT_CAP + 1];
-        display_text(&d->items[k], part, sizeof part);
+        display_text(d, &d->items[k], part, sizeof part);
         if (text[0])
             append(text, sizeof text, (const uint8_t *)" | ", 3);
         append(text, sizeof text, (const uint8_t *)part, strlen(part));

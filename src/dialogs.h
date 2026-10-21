@@ -21,10 +21,13 @@
    and DisposeNibReference read the bundle's main.nib (nib.h). A nib window
    is a window port (qd_new_window), drawn like a DLOG while it's shown, and
    RunAppModalLoopForWindow takes the input until QuitAppModalLoopForWindow.
+   A nib's text is UTF-8, kept as Mac Roman like the rest of the Dialog
+   Manager's, and gets no ParamText substitutions (only a DITL's items do).
    Clicking a button (or Return for the one whose command is 'ok  ', Esc for
    'not!') sends kEventCommandProcess with its command to the window's
    handlers (events_send_command). HIViewGetRoot, HIViewFindByID and
-   GetControlByID find controls by ControlID; HIViewSetVisible,
+   GetControlByID find controls by ControlID; HIViewSetVisible (hiding the
+   focused edit text moves the focus to the next visible one, or none),
    GetControlData (an edit text's text) and the HIImageView calls (the
    image view draws a CGImage, cgimage.h) work on them.
    CreateStandardAlert and RunStandardAlert draw the error and explanation

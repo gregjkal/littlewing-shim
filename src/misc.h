@@ -22,13 +22,17 @@ void misc_set_system_version(uint32_t v);
    depend on host speed. */
 void misc_init(void);
 
-/* Called by ExitToShell before the process exits; it may not return (main
+/* Called by misc_exit before the process exits; it may not return (main
    uses it to go back to the picker). */
 void misc_set_exit_hook(void (*fn)(void));
 
 /* What ExitToShell and the C library's exit do: logs why, runs the exit
    hook, and exits with status. */
 _Noreturn void misc_exit(const char *why, int status);
+
+/* What crt1 does when a Mac OS X program's main returns: exit(status),
+   logged as "main returned <status>" before the exit hook runs. */
+_Noreturn void misc_main_returned(int32_t status);
 
 /* Seconds since 1970 (UTC). On the virtual clock, the same calendar as
    GetDateTime: 2003-01-01 00:00:00 plus the virtual time. */
