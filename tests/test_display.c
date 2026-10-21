@@ -320,6 +320,8 @@ TEST(display_lay_out_letterboxes_the_game_and_places_the_strip) {
     CHECK(rect_is(l.game, 100, 0, 800, 600));
     l = display_lay_out(800, 700, 800, 600, 0, false); /* above and below */
     CHECK(rect_is(l.game, 0, 50, 800, 600));
+    l = display_lay_out(840, 630, 800, 600, 0, false); /* 4:3, though 630 / 600 isn't exact */
+    CHECK(rect_is(l.game, 0, 0, 840, 630));
     l = display_lay_out(1600, 1264, 800, 600, 64, false);
     CHECK(rect_is(l.game, 0, 0, 1600, 1200));
     CHECK(rect_is(l.strip, 0, 1200, 1600, 64));

@@ -73,6 +73,13 @@ TEST(strip_comes_up_on_movement_and_goes_after_a_while) {
     CHECK(o->shown() == 0);
     t = 50 + STRIP_HIDE_AFTER + STRIP_FADE / 2; /* the clock can't go back, but the fade was set */
     CHECK(o->shown() > 0.4f && o->shown() < 0.6f);
+    t = 70; /* resting on the strip, then out of the window with no movement */
+    o->pointer(&l, 500, 600 + STRIP_HEIGHT / 2, true);
+    t = 80;
+    o->pointer(&l, 0, 0, false);
+    CHECK(o->shown() == 1);
+    t = 80 + STRIP_HIDE_AFTER + STRIP_FADE / 2; /* it fades from then */
+    CHECK(o->shown() > 0.4f && o->shown() < 0.6f);
 }
 
 /* The buttons, from the left, on the strip and nowhere else. */

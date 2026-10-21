@@ -205,9 +205,11 @@ display_layout display_lay_out(float w, float h, int lw, int lh, float strip_h, 
     if (gh < 0)
         gh = 0;
     /* SDL's letterbox: the side that fits fills, the other is rounded down
-       and centered. */
+       and centered, and an aspect within a hair of the game's fills both. */
     if (lw <= 0 || lh <= 0 || w <= 0 || gh <= 0) {
         l.game = (display_rect){0, 0, 0, 0};
+    } else if (SDL_fabsf((float)lw / (float)lh - w / gh) < 0.0001f) {
+        l.game = (display_rect){0, 0, w, gh};
     } else if ((float)lw / (float)lh > w / gh) {
         float gh2 = SDL_floorf((float)lh * (w / (float)lw));
         l.game = (display_rect){0, (gh - gh2) / 2, w, gh2};
@@ -548,7 +550,7 @@ void display_poll(void) {
             break;
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
         case SDL_EVENT_WINDOW_EXPOSED:
-            D.redraw = true;
+            D.redraw |= D.overlay != NULL; /* live play presents often enough */
             break;
         case SDL_EVENT_DROP_FILE:
             if (e.drop.data)

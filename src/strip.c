@@ -182,12 +182,12 @@ void strip_tip(strip_button b, char *out, size_t cap) {
 static void pointer(const display_layout *l, float x, float y, bool in) {
     settle();
     strip_button b = STRIP_NONE;
+    bool was_over = S.over;
     S.over = in && inside(l->strip, x, y);
-    if (in) {
+    if (in || was_over) /* leaving the strip, its time to go starts then */
         S.active = now();
-        if (S.over)
-            b = strip_button_at(l, x, y);
-    }
+    if (S.over)
+        b = strip_button_at(l, x, y);
     if (b != S.hover) {
         S.hover = b;
         S.hover_since = now();
