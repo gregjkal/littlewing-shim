@@ -200,13 +200,17 @@ LOONY_SIGN_ID="Developer ID Application: Your Name (TEAMID)" tools/release.sh 0.
 
 This builds Unicorn and SDL3 from their sources (`tools/build_deps.sh`) and a
 fresh Release build against them in `build-dist`, all for macOS 14, and runs
-the tests. It then builds the app as version 0.1.0, checks that it runs on
-macOS 14, and notarizes it. It tags the commit `v0.1.0`,
-pushes the tag, and makes a draft release with `LittleWing-0.1.0.zip` and
-`appcast.xml`, the feed that released apps read to find updates. Check the
-draft on GitHub, then publish it: apps see the update once it's the latest
-release. Other builds of the app say version 0.0.0 (set `LOONY_VERSION` to
-change it), and don't update themselves.
+the tests. Unicorn gets two fixes from its development branch
+(`tools/unicorn-patches`) that its next release will have: without them, every
+store the game makes takes Unicorn's slow path, and going ahead in a replay
+takes about 2.5 times as long. A build against Homebrew's Unicorn plays the
+same, only slower there. It then builds the app as version 0.1.0, checks that
+it runs on macOS 14, and notarizes it. It tags the commit `v0.1.0`, pushes the
+tag, and makes a draft release with `LittleWing-0.1.0.zip` and `appcast.xml`,
+the feed that released apps read to find updates. Check the draft on GitHub,
+then publish it: apps see the update once it's the latest release. Other
+builds of the app say version 0.0.0 (set `LOONY_VERSION` to change it), and
+don't update themselves.
 
 The updates are signed with a [Sparkle](https://sparkle-project.org) key kept
 in the keychain of the Mac that releases, and apps check the signature with
@@ -679,7 +683,8 @@ under the terms of the GNU General Public License as published by the Free
 Software Foundation, either version 2 of the License, or (at your option) any
 later version. See `LICENSE`.
 
-The app bundles Unicorn (GPLv2) and SDL3 (zlib license). Their licenses are in
+The app bundles Unicorn (GPLv2), with the changes in `tools/unicorn-patches`,
+and SDL3 (zlib license). Their licenses are in
 `LittleWing.app/Contents/Resources/Licenses`. The games, and the art in
 `hd-art/` made from them, belong to LittleWing and aren't covered by this
 license.
