@@ -607,7 +607,10 @@ bool gamestart_in_file(const char *path) {
 static struct {
     pid_t pid; /* 0: none */
     bool background;
+    double stop_by; /* wall clock: SIGKILL then, after stop_later's SIGTERM (0: not stopping) */
     char path[PATH_MAX];
+    char share[PATH_MAX]; /* Share's take, waiting for a background one to stop ("": none) */
+    char share_self[PATH_MAX];
     char self[PATH_MAX]; /* the program background takes run */
     char queue[TAKE_QUEUE][PATH_MAX]; /* waiting, oldest first */
     size_t nqueue;
@@ -683,68 +686,138 @@ static void remove_temp(const char *path) {
         closedir(d);
 }
 
-/* Ends the running take: SIGTERM, which waits for replay_set_snapshot's
-   rename if it is writing, then SIGKILL if it hasn't ended in
-   TAKE_STOP_WAIT, and what that left is removed. */
-static void stop_child(void) {
-    if (!child.pid)
-        return;
-    kill(child.pid, SIGTERM);
-    double until = wall_seconds() + TAKE_STOP_WAIT;
-    pid_t r;
-    while ((r = waitpid(child.pid, NULL, WNOHANG)) == 0 || (r < 0 && errno == EINTR)) {
-        if (wall_seconds() >= until) {
-            log_msg("gamestart: the take of %s hasn't ended, killing it", child.path);
-            kill(child.pid, SIGKILL);
-            waitpid(child.pid, NULL, 0);
-            remove_temp(child.path);
-            break;
-        }
-        usleep(10000);
+/* Collects the running take if it has ended, without waiting: 0 if it
+   hasn't, or the result of waitpid, with its status in *st. A take
+   stop_later stopped is killed once its TAKE_STOP_WAIT is up, and what
+   that left is removed. */
+static pid_t reap(int *st) {
+    *st = 0;
+    pid_t r = waitpid(child.pid, st, WNOHANG);
+    if (r == 0 || (r < 0 && errno == EINTR)) {
+        if (!child.stop_by || wall_seconds() < child.stop_by)
+            return 0;
+        log_msg("gamestart: the take of %s hasn't ended, killing it", child.path);
+        kill(child.pid, SIGKILL);
+        while ((r = waitpid(child.pid, st, 0)) < 0 && errno == EINTR)
+            ;
+        remove_temp(child.path);
     }
     child.pid = 0;
+    child.stop_by = 0;
+    return r;
+}
+
+/* Asks the running take to end, without waiting: SIGTERM, which waits
+   for replay_set_snapshot's rename if it is writing, and reap kills it
+   if it hasn't ended in TAKE_STOP_WAIT. */
+static void stop_later(void) {
+    if (!child.pid || child.stop_by)
+        return;
+    kill(child.pid, SIGTERM);
+    child.stop_by = wall_seconds() + TAKE_STOP_WAIT;
+}
+
+/* Ends the running take, waiting for it: stop_later, then reap until it
+   has ended. */
+static void stop_child(void) {
+    stop_later();
+    int st;
+    while (child.pid && !reap(&st))
+        usleep(10000);
+}
+
+/* Ends the running take at once: SIGKILL, with no grace for a write, for
+   a take whose file is going, so whatever it was writing is no loss. Its hidden file is
+   removed; a rename it got to first is the file going. */
+static void kill_child(void) {
+    if (!child.pid)
+        return;
+    kill(child.pid, SIGKILL);
+    while (waitpid(child.pid, NULL, 0) < 0 && errno == EINTR)
+        ;
+    remove_temp(child.path);
+    child.pid = 0;
+    child.stop_by = 0;
 }
 
 /* At exit: the background takes stop with this program. */
 static void end_at_exit(void) { gamestart_take_end(); }
 
 bool gamestart_take_start(const char *self, const char *path, char *err, size_t errlen) {
-    if (child.pid && !child.background) {
+    if ((child.pid && !child.background) || child.share[0]) {
         snprintf(err, errlen, "a snapshot is being taken already");
         return false;
     }
-    if (child.pid) { /* Share's goes first: the background one starts again after */
+    if (!child.pid)
+        return spawn(self, path, false, err, errlen);
+    /* Share's goes first, once the background one has stopped (polled by
+       gamestart_take_poll): that one starts again after */
+    if (!child.stop_by) { /* else a cancelled share's put it off already */
         log_msg("gamestart: putting off the take of %s for a share", child.path);
-        char path_was[PATH_MAX];
-        snprintf(path_was, sizeof path_was, "%s", child.path);
-        stop_child();
         if (child.nqueue == TAKE_QUEUE)
             child.nqueue--;
         memmove(child.queue[1], child.queue[0], child.nqueue * sizeof child.queue[0]);
-        snprintf(child.queue[0], sizeof child.queue[0], "%s", path_was);
+        snprintf(child.queue[0], sizeof child.queue[0], "%s", child.path);
         child.nqueue++;
     }
-    return spawn(self, path, false, err, errlen);
+    snprintf(child.share, sizeof child.share, "%s", path);
+    snprintf(child.share_self, sizeof child.share_self, "%s", self);
+    stop_later();
+    return true;
+}
+
+/* Logs a take that ended with no snapshot in its file, of waitpid's r and st. */
+static void log_none(pid_t r, int st) {
+    log_msg("gamestart: no snapshot was taken into %s (%s %d)", child.path,
+            r > 0 && WIFSIGNALED(st) ? "signal" : "status",
+            r > 0 ? (WIFSIGNALED(st) ? WTERMSIG(st) : WEXITSTATUS(st)) : -1);
+}
+
+/* Logs how a background take, reap's r and st, ended. */
+static void log_background(pid_t r, int st) {
+    if (gamestart_in_file(child.path))
+        log_msg("gamestart: %s has its snapshot of the game's start", child.path);
+    else
+        log_none(r, st);
 }
 
 bool gamestart_take_poll(bool *kept) {
     *kept = false;
-    if (!child.pid || child.background)
-        return true;
     int st = 0;
-    pid_t r = waitpid(child.pid, &st, WNOHANG);
-    if (r == 0 || (r < 0 && errno == EINTR))
+    if (child.share[0]) {
+        if (child.pid) {
+            pid_t r = reap(&st);
+            if (!r)
+                return false;
+            log_background(r, st);
+        }
+        char path[PATH_MAX], err[PATH_MAX + 64];
+        snprintf(path, sizeof path, "%s", child.share);
+        child.share[0] = '\0';
+        if (!spawn(child.share_self, path, false, err, sizeof err)) {
+            log_msg("gamestart: can't take a snapshot into %s: %s", path, err);
+            return true;
+        }
+    }
+    if (!child.pid || child.background) /* no share's take: a background one isn't polled here */
+        return true;
+    pid_t r = reap(&st);
+    if (!r)
         return false;
-    child.pid = 0;
     *kept = gamestart_in_file(child.path);
     if (!*kept)
-        log_msg("gamestart: no snapshot was taken into %s (%s %d)", child.path,
-                r > 0 && WIFSIGNALED(st) ? "signal" : "status",
-                r > 0 ? (WIFSIGNALED(st) ? WTERMSIG(st) : WEXITSTATUS(st)) : -1);
+        log_none(r, st);
     return true;
 }
 
-void gamestart_take_stop(void) { stop_child(); }
+void gamestart_take_stop(void) {
+    if (child.share[0]) { /* not started: the background one stopping is gamestart_tend's */
+        child.share[0] = '\0';
+        return;
+    }
+    if (child.pid && !child.background) /* its copy is being given up */
+        kill_child();
+}
 
 bool gamestart_take_later(const char *self, const char *path, uint64_t play_on_us) {
     if (strcmp(setting(), "0") == 0)
@@ -784,17 +857,13 @@ void gamestart_tend(void) {
             return;
         child.polled = now;
         int st = 0;
-        pid_t r = waitpid(child.pid, &st, WNOHANG);
-        if (r == 0 || (r < 0 && errno == EINTR))
+        pid_t r = reap(&st);
+        if (!r)
             return;
-        child.pid = 0;
-        if (gamestart_in_file(child.path))
-            log_msg("gamestart: %s has its snapshot of the game's start", child.path);
-        else
-            log_msg("gamestart: no snapshot was taken into %s (%s %d)", child.path,
-                    r > 0 && WIFSIGNALED(st) ? "signal" : "status",
-                    r > 0 ? (WIFSIGNALED(st) ? WTERMSIG(st) : WEXITSTATUS(st)) : -1);
+        log_background(r, st);
     }
+    if (child.share[0]) /* Share's starts first, when it polls */
+        return;
     while (child.nqueue && !child.pid) {
         char path[PATH_MAX], err[PATH_MAX + 64];
         snprintf(path, sizeof path, "%s", child.queue[0]);
@@ -812,12 +881,13 @@ void gamestart_take_forget(const char *path) {
     child.nqueue = kept;
     if (child.pid && same_file(child.path, path)) {
         log_msg("gamestart: stopping the take of %s, which is being deleted", child.path);
-        stop_child();
+        kill_child();
     }
 }
 
 void gamestart_take_end(void) {
     child.nqueue = 0;
+    child.share[0] = '\0';
     if (child.pid)
         log_msg("gamestart: stopping the take of %s", child.path);
     stop_child();
