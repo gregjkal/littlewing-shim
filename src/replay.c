@@ -189,6 +189,8 @@ static void snap_walk(snapshot_walker *w) {
 SNAPSHOT_STATE_WALK(R, snap_walk)
 
 bool replay_recording(void) { return R.mode == RECORDING; }
+
+const char *replay_recording_path(void) { return R.mode == RECORDING && R.out ? R.path : NULL; }
 bool replay_playing(void) { return R.mode == PLAYING; }
 
 bool replay_calendar(int64_t *start_unix, int32_t *gmtoff, bool *dst) {

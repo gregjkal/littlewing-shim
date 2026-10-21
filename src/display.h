@@ -21,7 +21,9 @@ void display_set_title(const char *title);
    (watch.h: after a restart, it would otherwise open behind the others). */
 void display_raise_on_open(void);
 
-/* Shows msg after the title for DISPLAY_FLASH_MS, on an open window. */
+/* Shows msg after the title for DISPLAY_FLASH_MS, on an open window. A
+   window shows LOONY_FLASH this way as it opens, for a message that goes
+   across a restart (main.c), and unsets it. */
 void display_flash(const char *msg);
 
 /* Draws the current screen. */
@@ -61,6 +63,16 @@ void display_set_open(void (*fn)(const char *path, uint32_t from_ticks));
    earlier one, unless the earlier one is a replay (.lwreplay): of several
    files dropped at once, the first replay opens. Drops come here too. */
 void display_request_open(const char *path, uint32_t from_ticks);
+
+/* Where display_poll sends a request to close the replay being watched
+   (recordings_delete): fn gets why, to say once the program has restarted
+   (display_flash's LOONY_FLASH). */
+void display_set_close(void (*fn)(const char *why));
+
+/* Asks for the replay being watched to be closed, saying why, once
+   display_poll has handled the events it is handling, as
+   display_request_open does. It goes before any file asked to be opened. */
+void display_request_close(const char *why);
 
 /* At launch, before anything is shown: starts SDL's video and handles the
    events macOS sends within wait_ms, so a file opened from Finder to launch

@@ -62,3 +62,24 @@ bool recordings_mark_shown(const recording *r, size_t m);
    LOONY_WATCH, LOONY_WATCH_FROM unless it is 0, and none of what the
    last game or replay set (its game, data folder, speed and the like). */
 void recordings_watch_env(const char *path, uint32_t from_ticks);
+
+/* Sets up the environment for this program to leave the recording it is
+   watching when it restarts: none of recordings_watch_env's variables, nor
+   what replay_open set, so it starts as if launched (main.c). */
+void recordings_leave_env(void);
+
+/* Deleting a recording (the Replays menu's Delete). The one being recorded
+   (replay_recording_path) can't be, so recordings_deletable(path) is false
+   for it. recordings_delete moves path to the Trash with trash (menu.m's
+   calls NSFileManager's trashItemAtURL, so a slip can be undone), and its
+   list of clips (clip_list_path) after it, but not the clips exported
+   from it: they are what it was kept for. A take of its snapshot of the
+   game's start that waits is dropped, and one running is stopped first
+   (gamestart_take_forget), so it doesn't put the file back. When this
+   program is watching it, the viewer closes (display_request_close),
+   saying why. False, with err, if path can't be deleted or moved; the
+   list of clips not moving is only logged. The next recordings_list reads
+   the folder again. */
+typedef bool (*recordings_trash_fn)(const char *path, char *err, size_t errlen);
+bool recordings_deletable(const char *path);
+bool recordings_delete(const char *path, recordings_trash_fn trash, char *err, size_t errlen);
