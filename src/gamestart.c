@@ -3,10 +3,12 @@
 #include <CommonCrypto/CommonDigest.h>
 #include <ctype.h>
 #include <fcntl.h>
+#include <dirent.h>
 #include <limits.h>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
 #include <mach/mach.h>
+#include <pthread/spawn.h>
 #include <errno.h>
 #include <spawn.h>
 #include <signal.h>
@@ -15,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/qos.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -517,10 +520,15 @@ static uint32_t on_entry(uint32_t index) {
     return G.next ? G.next(index) : index;
 }
 
-void gamestart_init(void) {
+/* LOONY_GAMESTART: "0", "take" or unset. */
+static const char *setting(void) {
     const char *v = getenv("LOONY_GAMESTART");
-    G.on = replay_playing() && !(v && strcmp(v, "0") == 0);
-    G.take = G.on && v && strcmp(v, "take") == 0;
+    return v ? v : "";
+}
+
+void gamestart_init(void) {
+    G.on = replay_playing() && strcmp(setting(), "0") != 0;
+    G.take = G.on && strcmp(setting(), "take") == 0;
     if (!G.on)
         return;
     G.phase = TO_BASELINE;
@@ -546,19 +554,29 @@ bool gamestart_in_file(const char *path) {
     return has;
 }
 
-/* The second copy taking a snapshot for a share. */
+/* The second copy taking a snapshot: Share's, or a background one of a
+   game just recorded, and the background ones waiting. */
+#define TAKE_QUEUE 8
+#define TAKE_STOP_WAIT 3.0 /* seconds a take has to end after SIGTERM */
+#define TAKE_TEND_GAP 0.25 /* seconds between polls of a background take */
 static struct {
     pid_t pid; /* 0: none */
+    bool background;
     char path[PATH_MAX];
+    char self[PATH_MAX]; /* the program background takes run */
+    char queue[TAKE_QUEUE][PATH_MAX]; /* waiting, oldest first */
+    size_t nqueue;
+    double polled; /* wall clock */
+    bool at_exit;
 } child;
 
 extern char **environ;
 
-bool gamestart_take_start(const char *self, const char *path, char *err, size_t errlen) {
-    if (child.pid) {
-        snprintf(err, errlen, "a snapshot is being taken already");
-        return false;
-    }
+/* Starts the second copy, self, taking a snapshot into path, at utility
+   priority if background: below the game being played, which the
+   scheduler serves first, but not QOS_CLASS_BACKGROUND, which measured 5
+   times slower on an idle Mac (a 35 s prelude in 29.6 s, against 5.3 s). */
+static bool spawn(const char *self, const char *path, bool background, char *err, size_t errlen) {
     char replay[PATH_MAX + 16];
     snprintf(replay, sizeof replay, "LOONY_REPLAY=%s", path);
     const char *set[] = {replay, "LOONY_GAMESTART=take", "LOONY_HD=off", "SDL_VIDEO_DRIVER=dummy",
@@ -579,6 +597,8 @@ bool gamestart_take_start(const char *self, const char *path, char *err, size_t 
     posix_spawnattr_setsigdefault(&attr, &all);
     posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK |
                                         POSIX_SPAWN_SETSIGDEF);
+    if (background)
+        posix_spawnattr_set_qos_class_np(&attr, QOS_CLASS_UTILITY);
     pid_t pid = 0;
     int rc = env ? posix_spawn(&pid, self, &actions, &attr, (char *const[]){(char *)self, NULL}, env)
                  : ENOMEM;
@@ -590,14 +610,81 @@ bool gamestart_take_start(const char *self, const char *path, char *err, size_t 
         return false;
     }
     child.pid = pid;
+    child.background = background;
     snprintf(child.path, sizeof child.path, "%s", path);
-    log_msg("gamestart: taking a snapshot of the game's start into %s (process %d)", path, (int)pid);
+    log_msg("gamestart: taking a snapshot of the game's start into %s%s (process %d)", path,
+            background ? " in the background" : "", (int)pid);
     return true;
+}
+
+/* Removes what a take killed mid-write left: replay_set_snapshot's hidden
+   file beside path, ".<name>.XXXXXX". */
+static void remove_temp(const char *path) {
+    char dir[PATH_MAX], prefix[PATH_MAX + 2];
+    const char *slash = strrchr(path, '/');
+    snprintf(dir, sizeof dir, "%.*s", slash ? (int)(slash - path) : 1, slash ? path : ".");
+    snprintf(prefix, sizeof prefix, ".%s.", slash ? slash + 1 : path);
+    DIR *d = opendir(dir);
+    struct dirent *e;
+    while (d && (e = readdir(d))) {
+        if (strncmp(e->d_name, prefix, strlen(prefix)) != 0 || strlen(e->d_name) != strlen(prefix) + 6)
+            continue;
+        char file[PATH_MAX * 2];
+        snprintf(file, sizeof file, "%s/%s", dir, e->d_name);
+        if (unlink(file) == 0)
+            log_msg("gamestart: removed %s, which the take left", file);
+    }
+    if (d)
+        closedir(d);
+}
+
+/* Ends the running take: SIGTERM, which waits for replay_set_snapshot's
+   rename if it is writing, then SIGKILL if it hasn't ended in
+   TAKE_STOP_WAIT, and what that left is removed. */
+static void stop_child(void) {
+    if (!child.pid)
+        return;
+    kill(child.pid, SIGTERM);
+    double until = wall_seconds() + TAKE_STOP_WAIT;
+    pid_t r;
+    while ((r = waitpid(child.pid, NULL, WNOHANG)) == 0 || (r < 0 && errno == EINTR)) {
+        if (wall_seconds() >= until) {
+            log_msg("gamestart: the take of %s hasn't ended, killing it", child.path);
+            kill(child.pid, SIGKILL);
+            waitpid(child.pid, NULL, 0);
+            remove_temp(child.path);
+            break;
+        }
+        usleep(10000);
+    }
+    child.pid = 0;
+}
+
+/* At exit: the background takes stop with this program. */
+static void end_at_exit(void) { gamestart_take_end(); }
+
+bool gamestart_take_start(const char *self, const char *path, char *err, size_t errlen) {
+    if (child.pid && !child.background) {
+        snprintf(err, errlen, "a snapshot is being taken already");
+        return false;
+    }
+    if (child.pid) { /* Share's goes first: the background one starts again after */
+        log_msg("gamestart: putting off the take of %s for a share", child.path);
+        char path_was[PATH_MAX];
+        snprintf(path_was, sizeof path_was, "%s", child.path);
+        stop_child();
+        if (child.nqueue == TAKE_QUEUE)
+            child.nqueue--;
+        memmove(child.queue[1], child.queue[0], child.nqueue * sizeof child.queue[0]);
+        snprintf(child.queue[0], sizeof child.queue[0], "%s", path_was);
+        child.nqueue++;
+    }
+    return spawn(self, path, false, err, errlen);
 }
 
 bool gamestart_take_poll(bool *kept) {
     *kept = false;
-    if (!child.pid)
+    if (!child.pid || child.background)
         return true;
     int st = 0;
     pid_t r = waitpid(child.pid, &st, WNOHANG);
@@ -612,10 +699,67 @@ bool gamestart_take_poll(bool *kept) {
     return true;
 }
 
-void gamestart_take_stop(void) {
-    if (!child.pid)
+void gamestart_take_stop(void) { stop_child(); }
+
+bool gamestart_take_later(const char *self, const char *path, uint64_t play_on_us) {
+    if (strcmp(setting(), "0") == 0)
+        return false;
+    if (play_on_us == UINT64_MAX) {
+        log_msg("gamestart: %s has no play, so no snapshot is taken", path);
+        return false;
+    }
+    if (play_on_us < GAMESTART_MIN_PRELUDE_US) {
+        log_msg("gamestart: the game in %s starts %.3f s after launch, too soon for a snapshot", path,
+                secs(play_on_us));
+        return false;
+    }
+    if (child.nqueue == TAKE_QUEUE) {
+        log_msg("gamestart: %d takes are waiting already, so none of %s", TAKE_QUEUE, path);
+        return false;
+    }
+    snprintf(child.self, sizeof child.self, "%s", self);
+    snprintf(child.queue[child.nqueue++], sizeof child.queue[0], "%s", path);
+    if (!child.at_exit) {
+        child.at_exit = true;
+        atexit(end_at_exit);
+    }
+    child.polled = 0;
+    gamestart_tend();
+    return true;
+}
+
+void gamestart_tend(void) {
+    if (child.pid && !child.background) /* Share's: it polls it */
         return;
-    kill(child.pid, SIGTERM); /* replay_set_snapshot finishes its rename first */
-    waitpid(child.pid, NULL, 0);
-    child.pid = 0;
+    if (child.pid) {
+        double now = wall_seconds();
+        if (now - child.polled < TAKE_TEND_GAP)
+            return;
+        child.polled = now;
+        int st = 0;
+        pid_t r = waitpid(child.pid, &st, WNOHANG);
+        if (r == 0 || (r < 0 && errno == EINTR))
+            return;
+        child.pid = 0;
+        if (gamestart_in_file(child.path))
+            log_msg("gamestart: %s has its snapshot of the game's start", child.path);
+        else
+            log_msg("gamestart: no snapshot was taken into %s (%s %d)", child.path,
+                    r > 0 && WIFSIGNALED(st) ? "signal" : "status",
+                    r > 0 ? (WIFSIGNALED(st) ? WTERMSIG(st) : WEXITSTATUS(st)) : -1);
+    }
+    while (child.nqueue && !child.pid) {
+        char path[PATH_MAX], err[PATH_MAX + 64];
+        snprintf(path, sizeof path, "%s", child.queue[0]);
+        memmove(child.queue[0], child.queue[1], --child.nqueue * sizeof child.queue[0]);
+        if (!spawn(child.self, path, true, err, sizeof err))
+            log_msg("gamestart: can't take a snapshot into %s: %s", path, err);
+    }
+}
+
+void gamestart_take_end(void) {
+    child.nqueue = 0;
+    if (child.pid)
+        log_msg("gamestart: stopping the take of %s", child.path);
+    stop_child();
 }

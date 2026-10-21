@@ -64,7 +64,10 @@
    one: it keeps a copy of the emulator at the baseline (snapshot_take),
    and at the game's start encodes a snapshot against it and writes it into
    the recording (replay_set_snapshot). So the first replay or export of a
-   recording pays the prelude, and the ones after don't. Not when the game
+   recording pays the prelude, and the ones after don't. The app takes one
+   as soon as a game's recording ends, in the background
+   (gamestart_take_later), so even the first replay of a finished game
+   usually doesn't. Not when the game
    starts within GAMESTART_MIN_PRELUDE_US of launch (its prelude is a few
    seconds, and its snapshot would be several times its recording), when
    the recording has no play, or when it can't be written.
@@ -117,9 +120,30 @@ bool gamestart_in_file(const char *path);
    recipient replays. A second copy of this program, self, replays path
    headless and silent with LOONY_GAMESTART=take, which exits once the
    snapshot is kept or none can be. gamestart_take_start starts it (false,
-   with err, if it can't); gamestart_take_poll returns whether it has ended,
-   without waiting, and then in *kept whether path holds a snapshot;
-   gamestart_take_stop ends it. One at a time. */
+   with err, if it can't, or a share's is running); gamestart_take_poll
+   returns whether it has ended, without waiting, and then in *kept whether
+   path holds a snapshot; gamestart_take_stop ends it (SIGTERM, which a
+   take's write of the file waits out, then SIGKILL after 3 s, removing the
+   hidden file that leaves). One take runs at a time: a background one
+   running (below) is stopped for a share's, and starts again after it. */
 bool gamestart_take_start(const char *self, const char *path, char *err, size_t errlen);
 bool gamestart_take_poll(bool *kept);
 void gamestart_take_stop(void);
+
+/* Recording (replay_set_game_recorded): the game in path has ended, play
+   first going on at play_on_us on the clock (UINT64_MAX: never). Queues a
+   take of it, by the same second copy of self at a priority below the
+   game's (utility), one after another, unless play started within
+   GAMESTART_MIN_PRELUDE_US of launch (a replay wouldn't keep a snapshot),
+   never did, 8 are waiting already, or LOONY_GAMESTART=0. True if queued.
+   The file stays usable throughout: the take rewrites it in place with a
+   rename, keeping its last write's time, so the viewer opening it or a
+   share copying it reads it whole, with or without the snapshot; if
+   without, it takes its own, and the two are the same. gamestart_tend, called often (the event
+   pump's poll), notes a take that has ended and starts the next.
+   gamestart_take_end stops the take running and forgets the rest: at exit,
+   and before this program restarts itself (main.c), since a take is only
+   worth its time while the app is up. */
+bool gamestart_take_later(const char *self, const char *path, uint64_t play_on_us);
+void gamestart_tend(void);
+void gamestart_take_end(void);

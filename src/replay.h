@@ -104,6 +104,13 @@ bool replay_start(const char *game_id, const uint8_t *exe, size_t exe_len, const
 #define REPLAY_SCORE_SLACK 2
 void replay_record_into(const char *dir, const char *game_id, const time_t *high_scores, size_t n);
 
+/* Recording each game into a file of its own: once a game's file has its
+   end record and is closed, fn gets its path and where play first went on
+   in it, on the clock in us (UINT64_MAX if it never did), where a replay's
+   first span of play starts (replay_play_spans). Not when the file
+   couldn't be written, nor for the file a quit ends (replay_finish). */
+void replay_set_game_recorded(void (*fn)(const char *path, uint64_t play_on_us));
+
 /* The kept recording in dir of the game that set a high score at when (from
    the score's timestamp): the newest whose span holds it, as
    replay_record_into keeps them. Its path goes to out. False if none does. */

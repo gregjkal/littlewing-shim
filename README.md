@@ -350,12 +350,16 @@ recorded".
 
 A replay can only start at launch, so a game's file also carries what came
 before the game in that launch: the opening, the menus and any earlier
-games, without their marks. The first replay of a game (watching it or
-exporting from it) replays that part, unseen, and keeps a
-snapshot of the game's start in the file, about 150 KB; every replay
+games, without their marks. A replay that goes past that part keeps a
+snapshot of the game's start in the file, about 150 KB, and every replay
 after that goes to the game's start from it a quarter of a second after
-launch, however late in the session the game came. The snapshot holds
-what changed since a point shortly after launch that every replay of the
+launch, however late in the session the game came. The app takes that
+snapshot as soon as a game ends: a second copy of LittleWing replays the
+file out of sight, at a lower priority than the game, one game after
+another, while you play on. Quit the app before it is done, or open a
+replay first, and it stops; then the first replay of that game (watching
+it or exporting from it) replays the part before the game itself,
+unseen, and keeps the snapshot. The snapshot holds what changed since a point shortly after launch that every replay of the
 file reaches by itself, less the game's own sounds and art, which come
 from your copy of the game, and never your registration. A snapshot works
 on any Mac with the same copy of the game and the same version of
