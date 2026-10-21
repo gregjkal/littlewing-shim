@@ -725,8 +725,8 @@ static void stop_child(void) {
         usleep(10000);
 }
 
-/* Ends the running take at once: SIGKILL, for a take whose recording is
-   going, so whatever it was writing is no loss. Its hidden file is
+/* Ends the running take at once: SIGKILL, with no grace for a write, for
+   a take whose file is going, so whatever it was writing is no loss. Its hidden file is
    removed; a rename it got to first is the file going. */
 static void kill_child(void) {
     if (!child.pid)
@@ -813,7 +813,8 @@ void gamestart_take_stop(void) {
         child.share[0] = '\0';
         return;
     }
-    stop_child();
+    if (child.pid && !child.background) /* its copy is being given up */
+        kill_child();
 }
 
 bool gamestart_take_later(const char *self, const char *path, uint64_t play_on_us) {

@@ -655,7 +655,7 @@ TEST(run_a_share_doesnt_wait_for_a_take_in_the_background) {
     test_tmp_dir(dir, sizeof dir);
     snprintf(started, sizeof started, "%s/started", dir);
     char body[1300];
-    snprintf(body, sizeof body, "echo $$ >> '%s'\ntrap '' TERM\nexec sleep 30", started);
+    snprintf(body, sizeof body, "trap '' TERM\necho $$ >> '%s'\nexec sleep 30", started);
     fake_take(bg, sizeof bg, dir, "background", body);
     fake_take(share, sizeof share, dir, "share", "exit 0");
     snprintf(rec, sizeof rec, "%s/game.lwreplay", dir);
@@ -697,13 +697,15 @@ TEST(run_a_share_doesnt_wait_for_a_take_in_the_background) {
 
 /* A share cancelled while it waits for a take in the background to stop
    doesn't wait either, and a share again after takes the background
-   one's place once, not twice. */
+   one's place once, not twice: once the background one has run again,
+   none is left to start. Cancelling a share's take that has started
+   kills it at once, and so does deleting a recording whose take runs. */
 TEST(run_a_cancelled_share_doesnt_wait_for_a_take_in_the_background) {
     char dir[1024], bg[1100], share[1100], rec[1100], copy[1100], started[1100], err[256];
     test_tmp_dir(dir, sizeof dir);
     snprintf(started, sizeof started, "%s/started", dir);
     char body[1300];
-    snprintf(body, sizeof body, "echo $$ >> '%s'\ntrap '' TERM\nexec sleep 30", started);
+    snprintf(body, sizeof body, "trap '' TERM\necho $$ >> '%s'\nexec sleep 30", started);
     fake_take(bg, sizeof bg, dir, "background", body);
     fake_take(share, sizeof share, dir, "share", "exit 0");
     snprintf(rec, sizeof rec, "%s/game.lwreplay", dir);
@@ -724,13 +726,27 @@ TEST(run_a_cancelled_share_doesnt_wait_for_a_take_in_the_background) {
         gamestart_tend();
         usleep(10000);
     }
-    /* the queue holds nothing more, so none starts after this one */
+    kill(last, SIGKILL); /* as if it had ended: the queue should hold nothing more */
+    for (int i = 0; i < 50; i++) {
+        gamestart_tend();
+        usleep(10000);
+    }
+    int runs = lines_of(started, &last);
+    /* the share's own take, cancelled once it has started */
+    char writing[1100];
+    fake_take(writing, sizeof writing, dir, "writing", "trap '' TERM\nexec sleep 30");
+    bool third = gamestart_take_start(writing, copy, err, sizeof err);
+    usleep(200000);
+    t0 = wall_seconds();
+    gamestart_take_stop();
+    double cancel_took = wall_seconds() - t0;
+    /* a deleted recording's take */
+    gamestart_take_later(bg, rec, GAMESTART_MIN_PRELUDE_US);
+    for (int i = 0; i < 500 && lines_of(started, &last) < 3; i++)
+        usleep(10000);
     t0 = wall_seconds();
     gamestart_take_forget(rec);
     double forget_took = wall_seconds() - t0;
-    gamestart_tend();
-    usleep(300000);
-    int runs = lines_of(started, &last);
     bool gone = last > 0 && kill(last, 0) != 0 && errno == ESRCH;
     gamestart_take_end();
     test_remove_tree(dir);
@@ -741,6 +757,8 @@ TEST(run_a_cancelled_share_doesnt_wait_for_a_take_in_the_background) {
     CHECK(ended);
     CHECK(!kept);
     CHECK_EQ(runs, 2);
+    CHECK(third);
+    CHECK(cancel_took < 0.5);
     CHECK(forget_took < 0.5); /* a deleted recording's take is killed, not waited for */
     CHECK(gone);
 }
