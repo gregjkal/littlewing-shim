@@ -206,6 +206,26 @@ TEST(misc_exit_to_shell_exits_cleanly) {
     CHECK_CONTAINS(out, "loony: ExitToShell");
 }
 
+static void exit_hook(void) { fprintf(stderr, "exit hook ran\n"); }
+
+static void child_main_returned(void *unused) {
+    (void)unused;
+    setup();
+    misc_set_exit_hook(exit_hook);
+    misc_main_returned(42);
+}
+
+/* As crt1 passes main's return value to exit(): the status is main's, and
+   the log says so before the exit hook (which may exec the picker) runs. */
+TEST(misc_main_returned_exits_with_mains_status) {
+    char out[4096];
+    int status = test_run_child(child_main_returned, NULL, out, sizeof out);
+    CHECK_EQ(status, 42);
+    const char *logged = strstr(out, "loony: main returned 42\n");
+    CHECK(logged != NULL);
+    CHECK_CONTAINS(logged, "exit hook ran");
+}
+
 static int idle_calls;
 static void count_idle(void) { idle_calls++; }
 

@@ -482,7 +482,8 @@ int main(int argc, char **argv) {
         log_msg("loaded %s: %u imports, main at 0x%x, %u initializers", path, img.nnames,
                 img.main_addr, img.ninit);
         /* What dyld does before the entry point: the static constructors.
-           Then main, as crt1's _start would call it. */
+           Then main, as crt1's _start would call it, and exit with what it
+           returns. */
         for (uint32_t i = 0; i < img.ninit; i++)
             guest_call(img.init_addrs[i], 0, NULL);
         uint32_t args[4] = {1};
@@ -490,11 +491,9 @@ int main(int argc, char **argv) {
         volatile uint32_t status = 0;
         if (setjmp(seek_unwound) == 0) /* where a seek unwinds to from inside a trap */
             status = guest_call(img.main_addr, 4, args);
-        else
+        else /* replays are Loony Labyrinth's, so this game never seeks: status stays 0 */
             seek_reenter();
-        back_to_picker();
-        log_msg("main returned %d", (int32_t)status);
-        return 0;
+        misc_main_returned((int32_t)status); /* runs back_to_picker, the exit hook */
     }
 
     int32_t app_id = image_find_import(&img, "kCFPreferencesCurrentApplication");
@@ -513,7 +512,5 @@ int main(int argc, char **argv) {
         guest_call(img.main_tvector, 0, NULL);
     else
         seek_reenter();
-    back_to_picker();
-    log_msg("main returned");
-    return 0;
+    misc_exit("main returned", 0); /* logged before back_to_picker, the exit hook */
 }
