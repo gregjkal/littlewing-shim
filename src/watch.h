@@ -19,7 +19,9 @@
      E             export the clips (LOONY_CLIP=clips, export.h)
      Esc           cancel the export
 
-   The window's title says the game's time and the speed. Only 1x has sound.
+   The window's title says the game's time and the speed, and so does a
+   strip of controls below the game (strip.h), whose buttons do what their
+   keys do. Only 1x has sound.
 
    Exporting runs in a second copy of this program while the viewer goes on,
    one export at a time, and the title says how far it has got. Once it is
@@ -114,6 +116,15 @@ typedef struct {
 
 extern const watch_binding watch_bindings[];
 extern const size_t watch_nbindings;
+
+/* What the viewer shows (strip.h). */
+typedef struct {
+    uint32_t now;    /* ticks of play: the time, or the one being gone to */
+    uint32_t length; /* ticks of play in the recording (replay_play_length) */
+    bool paused, at_end;
+    int speed; /* 1, 2, 4 or 8, or 0 for as fast as it can */
+} watch_state;
+void watch_get_state(watch_state *s);
 
 /* Does what the action does, as its key would (repeat: the key is held).
    Does nothing until watch_start. */
