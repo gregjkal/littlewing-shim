@@ -67,12 +67,13 @@
    recording pays the prelude, and the ones after don't. The app takes one
    as soon as a game's recording ends, in the background
    (gamestart_take_later), so even the first replay of a finished game
-   usually doesn't. Not when the game
-   starts within GAMESTART_MIN_PRELUDE_US of launch (its prelude is a few
-   seconds, and its snapshot would be several times its recording), when
-   the recording has no play, or when it can't be written.
-   LOONY_GAMESTART=take does only that, and exits. Nobody sees a take, so
-   it draws nothing (gamestart_taking): presenting every frame through the
+   usually doesn't. Not when the game starts within
+   GAMESTART_MIN_PRELUDE_US of launch (its prelude is a few seconds, and
+   its snapshot would be several times its recording), when the recording
+   has no play, or when it can't be written. LOONY_GAMESTART=take does only
+   that, and exits, as it does when the program that started it has ended
+   (a kqueue watch, polled by gamestart_tend). Nobody sees a take, so it
+   draws nothing (gamestart_taking): presenting every frame through the
    dummy video driver was half its time. The frame checks go on, so a take
    still stops at a desync.
 
@@ -139,11 +140,13 @@ void gamestart_take_stop(void);
    The file stays usable throughout: the take rewrites it in place with a
    rename, keeping its last write's time, so the viewer opening it or a
    share copying it reads it whole, with or without the snapshot; if
-   without, it takes its own, and the two are the same. gamestart_tend, called often (the event
-   pump's poll), notes a take that has ended and starts the next.
-   gamestart_take_end stops the take running and forgets the rest: at exit,
-   and before this program restarts itself (main.c), since a take is only
-   worth its time while the app is up. */
+   without, it takes its own, and the two are the same. gamestart_tend,
+   called often (the event pump's poll), notes a take that has ended and
+   starts the next; in a take, it ends the take once the program that
+   started it has ended. gamestart_take_end stops the take running and
+   forgets the rest: at exit, and before this program restarts itself
+   (main.c), since a take is only worth its time while the app is up. A
+   crash or a force quit skips it, and the take ends itself. */
 bool gamestart_take_later(const char *self, const char *path, uint64_t play_on_us);
 void gamestart_tend(void);
 void gamestart_take_end(void);

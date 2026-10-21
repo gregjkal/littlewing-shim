@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/event.h>
 #include <sys/mman.h>
 #include <sys/qos.h>
 #include <sys/stat.h>
@@ -526,9 +527,54 @@ static const char *setting(void) {
     return v ? v : "";
 }
 
+#define TAKE_TEND_GAP 0.25 /* seconds between polls of a take, or of its parent */
+
+/* Taking: a kqueue that fires when the program that started this one
+   ends (-1: not taking), and when gamestart_tend last looked. */
+static struct {
+    int kq;
+    double polled; /* wall clock */
+} parent = {.kq = -1};
+
+static void end_with_parent(void) {
+    log_msg("gamestart: the program that started this take has ended, so it ends too");
+    exit(0);
+}
+
+/* Taking: ends this program when the one that started it has, as
+   gamestart_take_end would have if that one hadn't crashed or been
+   force quit. Otherwise its next launch, pruning its recordings, could
+   delete the one this take is about to rename its write over. */
+static void watch_parent(void) {
+    pid_t ppid = getppid();
+    struct kevent ev;
+    EV_SET(&ev, ppid, EVFILT_PROC, EV_ADD, NOTE_EXIT, 0, NULL);
+    parent.kq = ppid == 1 ? -1 : kqueue(); /* 1: launchd, it has ended already */
+    if (parent.kq >= 0 && kevent(parent.kq, &ev, 1, NULL, 0, NULL) == 0)
+        return;
+    if (ppid == 1 || errno == ESRCH)
+        end_with_parent();
+    log_msg("gamestart: can't watch the program that started this take: %s", strerror(errno));
+    if (parent.kq >= 0)
+        close(parent.kq);
+    parent.kq = -1;
+}
+
+/* Taking: whether the program that started this one has ended. */
+static bool parent_ended(void) {
+    double now = wall_seconds();
+    if (now - parent.polled < TAKE_TEND_GAP)
+        return false;
+    parent.polled = now;
+    struct kevent ev;
+    return kevent(parent.kq, NULL, 0, &ev, 1, &(struct timespec){0, 0}) > 0;
+}
+
 void gamestart_init(void) {
     G.on = replay_playing() && strcmp(setting(), "0") != 0;
     G.take = G.on && strcmp(setting(), "take") == 0;
+    if (G.take)
+        watch_parent();
     if (!G.on)
         return;
     G.phase = TO_BASELINE;
@@ -558,7 +604,6 @@ bool gamestart_in_file(const char *path) {
    game just recorded, and the background ones waiting. */
 #define TAKE_QUEUE 8
 #define TAKE_STOP_WAIT 3.0 /* seconds a take has to end after SIGTERM */
-#define TAKE_TEND_GAP 0.25 /* seconds between polls of a background take */
 static struct {
     pid_t pid; /* 0: none */
     bool background;
@@ -729,6 +774,8 @@ bool gamestart_take_later(const char *self, const char *path, uint64_t play_on_u
 }
 
 void gamestart_tend(void) {
+    if (parent.kq >= 0 && parent_ended()) /* outside replay_set_snapshot's write */
+        end_with_parent();
     if (child.pid && !child.background) /* Share's: it polls it */
         return;
     if (child.pid) {
