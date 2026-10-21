@@ -202,15 +202,15 @@ This builds Unicorn and SDL3 from their sources (`tools/build_deps.sh`) and a
 fresh Release build against them in `build-dist`, all for macOS 14, and runs
 the tests. Unicorn gets two fixes from its development branch
 (`tools/unicorn-patches`) that its next release will have: without them, every
-store the game makes takes Unicorn's slow path, and going ahead in a replay
-takes about 2.5 times as long. A build against Homebrew's Unicorn plays the
-same, only slower there. It then builds the app as version 0.1.0, checks that
-it runs on macOS 14, and notarizes it. It tags the commit `v0.1.0`, pushes the
-tag, and makes a draft release with `LittleWing-0.1.0.zip` and `appcast.xml`,
-the feed that released apps read to find updates. Check the draft on GitHub,
-then publish it: apps see the update once it's the latest release. Other
-builds of the app say version 0.0.0 (set `LOONY_VERSION` to change it), and
-don't update themselves.
+store the game makes takes Unicorn's slow path, even to memory it can't run
+code from, and going ahead in a replay takes about 2.5 times as long. A build
+against Homebrew's Unicorn plays the same, only slower there. It then builds
+the app as version 0.1.0, checks that it runs on macOS 14, and notarizes it.
+It tags the commit `v0.1.0`, pushes the tag, and makes a draft release with
+`LittleWing-0.1.0.zip` and `appcast.xml`, the feed that released apps read to
+find updates. Check the draft on GitHub, then publish it: apps see the update
+once it's the latest release. Other builds of the app say version 0.0.0 (set
+`LOONY_VERSION` to change it), and don't update themselves.
 
 The updates are signed with a [Sparkle](https://sparkle-project.org) key kept
 in the keychain of the Mac that releases, and apps check the signature with

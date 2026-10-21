@@ -77,7 +77,9 @@ void cpu_no_exec(uint32_t begin, uint32_t end);
 
 /* Calls fn for every guest write that touches [begin, end] (inclusive), with
    the CPU's registers (including pc) current. NULL removes the watch.
-   cpu_init() clears it. */
+   cpu_init() clears it. Set it before the guest runs: code Unicorn
+   translated earlier can store to a page it can't run code from without
+   calling fn. */
 typedef void (*cpu_write_fn)(uint32_t addr, int size, uint64_t value);
 void cpu_watch_writes(uint32_t begin, uint32_t end, cpu_write_fn fn);
 

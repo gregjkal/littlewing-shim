@@ -7,8 +7,8 @@
 # Sparkle, the updater, to <prefix>/sparkle (tools/sparkle.sh).
 # Unicorn gets the fixes in tools/unicorn-patches, from its development
 # branch, until a release has them: the first keeps the game's stores to
-# data off the slow path, which makes a replay about 2.5 times as fast
-# where the game stores a lot.
+# memory it can't run code from off the slow path, which makes a replay
+# about 2.5 times as fast where the game stores a lot.
 #   MACOSX_DEPLOYMENT_TARGET=<x.y> tools/build_deps.sh <prefix>
 set -eu
 [ $# -eq 1 ] || { echo "usage: MACOSX_DEPLOYMENT_TARGET=<x.y> tools/build_deps.sh <prefix>" >&2; exit 1; }
