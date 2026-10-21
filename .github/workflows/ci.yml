@@ -34,7 +34,8 @@ jobs:
 
   app:
     name: App (Release)
-    runs-on: macos-15
+    # The icon (tools/AppIcon.icon) needs Xcode 26 or later.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies

@@ -2,7 +2,8 @@
 # Builds LittleWing.app around a loony binary: it plays the LittleWing games
 # installed in /Applications, with a picker when there are two or three. The Unicorn
 # and SDL3 libraries are copied into the bundle (so a Homebrew upgrade can't break
-# it), the icon is made from tools/AppIcon.png, and the bundle is signed with
+# it), the icon is compiled from tools/AppIcon.icon (an Icon Composer file,
+# which needs Xcode 26 or later), and the bundle is signed with
 # the hardened runtime and the allow-jit entitlement: ad hoc, or with the
 # identity in LOONY_SIGN_ID (a "Developer ID Application: ..." certificate in
 # the keychain) for an app that can be notarized and given to others. Its
@@ -37,15 +38,6 @@ fi
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources"
 cp "$bin" "$app/Contents/MacOS/loony"
-# The icon: tools/AppIcon.png (1024x1024, original art) at every iconset size.
-iconset=$(mktemp -d)/AppIcon.iconset
-mkdir "$iconset"
-for s in 16 32 128 256 512; do
-    sips -z $s $s "$here/AppIcon.png" --out "$iconset/icon_${s}x${s}.png" >/dev/null
-    sips -z $((s * 2)) $((s * 2)) "$here/AppIcon.png" --out "$iconset/icon_${s}x${s}@2x.png" >/dev/null
-done
-iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
-rm -rf "$(dirname "$iconset")"
 # The HD art (hd-art/<game id>): the app plays a game in HD when it has art for it.
 cp -R "$here/../hd-art" "$app/Contents/Resources/hd-art"
 cat > "$app/Contents/Info.plist" <<PLIST
@@ -55,6 +47,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <dict>
 	<key>CFBundleExecutable</key><string>loony</string>
 	<key>CFBundleIconFile</key><string>AppIcon</string>
+	<key>CFBundleIconName</key><string>AppIcon</string>
 	<key>CFBundleIdentifier</key><string>com.gregkaleka.littlewing-shim</string>
 	<key>CFBundleName</key><string>LittleWing</string>
 	<key>CFBundleDisplayName</key><string>LittleWing</string>
@@ -164,6 +157,19 @@ min=$(for f in "$app/Contents/MacOS/loony" "$app"/Contents/Frameworks/*.dylib; d
     vtool -show-build "$f" | awk '/minos/ {print $2}'
 done | sort -t . -k 1,1n -k 2,2n -k 3,3n | tail -1)
 plutil -insert LSMinimumSystemVersion -string "$min" "$app/Contents/Info.plist"
+# The icon: tools/AppIcon.icon (original art) as an asset catalog, which
+# macOS 26 draws in the light, dark, clear and tinted styles, and an .icns for
+# older systems. actool comes with Xcode, not the Command Line Tools.
+partial=$(mktemp -d)
+if ! log=$(xcrun actool "$here/AppIcon.icon" --compile "$app/Contents/Resources" \
+    --app-icon AppIcon --platform macosx --target-device mac \
+    --minimum-deployment-target "$min" --output-format human-readable-text \
+    --output-partial-info-plist "$partial/icon.plist" 2>&1); then
+    echo "$log" >&2
+    echo "make_app.sh: actool couldn't compile tools/AppIcon.icon (it needs Xcode 26 or later)" >&2
+    exit 1
+fi
+rm -rf "$partial"
 # A Developer ID signature needs a secure timestamp (fetched from Apple) to be notarized.
 sign=${LOONY_SIGN_ID:--}
 if [ "$sign" = - ]; then set -- ; else set -- --timestamp; fi

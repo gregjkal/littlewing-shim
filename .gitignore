@@ -1,7 +1,7 @@
 build/
 build-*/
 *.png
-!/tools/AppIcon.png
+!/tools/AppIcon.icon/Assets/*.png
 !/hd-art/**/*.png
 /game/
 .DS_Store

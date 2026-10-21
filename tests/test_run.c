@@ -2940,9 +2940,11 @@ TEST(run_the_app_bundle_is_self_contained_and_plays) {
     CHECK(!strstr(text, "/opt/homebrew/"));
     CHECK_CONTAINS(text, "@rpath/libunicorn");
     CHECK_CONTAINS(text, "com.apple.security.cs.allow-jit");
-    char icns[1024];
-    snprintf(icns, sizeof icns, "%s/LittleWing.app/Contents/Resources/AppIcon.icns", out_dir);
-    CHECK(access(icns, R_OK) == 0);
+    char icon[1024];
+    snprintf(icon, sizeof icon, "%s/LittleWing.app/Contents/Resources/AppIcon.icns", out_dir);
+    CHECK(access(icon, R_OK) == 0);
+    snprintf(icon, sizeof icon, "%s/LittleWing.app/Contents/Resources/Assets.car", out_dir);
+    CHECK(access(icon, R_OK) == 0);
     snprintf(cmd, sizeof cmd, "plutil -extract CFBundleName raw '%s/LittleWing.app/Contents/Info.plist'", out_dir);
     p = popen(cmd, "r");
     CHECK(p != NULL);
