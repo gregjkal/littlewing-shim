@@ -528,6 +528,8 @@ void gamestart_init(void) {
     trap_on_entry(on_entry);
 }
 
+bool gamestart_taking(void) { return G.take; }
+
 void gamestart_limit(uint64_t clock_us) {
     if (clock_us < G.limit_us)
         G.limit_us = clock_us;

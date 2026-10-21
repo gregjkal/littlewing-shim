@@ -372,7 +372,8 @@ time, which is how a game is matched to its high score (below).
 `LOONY_GAMESTART=0` neither uses a snapshot nor takes one.
 `LOONY_GAMESTART=take`, with `LOONY_REPLAY`, replays only until the
 snapshot is kept in the file (or found there already, or known to be
-impossible) and exits: it is what sharing runs, headless.
+impossible) and exits: it is what sharing runs, headless, and it draws
+nothing, which halves its time.
 
 At launch, the last three games are kept, and so is every game where you
 pressed Cmd-S (renamed `...-marked.lwreplay` at the first press), every
@@ -614,7 +615,7 @@ as it is. The copy carries the recording's snapshot of the game's start
 recording has none yet, the app takes one into the copy before the share
 sheet or the save panel shows, by replaying it out of sight: a panel says
 so, and Cancel stops the share. That takes a while for a game late in a
-session (about a minute for a game 20 minutes in). The snapshot is the
+session (about half a minute for a game 20 minutes in). The snapshot is the
 state of the game's memory when the game started, so whoever opens the
 file runs the game from that state, not only from the inputs recorded.
 The high-score names and anything typed during play are in the copy. A game played before Loony Labyrinth was registered can't be shared:

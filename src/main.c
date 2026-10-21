@@ -98,7 +98,8 @@ static void save_prefs_at_exit(void) {
 
 /* The event pump's present: when a frame check is due (a recording or a
    replay), the screen's hash goes to replay_frame first. A clip, or a
-   watched replay, takes the frame in place of the window. */
+   watched replay, takes the frame in place of the window, and a take
+   (gamestart.h) has none. */
 static void present_frame(void) {
     bool dirty = qd_take_dirty();
     if (dirty && replay_frame_due()) {
@@ -114,7 +115,7 @@ static void present_frame(void) {
         clip_present(dirty);
     else if (watch_on())
         watch_present(dirty);
-    else if (dirty)
+    else if (dirty && !gamestart_taking())
         display_present();
     measure_present();
 }

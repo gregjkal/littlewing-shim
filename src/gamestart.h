@@ -68,7 +68,10 @@
    starts within GAMESTART_MIN_PRELUDE_US of launch (its prelude is a few
    seconds, and its snapshot would be several times its recording), when
    the recording has no play, or when it can't be written.
-   LOONY_GAMESTART=take does only that, and exits.
+   LOONY_GAMESTART=take does only that, and exits. Nobody sees a take, so
+   it draws nothing (gamestart_taking): presenting every frame through the
+   dummy video driver was half its time. The frame checks go on, so a take
+   still stops at a desync.
 
    Using it. At the baseline, a replay of a recording with a snapshot
    checks its header against the build, the recording and the baseline as
@@ -98,6 +101,10 @@ void gamestart_init(void);
 /* A snapshot put back past clock_us (on the replay's clock) wouldn't do:
    the replay must see what comes before. Call before the baseline. */
 void gamestart_limit(uint64_t clock_us);
+
+/* Whether this replay is a take (LOONY_GAMESTART=take): the screen goes to
+   no window. */
+bool gamestart_taking(void);
 
 /* For tests: the hash a baseline would have now, the license blanked. */
 void gamestart_memory_hash(uint8_t out[32]);
