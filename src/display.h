@@ -5,7 +5,13 @@
 /* Shows the emulated screen (qd_screen) in an SDL window, scaled to fit with
    the right aspect ratio and nearest-neighbor sampling. The window is created
    on the first present. With SDL_VIDEO_DRIVER=dummy nothing appears on
-   screen, which the tests use. */
+   screen, which the tests use.
+
+   An overlay (the replay viewer's controls, strip.h) can draw in the window
+   too, in the window's pixels and never into the emulated screen, so frame
+   hashes, screenshots and exported clips leave it out. In a window it gets
+   a strip of its own below the game; in full screen it goes over the
+   game's bottom edge. */
 
 /* If LOONY_SCREENSHOT names a file, the screen is written there as a PNG when
    the process exits, including after a crash. */
@@ -38,6 +44,53 @@ bool display_fullscreen(void);
 /* Whether presenting waits for the display's refresh (the default). Turned
    off for fixed-clock runs, where waiting would only slow the run down. */
 void display_set_vsync(bool on);
+
+/* A rectangle in the window's pixels. */
+typedef struct {
+    float x, y, w, h;
+} display_rect;
+
+/* Where things go in a window w x h pixels. The game, a screen lw x lh, is
+   letterboxed: scaled to fit with its aspect kept, and centered, as SDL's
+   logical presentation does it. The strip is strip_h pixels across the
+   bottom of the window: in a window the game fits above it, in full screen
+   it goes over the game. With strip_h 0 the game has the whole window.
+   density is left at 1 for the caller to set. */
+typedef struct {
+    display_rect game, strip;
+    bool fullscreen;
+    float density; /* pixels a point */
+} display_layout;
+display_layout display_lay_out(float w, float h, int lw, int lh, float strip_h, bool fullscreen);
+
+/* What the display draws over the game, and the pointer events on it.
+   Coordinates are in the window's pixels. */
+typedef struct {
+    float height;    /* the strip, in points */
+    float min_width; /* the narrowest window that holds it, in points */
+    /* Draws into renderer (an SDL_Renderer), after the game. */
+    void (*draw)(void *renderer, const display_layout *l);
+    /* Whether draw would draw something new: the display then draws again
+       by itself (at most once a frame), paused or not. */
+    bool (*changed)(void);
+    /* How far the strip is up, 0 to 1. The pointer shows only while it's
+       up, and in full screen a press on its place is the game's while
+       it's down. */
+    float (*shown)(void);
+    /* The pointer moved to (x, y), or left the window (inside false). */
+    void (*pointer)(const display_layout *l, float x, float y, bool inside);
+    /* The left button went down or up at (x, y), on the strip. */
+    void (*press)(const display_layout *l, float x, float y, bool down);
+} display_overlay;
+
+/* Sets the overlay, or none (NULL). Before the window opens, so that the
+   window makes room for it: its default size grows by the strip, and it
+   gets a minimum size. */
+void display_set_overlay(const display_overlay *o);
+
+/* For tests: draws the window as the next present would show it, and reads
+   it back: malloc'd RGBA, *w x *h, or NULL with no window. */
+uint8_t *display_read_window(int *w, int *h);
 
 /* Where display_poll sends host input. */
 typedef struct {
@@ -85,10 +138,13 @@ void display_take_launch_events(uint32_t wait_ms);
    (quit), Cmd-F (toggle full screen), Cmd-V (paste) and Cmd-S (mark a clip,
    said in the window's title for DISPLAY_FLASH_MS), which the game never
    sees. Left-button clicks are mapped from the window to the emulated
-   screen, through the letterboxing and scaling. */
+   screen, through the letterboxing and scaling, unless they are on the
+   overlay's strip, which gets them and the pointer's movements. With an
+   overlay, the window is drawn again whenever it changes. */
 void display_poll(void);
 
-/* Shows or hides the mouse pointer over the window. */
+/* Shows or hides the mouse pointer over the window. With an overlay, the
+   overlay decides instead (display_overlay's shown). */
 void display_set_cursor(bool visible);
 
 /* Writes the current screen as a PNG. */

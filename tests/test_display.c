@@ -306,3 +306,128 @@ TEST(display_poll_opens_the_first_replay_of_several_dropped) {
     CHECK_STR(opened, "/r/notes.txt");
     display_set_open(NULL);
 }
+
+static bool rect_is(display_rect r, float x, float y, float w, float h) {
+    return r.x == x && r.y == y && r.w == w && r.h == h;
+}
+
+/* The game is letterboxed as SDL's logical presentation did it; a strip
+   goes below the game in a window and over it in full screen. */
+TEST(display_lay_out_letterboxes_the_game_and_places_the_strip) {
+    display_layout l = display_lay_out(1600, 1200, 800, 600, 0, false);
+    CHECK(rect_is(l.game, 0, 0, 1600, 1200));
+    l = display_lay_out(1000, 600, 800, 600, 0, false); /* bars at the sides */
+    CHECK(rect_is(l.game, 100, 0, 800, 600));
+    l = display_lay_out(800, 700, 800, 600, 0, false); /* above and below */
+    CHECK(rect_is(l.game, 0, 50, 800, 600));
+    l = display_lay_out(840, 630, 800, 600, 0, false); /* 4:3, though 630 / 600 isn't exact */
+    CHECK(rect_is(l.game, 0, 0, 840, 630));
+    l = display_lay_out(1600, 1264, 800, 600, 64, false);
+    CHECK(rect_is(l.game, 0, 0, 1600, 1200));
+    CHECK(rect_is(l.strip, 0, 1200, 1600, 64));
+    l = display_lay_out(1920, 1200, 800, 600, 64, true); /* over the game's bottom edge */
+    CHECK(rect_is(l.game, 160, 0, 1600, 1200));
+    CHECK(rect_is(l.strip, 0, 1136, 1920, 64));
+    l = display_lay_out(100, 30, 800, 600, 64, false); /* no room for the game */
+    CHECK_EQ((int)l.game.w, 0);
+}
+
+static int strip_presses, strip_moves;
+static float strip_up = 1;
+static float press_x, press_y;
+static void ov_draw(void *r, const display_layout *l) {
+    /* the strip's place, white */
+    SDL_SetRenderDrawColor(r, 255, 255, 255, 255);
+    SDL_FRect f = {l->strip.x, l->strip.y, l->strip.w, l->strip.h};
+    if (strip_up > 0)
+        SDL_RenderFillRect(r, &f);
+}
+static bool ov_changed(void) { return false; }
+static float ov_shown(void) { return strip_up; }
+static void ov_pointer(const display_layout *l, float x, float y, bool in) {
+    (void)l, (void)x, (void)y, (void)in;
+    strip_moves++;
+}
+static void ov_press(const display_layout *l, float x, float y, bool down) {
+    (void)l;
+    strip_presses += down;
+    press_x = x;
+    press_y = y;
+}
+static const display_overlay test_overlay = {16, 100, ov_draw, ov_changed, ov_shown, ov_pointer, ov_press};
+
+/* With an overlay, the window grows by its strip, a click on the strip is
+   its and a click on the game still maps to the screen, and the pointer's
+   movements reach it. */
+TEST(display_poll_gives_clicks_on_the_strip_to_the_overlay) {
+    gm_init();
+    mm_init();
+    qd_init(64, 48, 16);
+    display_set_overlay(&test_overlay);
+    display_present(); /* a 128 x 96 game and the 16-point strip */
+    static const display_input in = {on_key, on_focus, on_quit, on_mouse, on_paste, on_mark};
+    display_set_input(&in);
+    int n = 0;
+    SDL_Window **wins = SDL_GetWindows(&n);
+    CHECK(n == 1);
+    int ww, wh;
+    SDL_GetWindowSize(wins[0], &ww, &wh);
+    SDL_free(wins);
+    CHECK_EQ(ww, 128);
+    CHECK_EQ(wh, 112);
+    clicks = strip_presses = strip_moves = 0;
+    push_click(64, 48, true, SDL_BUTTON_LEFT);
+    push_click(64, 104, true, SDL_BUTTON_LEFT);
+    SDL_Event e;
+    memset(&e, 0, sizeof e);
+    e.type = SDL_EVENT_MOUSE_MOTION;
+    e.motion.x = 10;
+    e.motion.y = 10;
+    SDL_PushEvent(&e);
+    display_poll();
+    CHECK_EQ(clicks, 1);
+    CHECK_EQ(mouse_x, 32);
+    CHECK_EQ(mouse_y, 24);
+    CHECK_EQ(strip_presses, 1);
+    CHECK_EQ((int)press_x, 64);
+    CHECK_EQ((int)press_y, 104);
+    CHECK(strip_moves >= 1); /* SDL moves the pointer to each click too */
+    display_set_overlay(NULL);
+}
+
+/* The overlay draws only in the window: with the strip up or down, the
+   game's pixels in the window and the screen's hash (what replays check,
+   and what screenshots and clips are made from) are the same, and the
+   strip's place isn't. */
+TEST(display_overlay_leaves_the_game_and_its_hash_alone) {
+    gm_init();
+    mm_init();
+    qd_init(64, 48, 16);
+    qd_pixels px;
+    qd_palette pal;
+    qd_screen(&px, &pal);
+    size_t len = (size_t)px.row_bytes * (size_t)rect_h(px.bounds);
+    for (size_t i = 0; i < len; i++)
+        px.base[i] = (uint8_t)(i * 7);
+    display_set_overlay(&test_overlay);
+    strip_up = 1;
+    display_present();
+    uint32_t hash_up = fnv1a32(px.base, len);
+    int w1, h1, w2, h2;
+    uint8_t *up = display_read_window(&w1, &h1);
+    CHECK(up != NULL);
+    strip_up = 0;
+    display_present();
+    uint8_t *down = display_read_window(&w2, &h2);
+    CHECK(down != NULL);
+    CHECK_EQ(w1, w2);
+    CHECK_EQ(h1, h2);
+    CHECK_EQ(h1, 112);
+    size_t game = (size_t)w1 * 96 * 4; /* the rows above the strip */
+    CHECK(memcmp(up, down, game) == 0);
+    CHECK(memcmp(up + game, down + game, (size_t)w1 * 16 * 4) != 0);
+    CHECK_EQ(fnv1a32(px.base, len), hash_up);
+    free(up);
+    free(down);
+    display_set_overlay(NULL);
+}

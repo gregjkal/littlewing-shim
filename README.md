@@ -503,6 +503,16 @@ LOONY_REPLAY=game.lwreplay LOONY_CLIP=clips ./build-release/loony
 | E | Export the clips, as `LOONY_CLIP=clips` does |
 | Esc | Cancel the export |
 
+The same controls are on a strip below the game: play or pause, back and
+ahead 10 seconds, slower and faster with the speed between them, the time
+and the recording's length, and a bar of how far it has got. Resting the
+pointer on a button says its key. The strip comes up when the pointer moves
+or a key is pressed and fades a couple of seconds later, unless the pointer
+is on it; a thin line along the bottom still shows the progress, and the
+pointer hides with the strip. In full screen the strip goes over the
+bottom edge of the game. It is drawn on the window, never into the game's
+screen, so screenshots, clips and a replay's frame checks leave it out.
+
 These are YouTube's keys. A key with Cmd, Ctrl or Option held goes to
 the menus, not the viewer. The **Replay** menu (next to Sound) lists
 every one of these with its key but 0 to 9, so it is also where to find
