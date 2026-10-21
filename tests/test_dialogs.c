@@ -606,6 +606,35 @@ TEST(dialogs_alert_without_resources_returns_minus_one) {
     CHECK_CONTAINS(out, "Alert returned -1");
 }
 
+/* A resource fork holding only STR# 128, two bytes long. */
+static const uint8_t one_resource_fork[] = {
+    0, 0, 0, 16, 0, 0, 0, 22, 0, 0, 0, 6, 0, 0, 0, 50, /* header: data at 16, map at 22 */
+    0, 0, 0, 2, 'h', 'i',                               /* the data */
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,     /* map: header copy */
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 28, 0, 50,               /* handle, ref, attrs, type list, names */
+    0, 0, 'S', 'T', 'R', '#', 0, 0, 0, 10,              /* one type, one resource of it */
+    0, 128, 0xFF, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0,         /* STR# 128, no name, data at 0 */
+};
+
+/* The same with resources, none of them the ALRT: it's the program's kind
+   that says, not whether it has resources. */
+static void child_alert_with_other_resources(void *unused) {
+    (void)unused;
+    empty_setup(true);
+    char err[256];
+    if (!rsrc_open(one_resource_fork, sizeof one_resource_fork, err, sizeof err))
+        fatal("can't open the test fork: %s", err);
+    fprintf(stderr, "resources: %d\n", (int)rsrc_total());
+    fprintf(stderr, "Alert returned %d\n", (int32_t)call_import("Alert", 2, 136u, 0u));
+}
+
+TEST(dialogs_alert_in_a_macho_game_with_other_resources_returns_minus_one) {
+    char out[16384];
+    CHECK_EQ(test_run_child(child_alert_with_other_resources, NULL, out, sizeof out), 0);
+    CHECK_CONTAINS(out, "resources: 1");
+    CHECK_CONTAINS(out, "Alert returned -1");
+}
+
 /* A classic game is a classic game even with an empty resource map: the
    missing ALRT is the shim's bug, not a Mac OS X game's leftover call. */
 static void child_classic_alert_without_resources(void *unused) {
@@ -662,6 +691,7 @@ static void child_two_windows_one_nib(void *bundle) {
     fprintf(stderr, "two windows: %d\n", a != 0 && gm_r32(out) != 0 && gm_r32(out) != a);
     size_t len;
     uint8_t *state = snapshot_state_save(&len);
+    snapshot_state_load(state, len); /* over a live tree, freed and parsed again */
     call_import("DisposeNibReference", 1, nib);
     snapshot_state_load(state, len);
     free(state);

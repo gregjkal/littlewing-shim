@@ -58,6 +58,7 @@ void nib_free(nib_file *f);
    this reader doesn't know. */
 bool nib_file_window(const nib_file *f, const char *name, nib_window *out, char *err, size_t errlen);
 
-/* The same from objects.xib's text, parsed for this one call. */
+/* The same from objects.xib's text, parsed for this one call (the tests'
+   way in: dialogs.c keeps a nib_file per nib ref). */
 bool nib_read_window(const char *xml, size_t len, const char *name, nib_window *out, char *err,
                      size_t errlen);
