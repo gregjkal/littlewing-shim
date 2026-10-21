@@ -18,7 +18,19 @@ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release && cmake --build build-re
 
 Every warning is an error, and the Debug build has sanitizers, so a change that compiles and passes `loony_tests` is the bar. `tools/make_app.sh` refuses a sanitizer build, so the app always comes from `build-release`.
 
-Tests that need a game skip when it isn't installed (`SKIP_UNLESS_GAME`, `SKIP_UNLESS_CC`, `SKIP_UNLESS_MF`), and the ones that register a game skip without `LOONY_TEST_EMAIL` / `LOONY_TEST_KEY` (Loony Labyrinth) and `LOONY_TEST_MF_EMAIL` / `LOONY_TEST_MF_KEY` (MONSTER FAIR); the values are in `docs/test_key.txt`. A clean run here is `N passed, 0 failed, 0 skipped` with those set and `LOONY_SLOW_TESTS=1`. Run the slow tests before merging anything that touches emulation, drawing or sound: they are the regression check for desyncs.
+Tests that need a game skip when it isn't installed (`SKIP_UNLESS_GAME`, `SKIP_UNLESS_CC`, `SKIP_UNLESS_MF`), and the ones that register a game skip without `LOONY_TEST_EMAIL` / `LOONY_TEST_KEY` (Loony Labyrinth) and `LOONY_TEST_MF_EMAIL` / `LOONY_TEST_MF_KEY` (MONSTER FAIR); the values are in `docs/test_key.txt`. A clean run here is `N passed, 0 failed, 0 skipped` with those set and `LOONY_SLOW_TESTS=1`.
+
+The slow tests (`SKIP_UNLESS_SLOW`) are the only end-to-end check of whole games replayed, seeking and snapshots, and together they take many minutes. Before merging, run the ones for what the change touches, with `LOONY_SLOW_TESTS=1 ./build/loony_tests <filter>`:
+
+| The change touches | Filter |
+| --- | --- |
+| Emulation, drawing or sound (anything that can move a frame or a sample) | `three_minutes` |
+| Recording or replaying, or a new source of host input | `recorded` |
+| Seeking, snapshots, the viewer going back, or a `SNAPSHOT_STATE` block | `watched_game`, then `with_snapshots` |
+| The game-start snapshot or Share | `starts_at_the_game` |
+| MONSTER FAIR's startup or `patch.c` | `monster_fair` |
+
+Before a release, run the whole set. Run slow tests on an idle Mac: they record on the real clock, so under load (another session's tests or build) they fail on timing alone. Rerun a failure on its own before chasing it.
 
 Headless run of a game (never let it open a window or play sound from a session):
 
