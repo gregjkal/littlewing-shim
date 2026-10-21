@@ -10,6 +10,7 @@
 #include <zlib.h>
 
 #include "recordings.h"
+#include "replay.h"
 #include "util.h"
 
 /* The variables recordings_dir and recordings_watch_env read or set, as
@@ -370,4 +371,111 @@ TEST(recordings_watch_env_starts_the_viewer_at_a_mark) {
     recordings_watch_env("/x/other.lwreplay", 0);
     CHECK_STR(getenv("LOONY_REPLAY"), "/x/other.lwreplay");
     CHECK(!getenv("LOONY_WATCH_FROM"));
+}
+
+/* recordings_delete's trash, standing in for the Finder's: moves path into
+   dir/Trash, or refuses when trash_refuses. */
+static int trashed;
+static bool trash_refuses;
+static bool fake_trash(const char *path, char *err, size_t errlen) {
+    if (trash_refuses) {
+        snprintf(err, errlen, "the Trash refused");
+        return false;
+    }
+    char to[1200];
+    snprintf(to, sizeof to, "%s/Trash", dir);
+    mkdir(to, 0755);
+    snprintf(to, sizeof to, "%s/Trash/%s", dir, strrchr(path, '/') + 1);
+    if (rename(path, to) != 0) {
+        snprintf(err, errlen, "can't move it");
+        return false;
+    }
+    trashed++;
+    return true;
+}
+
+static bool in(const char *folder, const char *name) {
+    char path[1200];
+    snprintf(path, sizeof path, "%s/%s", folder, name);
+    return access(path, F_OK) == 0;
+}
+
+TEST(recordings_delete_moves_a_recording_and_its_clips_to_the_trash) {
+    BEGIN_TEST();
+    write_four();
+    touch("loony-labyrinth-2026-10-16-090000 clip 1.mp4"); /* exported from it */
+    const recording *r;
+    CHECK_EQ(recordings_list(recs, &r), 4);
+    char path[1200], err[256], trash[1100];
+    snprintf(path, sizeof path, "%s", r[0].path);
+    CHECK(recordings_deletable(path));
+    trashed = 0;
+    trash_refuses = false;
+    CHECK(recordings_delete(path, fake_trash, err, sizeof err));
+    CHECK_EQ(trashed, 2);
+    snprintf(trash, sizeof trash, "%s/Trash", dir);
+    CHECK(in(trash, "loony-labyrinth-2026-10-16-090000.lwreplay"));
+    CHECK(in(trash, "loony-labyrinth-2026-10-16-090000.clips"));
+    CHECK(!in(recs, "loony-labyrinth-2026-10-16-090000.lwreplay"));
+    CHECK(in(recs, "loony-labyrinth-2026-10-16-090000 clip 1.mp4"));
+    CHECK_EQ(recordings_list(recs, &r), 3);
+    CHECK_CONTAINS(r[0].path, "/loony-labyrinth-2026-10-15-201500-2-marked.lwreplay");
+    /* One without a list of clips moves alone. */
+    snprintf(path, sizeof path, "%s", r[0].path);
+    CHECK(recordings_delete(path, fake_trash, err, sizeof err));
+    CHECK_EQ(trashed, 3);
+    CHECK_EQ(recordings_list(recs, &r), 2);
+}
+
+TEST(recordings_delete_keeps_a_recording_the_trash_refuses) {
+    BEGIN_TEST();
+    write_four();
+    const recording *r;
+    CHECK_EQ(recordings_list(recs, &r), 4);
+    char path[1200], err[256] = "";
+    snprintf(path, sizeof path, "%s", r[0].path);
+    trashed = 0;
+    trash_refuses = true;
+    CHECK(!recordings_delete(path, fake_trash, err, sizeof err));
+    trash_refuses = false;
+    CHECK_STR(err, "the Trash refused");
+    CHECK(in(recs, "loony-labyrinth-2026-10-16-090000.lwreplay"));
+    CHECK(in(recs, "loony-labyrinth-2026-10-16-090000.clips"));
+    CHECK_EQ(recordings_list(recs, &r), 4);
+}
+
+TEST(recordings_delete_refuses_the_recording_being_made) {
+    BEGIN_TEST();
+    write_four();
+    char live[1200], err[256] = "";
+    snprintf(live, sizeof live, "%s/live.lwreplay", recs);
+    unsetenv("LOONY_REPLAY");
+    setenv("LOONY_RECORD", live, 1);
+    static const uint8_t exe[] = {1, 2, 3, 4};
+    replay_reset();
+    CHECK(replay_start("loony-labyrinth", exe, sizeof exe, dir, err, sizeof err));
+    CHECK(replay_recording_path());
+    CHECK(!recordings_deletable(live));
+    trashed = 0;
+    CHECK(!recordings_delete(live, fake_trash, err, sizeof err));
+    CHECK_STR(err, "it is being recorded");
+    CHECK_EQ(trashed, 0);
+    CHECK(in(recs, "live.lwreplay"));
+    char other[1200];
+    snprintf(other, sizeof other, "%s/loony-labyrinth-2026-10-15-201459.lwreplay", recs);
+    CHECK(recordings_deletable(other));
+    replay_reset();
+}
+
+TEST(recordings_leave_env_starts_the_program_as_if_launched) {
+    BEGIN_TEST();
+    recordings_watch_env("/x/game.lwreplay", 3600);
+    setenv("LOONY_GAME", "loony-labyrinth", 1); /* as replay_open sets them */
+    setenv("LOONY_DATA_DIR", "/tmp/lwreplay-abc123", 1);
+    recordings_leave_env();
+    CHECK(!getenv("LOONY_REPLAY"));
+    CHECK(!getenv("LOONY_WATCH"));
+    CHECK(!getenv("LOONY_WATCH_FROM"));
+    CHECK(!getenv("LOONY_GAME"));
+    CHECK(!getenv("LOONY_DATA_DIR"));
 }

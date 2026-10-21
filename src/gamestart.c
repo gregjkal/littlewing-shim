@@ -804,6 +804,18 @@ void gamestart_tend(void) {
     }
 }
 
+void gamestart_take_forget(const char *path) {
+    size_t kept = 0;
+    for (size_t i = 0; i < child.nqueue; i++)
+        if (!same_file(child.queue[i], path))
+            memmove(child.queue[kept++], child.queue[i], sizeof child.queue[0]);
+    child.nqueue = kept;
+    if (child.pid && same_file(child.path, path)) {
+        log_msg("gamestart: stopping the take of %s, which is being deleted", child.path);
+        stop_child();
+    }
+}
+
 void gamestart_take_end(void) {
     child.nqueue = 0;
     if (child.pid)

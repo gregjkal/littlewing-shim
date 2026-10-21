@@ -8,10 +8,13 @@
 #include <unistd.h>
 
 #include "clip.h"
+#include "display.h"
 #include "files.h"
 #include "game.h"
+#include "gamestart.h"
 #include "replay.h"
 #include "util.h"
+#include "watch.h"
 
 bool recordings_dir(char *out, size_t cap) {
     const char *replay = getenv("LOONY_REPLAY"), *data = getenv("LOONY_DATA_DIR");
@@ -196,17 +199,59 @@ bool recordings_mark_shown(const recording *r, size_t m) {
     return s > 0 && (m == 0 || s != r->marks[m - 1] / 60);
 }
 
-void recordings_watch_env(const char *path, uint32_t from_ticks) {
-    setenv("LOONY_REPLAY", path, 1);
-    setenv("LOONY_WATCH", "1", 1);
+/* What the last game or replay set that a viewer, or what comes after one,
+   mustn't inherit. */
+static void clear_env(void) {
     static const char *const clear[] = {"LOONY_GAME", "LOONY_DATA_DIR", "LOONY_RECORD",
                                         "LOONY_CLIP", "LOONY_REPLAY_LICENSE", "LOONY_WATCH_FROM",
                                         "LOONY_WATCH_SPEED", "LOONY_WATCH_PAUSED", "LOONY_WATCH_IN"};
     for (size_t i = 0; i < sizeof clear / sizeof clear[0]; i++)
         unsetenv(clear[i]);
+}
+
+void recordings_watch_env(const char *path, uint32_t from_ticks) {
+    setenv("LOONY_REPLAY", path, 1);
+    setenv("LOONY_WATCH", "1", 1);
+    clear_env();
     if (from_ticks) {
         char v[16];
         snprintf(v, sizeof v, "%u", from_ticks);
         setenv("LOONY_WATCH_FROM", v, 1);
     }
+}
+
+void recordings_leave_env(void) {
+    unsetenv("LOONY_REPLAY");
+    unsetenv("LOONY_WATCH");
+    unsetenv("LOONY_AUTO_ALERTS"); /* the replay's own (replay_open) */
+    clear_env();
+}
+
+bool recordings_deletable(const char *path) {
+    const char *live = replay_recording_path();
+    return !live || !same_file(path, live);
+}
+
+bool recordings_delete(const char *path, recordings_trash_fn trash, char *err, size_t errlen) {
+    if (!recordings_deletable(path)) {
+        snprintf(err, errlen, "it is being recorded");
+        return false;
+    }
+    const char *watched = watch_replay_path();
+    bool watching = watched && same_file(path, watched); /* before it is gone */
+    gamestart_take_forget(path);
+    if (!trash(path, err, errlen))
+        return false;
+    log_msg("recordings: moved %s to the Trash", path);
+    char list[PATH_MAX], why[PATH_MAX + 64];
+    if (clip_list_path(path, list, sizeof list) && access(list, F_OK) == 0) {
+        if (trash(list, why, sizeof why))
+            log_msg("recordings: moved %s to the Trash", list);
+        else /* the recording is gone, and the list is no use without it */
+            log_msg("recordings: can't move %s to the Trash: %s", list, why);
+    }
+    recordings_forget();
+    if (watching)
+        display_request_close("The recording was moved to the Trash");
+    return true;
 }

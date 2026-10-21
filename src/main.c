@@ -252,6 +252,16 @@ static void open_replay_at(const char *path, uint32_t from_ticks) {
     restart_self("watch: opening a replay");
 }
 
+/* The recording being watched was deleted (recordings_delete): the
+   program restarts as if launched, to the picker when there is one, and
+   says why there. */
+static void close_replay(const char *why) {
+    watch_stop_export(); /* it would go on unseen */
+    recordings_leave_env();
+    setenv("LOONY_FLASH", why, 1);
+    restart_self("watch: closing the replay");
+}
+
 int main(int argc, char **argv) {
     log_to_file_if_app(argv[0]);
     char err[256];
@@ -262,6 +272,7 @@ int main(int argc, char **argv) {
     if (!watch_open(err, sizeof err))
         return startup_error("%s", err);
     display_set_open(open_replay_at);
+    display_set_close(close_replay);
     /* Launched by opening a recording in Finder: watch it, before the
        picker shows or a game starts recording (which deletes old ones). */
     const char *replaying = getenv("LOONY_REPLAY");

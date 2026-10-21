@@ -88,6 +88,8 @@ void watch_reset(void) { memset(&W, 0, sizeof W); }
 
 bool watch_on(void) { return W.on; }
 
+const char *watch_replay_path(void) { return W.on ? W.replay : NULL; }
+
 static void sleep_for(double seconds) {
     struct timespec ts = {(time_t)seconds, (long)((seconds - (double)(time_t)seconds) * 1e9)};
     nanosleep(&ts, NULL);

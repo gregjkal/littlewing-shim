@@ -59,6 +59,9 @@ typedef enum {
 #define REPLAY_MAX_TEXT 1024
 
 bool replay_recording(void);
+/* The file a game is being recorded into, or NULL between games and when
+   nothing is recorded. */
+const char *replay_recording_path(void);
 bool replay_playing(void);
 
 /* On a recording or a replay: the wall clock (Unix seconds) and the time
