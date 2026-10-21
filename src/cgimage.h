@@ -9,6 +9,8 @@
    (CGIMAGE_TAG_BASE and up), reference counted like Core Foundation objects. */
 
 #define CGIMAGE_TAG_BASE 0x0C000000u
+#define CGIMAGE_TYPE_ID        32u /* CFGetTypeID's, the shim's own numbers as in cf.h */
+#define CGDATAPROVIDER_TYPE_ID 33u
 
 typedef struct {
     int width, height;
@@ -29,9 +31,13 @@ void cgimage_init(void);
 /* The pixels of a live CGImage, or NULL if ref isn't one. */
 const cgimage_pixels *cgimage_get(uint32_t ref);
 
-/* What CFRetain and CFRelease do to a CGImage. */
+/* What CFRetain and CFRelease do to a CGImage or data provider. */
 void cgimage_retain(uint32_t ref);
 void cgimage_release(uint32_t ref);
+
+/* What CFGetTypeID says of ref: CGIMAGE_TYPE_ID, CGDATAPROVIDER_TYPE_ID, or
+   0 if ref isn't a live image or provider. */
+uint32_t cgimage_type_id(uint32_t ref);
 
 /* Registers CGDataProviderCreateWithURL, CGDataProviderRelease,
    CGImageCreateWithPNGDataProvider and CGImageRelease. */

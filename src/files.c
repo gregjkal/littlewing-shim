@@ -92,6 +92,15 @@ void files_mac_to_utf8(const char *mac, char *out, size_t cap) {
     out[o] = '\0';
 }
 
+int files_unicode_to_mac(uint32_t c) {
+    if (c < 0x80)
+        return (int)c;
+    for (int i = 0; i < 128; i++)
+        if (mac_roman[i] == c)
+            return 0x80 + i;
+    return -1;
+}
+
 bool files_data_root(char *out, size_t cap) {
     const char *d = getenv("LOONY_DATA_DIR"), *home = getenv("HOME");
     if ((d && *d) || !home || !*home)

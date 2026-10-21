@@ -74,6 +74,18 @@ static uint32_t constant(const char *s) {
     return cs;
 }
 
+/* A non-ASCII one: {isa, 0x7d0, big-endian UTF-16, length in UniChars}. */
+static uint32_t constant_utf16(const uint16_t *units, uint32_t n) {
+    uint32_t chars = scratch(2 * n), cs = scratch(16);
+    for (uint32_t i = 0; i < n; i++)
+        gm_w16(chars + 2 * i, units[i]);
+    gm_w32(cs, cf_data_symbol("__CFConstantStringClassReference"));
+    gm_w32(cs + 4, 0x7D0);
+    gm_w32(cs + 8, chars);
+    gm_w32(cs + 12, n);
+    return cs;
+}
+
 static const char *fs_path(uint32_t url) {
     static char out[2048];
     uint32_t buf = scratch(1024);
@@ -148,6 +160,39 @@ TEST(cf_constant_strings_read_from_guest_memory) {
     /* As a preferences key. */
     call_import("CFPreferencesSetAppValue", 3, cs, num(250), app());
     CHECK_EQ(call_import("CFPreferencesGetAppIntegerValue", 3, str("highscore 1"), app(), 0), 250);
+}
+
+TEST(cf_utf16_constant_strings_read_as_mac_roman) {
+    setup();
+    mm_init();
+    /* Read as bytes, this stops at 'C''s high byte. Then a character Mac
+       Roman lacks and an emoji's surrogate pair, each one '?'. */
+    static const uint16_t units[] = {'C', 'a', 'f', 0x00E9, ' ', 0x2122, 0x4E00, 0xD83D, 0xDE00, '!'};
+    uint32_t cs = constant_utf16(units, sizeof units / sizeof units[0]);
+    CHECK_STR(cf_string_text("test", cs), "Caf\x8E \xAA?" "?!");
+    CHECK_EQ(call_import("CFGetTypeID", 1, cs), CF_STRING_TYPE_ID);
+    uint32_t buf = scratch(32);
+    CHECK_EQ(call_import("CFStringGetCString", 4, cs, buf, 32, 0u), 1);
+    CHECK_STR((const char *)gm_ptr(buf, 10), "Caf\x8E \xAA?" "?!");
+}
+
+TEST(cf_constant_string_as_a_preference_value) {
+    setup();
+    mm_init();
+    uint32_t live = cf_live_objects();
+    call_import("CFPreferencesSetAppValue", 3, constant("sound"), constant("YES"), app());
+    CHECK_STR(cf_pref_string("sound"), "YES");
+    CHECK_EQ(cf_live_objects(), live + 1); /* the preferences' copy */
+    uint32_t v = call_import("CFPreferencesCopyAppValue", 2, constant("sound"), app());
+    CHECK(v >= CF_TAG_BASE && v < CF_TAG_LIMIT);
+    CHECK_STR(cf_string_text("test", v), "YES");
+    call_import("CFRelease", 1, v);
+    call_import("CFPreferencesSetAppValue", 3, constant("sound"), constant("NO"), app());
+    CHECK_STR(cf_pref_string("sound"), "NO");
+    CHECK_EQ(cf_live_objects(), live + 1);
+    call_import("CFPreferencesSetAppValue", 3, constant("sound"), 0u, app());
+    CHECK(cf_pref_string("sound") == NULL);
+    CHECK_EQ(cf_live_objects(), live);
 }
 
 TEST(cf_release_ignores_a_constant_string) {
