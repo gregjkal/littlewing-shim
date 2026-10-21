@@ -366,10 +366,6 @@ void menu_add_replay(void) {
     }
 }
 
-/* The Replays menu, rebuilt each time it opens so a game recorded a moment
-   ago is in it, and the File menu's Open Recent, rebuilt the same way: the
-   menus' delegate and their items' target. An item's representedObject
-   holds the recording's path and where to start, in ticks of play. */
 /* recordings_delete's trash: the Finder's, so a slip can be undone. */
 static bool trash(const char *path, char *err, size_t errlen) {
     NSError *error = nil;
@@ -380,6 +376,10 @@ static bool trash(const char *path, char *err, size_t errlen) {
     return false;
 }
 
+/* The Replays menu, rebuilt each time it opens so a game recorded a moment
+   ago is in it, and the File menu's Open Recent, rebuilt the same way: the
+   menus' delegate and their items' target. An item's representedObject
+   holds the recording's path and where to start, in ticks of play. */
 @interface LoonyRecordings : NSObject <NSMenuDelegate>
 @property(nonatomic, strong) NSMenu *recent; /* Open Recent; the other is Replays */
 @end

@@ -254,15 +254,20 @@ TEST(display_poll_closes_a_replay_before_opening_one) {
     mm_init();
     qd_init(64, 48, 16);
     display_present();
+    static const display_input in = {on_key_opening, on_focus, on_quit, on_mouse, on_paste, on_mark};
+    display_set_input(&in);
     display_set_open(on_open);
     display_set_close(on_close);
-    opens = closes = 0;
+    opens = closes = key_events = 0;
     display_request_open("/r/game.lwreplay", 0);
     display_request_close("gone");
     CHECK_EQ(closes, 0); /* not until display_poll */
+    push_key(SDL_SCANCODE_O, true, SDL_KMOD_NONE);
     display_poll();
     CHECK_EQ(closes, 1);
+    CHECK_EQ(key_events, 0); /* left for the restart to drop */
     CHECK_EQ(opens, 0); /* the restart would have gone first */
+    SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST); /* as the restart would */
     CHECK_STR(closed_why, "gone");
     display_poll(); /* nothing more */
     CHECK_EQ(closes, 1);

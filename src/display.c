@@ -361,7 +361,9 @@ void display_poll(void) {
         SDL_SetWindowTitle(D.window, D.title ? D.title : "LittleWing");
     }
     SDL_Event e;
-    while (SDL_PollEvent(&e)) {
+    /* Once the replay is to close, the rest of the events go unhandled: a
+       key could save a clip beside a recording that is gone. */
+    while (!D.close_pending && SDL_PollEvent(&e)) {
         switch (e.type) {
         case SDL_EVENT_QUIT:
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:

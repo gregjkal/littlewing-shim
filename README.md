@@ -592,8 +592,8 @@ mark, and J goes back from there. **Delete**, last under each recording,
 moves it and its list of clips to the Trash, so Put Back in Finder undoes
 it; the clips exported from it stay where they are. The game being recorded
 has no Delete. Deleting the recording being watched closes the viewer, as
-if the app had just opened, and says why in the window's title. **Show Recordings in Finder**, at the
-bottom, opens the folder. The menu, like File > Open Recent (below), is
+if the app had just opened, and says why in the window's title. **Show
+Recordings in Finder**, at the bottom, opens the folder. The menu, like File > Open Recent (below), is
 there in the picker, while Loony Labyrinth plays and while watching; not in
 the other games, which aren't recorded yet. A file in the folder that isn't a replay this version plays
 is left out.
