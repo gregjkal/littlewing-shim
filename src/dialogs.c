@@ -616,7 +616,10 @@ static void on_key(uint32_t vkey, uint8_t chr, uint32_t mods) {
     } else if (vkey == VK_ESCAPE || (cmd && vkey == VK_PERIOD)) {
         press(d, d->cancel_item);
     } else if (vkey == VK_TAB) {
-        int i = d->focus >= 0 ? next_field(d, d->focus, (mods & KM_SHIFT) ? d->nitems - 1 : 1) : -1;
+        /* with no focus (every field hidden, then one shown), the first or last */
+        bool back = (mods & KM_SHIFT) != 0;
+        int from = d->focus >= 0 ? d->focus : back ? 0 : d->nitems - 1;
+        int i = next_field(d, from, back ? d->nitems - 1 : 1);
         if (i >= 0)
             set_focus(d, i);
     } else if (vkey == VK_DELETE) {
@@ -869,6 +872,8 @@ static int32_t utf8_next(const uint8_t **p) {
             return -1;
         c = c << 6 | (s[i] & 0x3F);
     }
+    if (more > 0 && c < (int32_t[]){0x80, 0x800, 0x10000}[more - 1])
+        return -1; /* overlong: a character spelled longer than it needs */
     *p = s + more + 1;
     return c;
 }
@@ -1327,9 +1332,9 @@ static void h_run_standard_alert(void) {
     for (int k = 1; k < d->nitems; k++) {
         char part[TEXT_CAP + 1];
         display_text(d, &d->items[k], part, sizeof part);
-        if (text[0])
-            append(text, sizeof text, (const uint8_t *)" | ", 3);
-        append(text, sizeof text, (const uint8_t *)part, strlen(part));
+        if (text[0]) /* part is shown as is: ParamText is for DITL items */
+            strlcat(text, " | ", sizeof text);
+        strlcat(text, part, sizeof text);
     }
     int hit;
     if (G.auto_alerts) {

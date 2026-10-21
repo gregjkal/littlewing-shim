@@ -706,10 +706,18 @@ static void child_hide_focused_field(void *bundle) {
     call_import("RunAppModalLoopForWindow", 1, w);
     print_field(w, 1);
     print_field(w, 2);
+    /* The first shown again: Tab, with no focus, goes to it. */
+    gm_w32(cid + 4, 1);
+    call_import("GetControlByID", 3, w, cid, out);
+    call_import("HIViewSetVisible", 2, gm_r32(out), 1u);
+    script("70 down tab\n72 up tab\n80 type Al\n90 down return\n92 up return\n");
+    call_import("RunAppModalLoopForWindow", 1, w);
+    print_field(w, 1);
 }
 
 /* Hiding the focused edit text moves the focus to the next visible one,
-   or to none, so typing never changes a hidden field. */
+   or to none, so typing never changes a hidden field; with none, Tab
+   finds a field shown again. */
 TEST(dialogs_hiding_the_focused_field_moves_the_focus) {
     char bundle[1024], out[16384];
     write_bundle_with(bundle, sizeof bundle, two_fields_xib);
@@ -719,4 +727,5 @@ TEST(dialogs_hiding_the_focused_field_moves_the_focus) {
     const char *a = strstr(out, "field 1: \"\"\nfield 2: \"Bob\"\n");
     CHECK(a != NULL);
     CHECK_CONTAINS(a + 1, "field 1: \"\"\nfield 2: \"Bob\"\n");
+    CHECK_CONTAINS(out, "field 1: \"Al\"\n");
 }

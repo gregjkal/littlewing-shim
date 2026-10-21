@@ -491,7 +491,7 @@ int main(int argc, char **argv) {
         volatile uint32_t status = 0;
         if (setjmp(seek_unwound) == 0) /* where a seek unwinds to from inside a trap */
             status = guest_call(img.main_addr, 4, args);
-        else
+        else /* replays are Loony Labyrinth's, so this game never seeks: status stays 0 */
             seek_reenter();
         misc_main_returned((int32_t)status); /* runs back_to_picker, the exit hook */
     }

@@ -31,7 +31,7 @@
    GetControlData (an edit text's text) and the HIImageView calls (the
    image view draws a CGImage, cgimage.h) work on them.
    CreateStandardAlert and RunStandardAlert draw the error and explanation
-   with an OK button.
+   with an OK button, as given (no ParamText substitutions either).
 
    With LOONY_AUTO_ALERTS=1, Alert, StopAlert and RunStandardAlert draw
    nothing and answer at once with their default item, as if the user
