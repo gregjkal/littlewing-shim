@@ -122,16 +122,16 @@ bool gamestart_in_file(const char *path);
    headless and silent with LOONY_GAMESTART=take, which exits once the
    snapshot is kept or none can be. gamestart_take_start starts it (false,
    with err, if it can't, or a share's is running or waiting);
-   gamestart_take_poll returns whether it has ended, without waiting, and then in *kept whether
-   path holds a snapshot (true at once, with none, if no share's take was
-   started); gamestart_take_stop ends it at once (SIGKILL, removing the
-   hidden file a write leaves: the copy is being given up). One take runs at a time: a background one running (below)
+   gamestart_take_poll returns whether it has ended, without waiting, and
+   then in *kept whether path holds a snapshot (true at once, with none,
+   if no share's take was started); gamestart_take_stop ends it at once
+   (SIGKILL, removing the hidden file a write leaves: the copy is being
+   given up). One take runs at a time: a background one running (below)
    is stopped for a share's, and starts again after it. That stop doesn't
-   wait, since play goes on after the share: the share's take starts from
-   gamestart_take_poll once the background one has ended, which can be up
-   to those 3 s if it was writing, and a gamestart_take_stop before then
-   only forgets the share's. A background take is stopped with SIGTERM,
-   which its write of the file waits out, and SIGKILL after 3 s. */
+   wait, since play goes on after the share: it is a SIGTERM, which the
+   take's write of its file waits out, then SIGKILL after 3 s, and the
+   share's take starts from gamestart_take_poll once the background one
+   has ended. A gamestart_take_stop before then only forgets the share's. */
 bool gamestart_take_start(const char *self, const char *path, char *err, size_t errlen);
 bool gamestart_take_poll(bool *kept);
 void gamestart_take_stop(void);

@@ -726,20 +726,33 @@ TEST(run_a_cancelled_share_doesnt_wait_for_a_take_in_the_background) {
         gamestart_tend();
         usleep(10000);
     }
-    kill(last, SIGKILL); /* as if it had ended: the queue should hold nothing more */
+    /* as if it had ended, and collected (gone, not a zombie): the queue
+       should hold nothing more */
+    bool restarted = lines_of(started, &last) == 2 && last > 0;
+    if (restarted)
+        kill(last, SIGKILL);
+    for (int i = 0; restarted && i < 500 && !(kill(last, 0) != 0 && errno == ESRCH); i++) {
+        gamestart_tend();
+        usleep(10000);
+    }
     for (int i = 0; i < 50; i++) {
         gamestart_tend();
         usleep(10000);
     }
     int runs = lines_of(started, &last);
     /* the share's own take, cancelled once it has started */
-    char writing[1100];
-    fake_take(writing, sizeof writing, dir, "writing", "trap '' TERM\nexec sleep 30");
+    char writing[1100], wrote[1100];
+    snprintf(wrote, sizeof wrote, "%s/writing.pid", dir);
+    snprintf(body, sizeof body, "trap '' TERM\necho $$ >> '%s'\nexec sleep 30", wrote);
+    fake_take(writing, sizeof writing, dir, "writing", body);
     bool third = gamestart_take_start(writing, copy, err, sizeof err);
-    usleep(200000);
+    int writer = 0;
+    for (int i = 0; third && i < 500 && lines_of(wrote, &writer) == 0; i++)
+        usleep(10000);
     t0 = wall_seconds();
     gamestart_take_stop();
     double cancel_took = wall_seconds() - t0;
+    bool cancelled = writer > 0 && kill(writer, 0) != 0 && errno == ESRCH;
     /* a deleted recording's take */
     gamestart_take_later(bg, rec, GAMESTART_MIN_PRELUDE_US);
     for (int i = 0; i < 500 && lines_of(started, &last) < 3; i++)
@@ -757,8 +770,10 @@ TEST(run_a_cancelled_share_doesnt_wait_for_a_take_in_the_background) {
     CHECK(ended);
     CHECK(!kept);
     CHECK_EQ(runs, 2);
+    CHECK(restarted);
     CHECK(third);
     CHECK(cancel_took < 0.5);
+    CHECK(cancelled);
     CHECK(forget_took < 0.5); /* a deleted recording's take is killed, not waited for */
     CHECK(gone);
 }
