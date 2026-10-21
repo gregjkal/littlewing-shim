@@ -74,12 +74,13 @@ void recordings_leave_env(void);
    calls NSFileManager's trashItemAtURL, so a slip can be undone), and its
    list of clips (clip_list_path) after it, but not the clips exported
    from it: they are what it was kept for. A take of its snapshot of the
-   game's start that waits is dropped, and one running is stopped first
-   (gamestart_take_forget), so it doesn't put the file back. When this
-   program is watching it, the viewer closes (display_request_close),
-   saying why. False, with err, if path can't be deleted or moved; the
-   list of clips not moving is only logged. The next recordings_list reads
-   the folder again. */
+   game's start that waits is dropped, and one running is killed first
+   (gamestart_take_forget), so it doesn't put the file back; if the Trash
+   then refuses, the recording keeps no take this session, and its first
+   replay takes the snapshot instead. When this program is watching it,
+   the viewer closes (display_request_close), saying why. False, with err,
+   if path can't be deleted or moved; the list of clips not moving is only
+   logged. The next recordings_list reads the folder again. */
 typedef bool (*recordings_trash_fn)(const char *path, char *err, size_t errlen);
 bool recordings_deletable(const char *path);
 bool recordings_delete(const char *path, recordings_trash_fn trash, char *err, size_t errlen);
