@@ -43,8 +43,21 @@ typedef struct {
     nib_control controls[NIB_MAX_CONTROLS];
 } nib_window;
 
-/* Reads the window called name from objects.xib's text. False, with err
-   saying why, if the XML can't be read, there's no such window, or it holds
-   a control this reader doesn't know. */
+/* objects.xib's text, parsed once, for reading any number of its windows.
+   It holds a copy of what it needs, not the text. */
+typedef struct nib_file nib_file;
+
+/* Parses objects.xib's text. Never NULL: if the XML can't be read, the
+   nib_file keeps why, and every nib_file_window fails with it. Free it with
+   nib_free. */
+nib_file *nib_parse(const char *xml, size_t len);
+void nib_free(nib_file *f);
+
+/* Reads the window called name from the nib. False, with err saying why,
+   if the XML can't be read, there's no such window, or it holds a control
+   this reader doesn't know. */
+bool nib_file_window(const nib_file *f, const char *name, nib_window *out, char *err, size_t errlen);
+
+/* The same from objects.xib's text, parsed for this one call. */
 bool nib_read_window(const char *xml, size_t len, const char *name, nib_window *out, char *err,
                      size_t errlen);
