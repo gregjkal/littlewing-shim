@@ -450,16 +450,39 @@ static bool read_window(const xnode *root, const id_index *ix, const char *name,
     return true;
 }
 
+struct nib_file {
+    xnode *root;    /* NULL if the XML can't be read */
+    id_index ix;
+    char err[256];  /* why not */
+};
+
+nib_file *nib_parse(const char *xml, size_t len) {
+    nib_file *f = xalloc(sizeof *f);
+    f->root = parse_document(xml, len, f->err, sizeof f->err);
+    if (f->root)
+        index_ids(&f->ix, f->root);
+    return f;
+}
+
+void nib_free(nib_file *f) {
+    if (!f)
+        return;
+    free(f->ix.nodes);
+    free(f->ix.ids);
+    free_node(f->root);
+    free(f);
+}
+
+bool nib_file_window(const nib_file *f, const char *name, nib_window *out, char *err, size_t errlen) {
+    if (!f->root)
+        return fail(err, errlen, "%s", f->err);
+    return read_window(f->root, &f->ix, name, out, err, errlen);
+}
+
 bool nib_read_window(const char *xml, size_t len, const char *name, nib_window *out, char *err,
                      size_t errlen) {
-    xnode *root = parse_document(xml, len, err, errlen);
-    if (!root)
-        return false;
-    id_index ix = {0};
-    index_ids(&ix, root);
-    bool ok = read_window(root, &ix, name, out, err, errlen);
-    free(ix.nodes);
-    free(ix.ids);
-    free_node(root);
+    nib_file *f = nib_parse(xml, len);
+    bool ok = nib_file_window(f, name, out, err, errlen);
+    nib_free(f);
     return ok;
 }
