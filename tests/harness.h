@@ -41,6 +41,22 @@ static inline void harness_init_direct(const char *const *names, uint32_t n) {
     harness.direct = true;
 }
 
+/* A Mach-O game's machine: the same in the Mach-O memory layout, which
+   gm_current_layout reports, with direct calls on. Nothing is mapped at
+   GUEST_IMAGE_BASE there, so scratch comes from the Mach-O image area. */
+static inline void harness_init_macho(const char *const *names, uint32_t n) {
+    gm_init_layout(GM_LAYOUT_MACHO);
+    cpu_init();
+    cpu_set_gpr(1, GUEST_STACK_TOP - 64);
+    cpu_set_lr(GUEST_RETURN_MAGIC);
+    trap_init(n, names, GUEST_MACHO_IMAGE_BASE, 0x10000);
+    trap_set_direct_calls(true);
+    harness.names = names;
+    harness.n = n;
+    harness.scratch_next = GUEST_MACHO_IMAGE_BASE + 0x80000;
+    harness.direct = true;
+}
+
 /* Calls the named import with nargs word arguments and returns its r3. */
 static inline uint32_t call_import(const char *name, int nargs, ...) {
     uint32_t args[8] = {0};

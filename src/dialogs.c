@@ -115,19 +115,24 @@ static struct {
     qd_palette pal;
     char *nibs[NIB_MAX]; /* open IBNibRefs: objects.xib's text */
     size_t nib_len[NIB_MAX];
+    nib_file *parsed[NIB_MAX]; /* each one's text, parsed */
 } G;
 
 /* A snapshot's walk (snapshot.h): G with the screens saved under its
    dialogs and its nibs' text (read_file's, with a NUL after it), since
    closing a dialog or a nib frees them; LOONY_AUTO_ALERTS is the host's. front points into G itself, so it
    is walked as an index (-1 for none): a snapshot kept in a recording is
-   put back in another process, where G is somewhere else. */
+   put back in another process, where G is somewhere else. A nib's parsed
+   tree is host memory full of pointers, so it isn't in a snapshot: it is
+   parsed again from the text put back. */
 static void snap_walk(snapshot_walker *w) {
     if (snapshot_loading(w)) {
         for (int i = 0; i < DLG_MAX; i++)
             free(G.d[i].saved);
-        for (int i = 0; i < NIB_MAX; i++)
+        for (int i = 0; i < NIB_MAX; i++) {
             free(G.nibs[i]);
+            nib_free(G.parsed[i]);
+        }
     }
     snapshot_bytes(w, &G, sizeof G);
     int32_t front = G.front ? (int32_t)(G.front - G.d) : -1;
@@ -167,6 +172,9 @@ static void snap_walk(snapshot_walker *w) {
         snapshot_check(w, !G.nibs[i] || G.nib_len[i] < (64u << 20), "nib %d is %zu bytes", i, G.nib_len[i]);
         SNAPSHOT_OWNED(w, G.nibs[i], G.nib_len[i] + 1);
         snapshot_check(w, !G.nibs[i] || !G.nibs[i][G.nib_len[i]], "nib %d's text", i);
+        SNAPSHOT_REBUILT(w, G.parsed[i]);
+        if (snapshot_loading(w) && G.nibs[i])
+            G.parsed[i] = nib_parse(G.nibs[i], G.nib_len[i]);
     }
 }
 SNAPSHOT_STATE_WALK(G, snap_walk)
@@ -176,8 +184,10 @@ static void window_changed(uint32_t window, qd_window_change change, uint32_t ar
 void dialogs_init(void) {
     for (int i = 0; i < DLG_MAX; i++)
         free(G.d[i].saved);
-    for (int i = 0; i < NIB_MAX; i++)
+    for (int i = 0; i < NIB_MAX; i++) {
         free(G.nibs[i]);
+        nib_free(G.parsed[i]);
+    }
     memset(&G, 0, sizeof G);
     const char *a = getenv("LOONY_AUTO_ALERTS");
     G.auto_alerts = a && strcmp(a, "1") == 0;
@@ -694,14 +704,14 @@ static const char *button_title(dialog *d, int item1, char *buf, size_t cap) {
 
 /* Alert(id, filter) and StopAlert. The default item: bit 3 of the first
    stage's 4 bits in the ALRT's stages word picks item 2, otherwise item 1.
-   A program with no resources at all (MONSTER FAIR) still calls Alert on
-   a few paths it kept from Mac OS 9; there Alert finds no ALRT and returns
-   -1, as Mac OS does, showing nothing. In a classic game a missing ALRT is
-   a bug in the shim, so it crashes. */
+   A Mac OS X game (MONSTER FAIR, which has no resources) still calls Alert
+   on a few paths it kept from Mac OS 9; there Alert finds no ALRT and
+   returns -1, as Mac OS does, showing nothing. In a classic game a missing
+   ALRT is a bug in the shim, so it crashes, even with no resources at all. */
 static void h_alert(void) {
     int16_t id = (int16_t)trap_arg(0);
     rsrc_entry *alrt = rsrc_find(FOURCC('A', 'L', 'R', 'T'), id);
-    if (!alrt && rsrc_total() == 0) {
+    if (!alrt && gm_current_layout() == GM_LAYOUT_MACHO) {
         log_msg("Alert %d: the game has no ALRT %d; returning -1, as Mac OS does", id, id);
         trap_return((uint32_t)-1);
         return;
@@ -749,10 +759,13 @@ static void h_param_text(void) {
 
 static uint32_t ref_of(dialog *d) { return DLG_TAG_BASE + 16u * (uint32_t)(d - G.d); }
 
-static dialog *need_dialog(const char *call, uint32_t ref) {
+/* The open dialog of the given kind (KIND_DLOG or KIND_STD_ALERT) that ref
+   names; anything else crashes. */
+static dialog *need_dialog(const char *call, uint32_t ref, dialog_kind kind) {
     uint32_t i = (ref - DLG_TAG_BASE) / 16u;
-    if (ref < DLG_TAG_BASE || (ref - DLG_TAG_BASE) % 16u || i >= DLG_MAX || !G.d[i].open || G.d[i].kind != KIND_DLOG)
-        trap_crash("%s: 0x%08x is not a dialog", call, ref);
+    if (ref < DLG_TAG_BASE || (ref - DLG_TAG_BASE) % 16u || i >= DLG_MAX || !G.d[i].open ||
+        G.d[i].kind != kind)
+        trap_crash("%s: 0x%08x is not a %s", call, ref, kind == KIND_STD_ALERT ? "standard alert" : "dialog");
     return &G.d[i];
 }
 
@@ -808,7 +821,7 @@ static void h_modal_dialog(void) {
    *item, Rect *box). Text items' handles hold their current text; other
    items have none. */
 static void h_get_dialog_item(void) {
-    dialog *d = need_dialog("GetDialogItem", trap_arg(0));
+    dialog *d = need_dialog("GetDialogItem", trap_arg(0), KIND_DLOG);
     int16_t n = (int16_t)trap_arg(1);
     if (n < 1 || n > d->nitems)
         trap_crash("GetDialogItem: DLOG %d has no item %d", d->res_id, n);
@@ -835,7 +848,7 @@ static void h_get_dialog_item_text(void) {
 }
 
 static void h_dispose_dialog(void) {
-    dialog *d = need_dialog("DisposeDialog", trap_arg(0));
+    dialog *d = need_dialog("DisposeDialog", trap_arg(0), KIND_DLOG);
     close_dialog(d);
 }
 
@@ -965,7 +978,9 @@ static void window_changed(uint32_t window, qd_window_change change, uint32_t ar
 }
 
 /* CreateNibReference(CFStringRef name, IBNibRef *out) -> OSStatus. Reads
-   <bundle>/Contents/Resources/English.lproj/<name>.nib/objects.xib. */
+   <bundle>/Contents/Resources/English.lproj/<name>.nib/objects.xib and
+   parses it, once for every window made from it. XML that can't be read
+   makes CreateWindowFromNib crash, saying why. */
 static void h_create_nib_reference(void) {
     const char *name = cf_string_text("CreateNibReference", trap_arg(0));
     uint32_t out = trap_arg(1);
@@ -989,6 +1004,7 @@ static void h_create_nib_reference(void) {
     }
     G.nibs[slot] = (char *)xml;
     G.nib_len[slot] = len;
+    G.parsed[slot] = nib_parse(G.nibs[slot], len);
     gm_w32(out, NIB_TAG_BASE + 16u * (uint32_t)slot);
     trap_return(NO_ERR);
 }
@@ -1003,7 +1019,9 @@ static int need_nib(const char *call, uint32_t ref) {
 static void h_dispose_nib_reference(void) {
     int i = need_nib("DisposeNibReference", trap_arg(0));
     free(G.nibs[i]);
+    nib_free(G.parsed[i]);
     G.nibs[i] = NULL;
+    G.parsed[i] = NULL;
 }
 
 /* CreateWindowFromNib(IBNibRef, CFStringRef name, WindowRef *out) ->
@@ -1016,7 +1034,7 @@ static void h_create_window_from_nib(void) {
     const char *name = cf_string_text("CreateWindowFromNib", trap_arg(1));
     static nib_window w;
     char err[256];
-    if (!nib_read_window(G.nibs[slot], G.nib_len[slot], name, &w, err, sizeof err))
+    if (!nib_file_window(G.parsed[slot], name, &w, err, sizeof err))
         trap_crash("CreateWindowFromNib: %s", err);
     if (w.ncontrols > MAX_ITEMS)
         trap_crash("CreateWindowFromNib: %s has %d controls (at most %d supported)", name, w.ncontrols,
@@ -1321,13 +1339,9 @@ static void h_create_standard_alert(void) {
 /* RunStandardAlert(DialogRef, ModalFilterUPP, DialogItemIndex *hit) ->
    OSStatus. Runs the alert, writes the item hit, and disposes of it. */
 static void h_run_standard_alert(void) {
-    uint32_t ref = trap_arg(0), i = (ref - DLG_TAG_BASE) / 16u;
-    if (ref < DLG_TAG_BASE || (ref - DLG_TAG_BASE) % 16u || i >= DLG_MAX || !G.d[i].open ||
-        G.d[i].kind != KIND_STD_ALERT)
-        trap_crash("RunStandardAlert: 0x%08x is not a standard alert", ref);
+    dialog *d = need_dialog("RunStandardAlert", trap_arg(0), KIND_STD_ALERT);
     if (trap_arg(1))
         trap_crash("RunStandardAlert: filter procs are not supported");
-    dialog *d = &G.d[i];
     char text[1024] = "";
     for (int k = 1; k < d->nitems; k++) {
         char part[TEXT_CAP + 1];

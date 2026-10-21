@@ -5,14 +5,18 @@
 
 #include "asm.h"
 #include "cf.h"
+#include "cgimage.h"
 #include "dialogs.h"
 #include "events.h"
+#include "files.h"
 #include "harness.h"
 #include "memmgr.h"
+#include "mixer.h"
 #include "misc.h"
 #include "qd.h"
 #include "rsrc.h"
 #include "script.h"
+#include "snapshot.h"
 
 static const char *const names[] = {
     "Alert", "StopAlert", "ParamText", "GetNewDialog", "ModalDialog", "GetDialogItem",
@@ -575,21 +579,75 @@ static void child_standard_alert(void *bundle) {
     fprintf(stderr, "hit: %u\n", gm_r16(hit));
 }
 
+/* A machine in the given layout with no resources and the Dialog
+   Manager. */
+static void empty_setup(bool macho) {
+    if (macho)
+        harness_init_macho(nib_names, sizeof nib_names / sizeof nib_names[0]);
+    else
+        harness_init(nib_names, sizeof nib_names / sizeof nib_names[0]);
+    rsrc_open_empty();
+    dialogs_init();
+    dialogs_register();
+}
+
 /* MONSTER FAIR calls Alert(136) as it quits after rejecting a license, but
    has no resources: as on Mac OS, Alert returns -1 and shows nothing. */
-static void child_alert_without_resources(void *bundle) {
-    nib_setup(bundle);
+static void child_alert_without_resources(void *unused) {
+    (void)unused;
+    empty_setup(true);
     fprintf(stderr, "Alert returned %d\n", (int32_t)call_import("Alert", 2, 136u, 0u));
 }
 
 TEST(dialogs_alert_without_resources_returns_minus_one) {
-    char bundle[1024], out[16384];
-    write_bundle(bundle, sizeof bundle);
-    int status = test_run_child(child_alert_without_resources, bundle, out, sizeof out);
-    test_remove_tree(bundle);
-    CHECK_EQ(status, 0);
+    char out[16384];
+    CHECK_EQ(test_run_child(child_alert_without_resources, NULL, out, sizeof out), 0);
     CHECK_CONTAINS(out, "Alert 136: the game has no ALRT 136; returning -1, as Mac OS does");
     CHECK_CONTAINS(out, "Alert returned -1");
+}
+
+/* A resource fork holding only STR# 128, two bytes long. */
+static const uint8_t one_resource_fork[] = {
+    0, 0, 0, 16, 0, 0, 0, 22, 0, 0, 0, 6, 0, 0, 0, 50, /* header: data at 16, map at 22 */
+    0, 0, 0, 2, 'h', 'i',                               /* the data */
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,     /* map: header copy */
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 28, 0, 50,               /* handle, ref, attrs, type list, names */
+    0, 0, 'S', 'T', 'R', '#', 0, 0, 0, 10,              /* one type, one resource of it */
+    0, 128, 0xFF, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0,         /* STR# 128, no name, data at 0 */
+};
+
+/* The same with resources, none of them the ALRT: it's the program's kind
+   that says, not whether it has resources. */
+static void child_alert_with_other_resources(void *unused) {
+    (void)unused;
+    empty_setup(true);
+    char err[256];
+    if (!rsrc_open(one_resource_fork, sizeof one_resource_fork, err, sizeof err))
+        fatal("can't open the test fork: %s", err);
+    fprintf(stderr, "resources: %d\n", (int)rsrc_total());
+    fprintf(stderr, "Alert returned %d\n", (int32_t)call_import("Alert", 2, 136u, 0u));
+}
+
+TEST(dialogs_alert_in_a_macho_game_with_other_resources_returns_minus_one) {
+    char out[16384];
+    CHECK_EQ(test_run_child(child_alert_with_other_resources, NULL, out, sizeof out), 0);
+    CHECK_CONTAINS(out, "resources: 1");
+    CHECK_CONTAINS(out, "Alert returned -1");
+}
+
+/* A classic game is a classic game even with an empty resource map: the
+   missing ALRT is the shim's bug, not a Mac OS X game's leftover call. */
+static void child_classic_alert_without_resources(void *unused) {
+    (void)unused;
+    empty_setup(false);
+    call_import("Alert", 2, 136u, 0u);
+}
+
+TEST(dialogs_a_classic_game_without_resources_crashes_in_alert) {
+    char out[16384];
+    CHECK_EQ(test_run_child(child_classic_alert_without_resources, NULL, out, sizeof out), 2);
+    CHECK_CONTAINS(out, "Alert: ALRT 136 doesn't exist");
+    CHECK(strstr(out, "returning -1") == NULL);
 }
 
 /* A classic game has its ALRTs, so a missing one is the shim's bug. */
@@ -615,6 +673,62 @@ TEST(dialogs_standard_alert_shows_its_text_and_answers_ok) {
     CHECK_CONTAINS(out, "standard alert: Unexpected operating system error occurred [1:2] | Try again.");
     CHECK_CONTAINS(out, "standard alert: answered item 1");
     CHECK_CONTAINS(out, "hit: 1");
+}
+
+/* One nib ref, parsed once, makes any number of windows; its parsed tree
+   isn't in a snapshot but comes back with it, parsed again from the text. */
+static void child_two_windows_one_nib(void *bundle) {
+    nib_setup(bundle);
+    files_init(bundle, bundle); /* the modules a snapshot walks, set up */
+    mix_init();
+    cgimage_init();
+    uint32_t out = scratch(4), ask = cf_string("Ask"), other = cf_string("Other");
+    call_import("CreateNibReference", 2, cf_string("main"), out);
+    uint32_t nib = gm_r32(out);
+    call_import("CreateWindowFromNib", 3, nib, ask, out);
+    uint32_t a = gm_r32(out);
+    call_import("CreateWindowFromNib", 3, nib, ask, out);
+    fprintf(stderr, "two windows: %d\n", a != 0 && gm_r32(out) != 0 && gm_r32(out) != a);
+    size_t len;
+    uint8_t *state = snapshot_state_save(&len);
+    snapshot_state_load(state, len); /* over a live tree, freed and parsed again */
+    call_import("DisposeNibReference", 1, nib);
+    snapshot_state_load(state, len);
+    free(state);
+    call_import("CreateWindowFromNib", 3, nib, ask, out);
+    fprintf(stderr, "after the snapshot: %d\n", gm_r32(out) != 0);
+    call_import("CreateWindowFromNib", 3, nib, other, out); /* not in the nib: crashes */
+}
+
+TEST(dialogs_one_nib_makes_many_windows) {
+    char bundle[1024], out[16384];
+    write_bundle(bundle, sizeof bundle);
+    int status = test_run_child(child_two_windows_one_nib, bundle, out, sizeof out);
+    test_remove_tree(bundle);
+    CHECK_EQ(status, 2);
+    CHECK_CONTAINS(out, "two windows: 1");
+    CHECK_CONTAINS(out, "after the snapshot: 1");
+    CHECK_CONTAINS(out, "CreateWindowFromNib: the nib has no window called Other");
+}
+
+/* XML that can't be read opens as a nib, as before, and the window made
+   from it crashes saying why. */
+static void child_broken_nib(void *bundle) {
+    nib_setup(bundle);
+    uint32_t out = scratch(4);
+    int32_t err = (int32_t)call_import("CreateNibReference", 2, cf_string("main"), out);
+    fprintf(stderr, "CreateNibReference: %d\n", err);
+    call_import("CreateWindowFromNib", 3, gm_r32(out), cf_string("Ask"), out);
+}
+
+TEST(dialogs_a_broken_nib_crashes_making_a_window) {
+    char bundle[1024], out[16384];
+    write_bundle_with(bundle, sizeof bundle, "<object class=\"NSIBObjectData\">");
+    int status = test_run_child(child_broken_nib, bundle, out, sizeof out);
+    test_remove_tree(bundle);
+    CHECK_EQ(status, 2);
+    CHECK_CONTAINS(out, "CreateNibReference: 0\n");
+    CHECK_CONTAINS(out, "CreateWindowFromNib: <object> is never closed");
 }
 
 /* A window whose OK button's title has non-ASCII text, raw UTF-8 and an
