@@ -350,25 +350,30 @@ recorded".
 
 A replay can only start at launch, so a game's file also carries what came
 before the game in that launch: the opening, the menus and any earlier
-games, without their marks. The first replay of a game (watching it or
-exporting from it) replays that part, unseen, and keeps a
-snapshot of the game's start in the file, about 150 KB; every replay
+games, without their marks. A replay that goes past that part keeps a
+snapshot of the game's start in the file, about 150 KB, and every replay
 after that goes to the game's start from it a quarter of a second after
-launch, however late in the session the game came. The snapshot holds
-what changed since a point shortly after launch that every replay of the
-file reaches by itself, less the game's own sounds and art, which come
-from your copy of the game, and never your registration. A snapshot works
-on any Mac with the same copy of the game and the same version of
-LittleWing, whoever's registration it has, so a shared replay carries its
-snapshot (below). One taken by another version of LittleWing, or that
-doesn't fit (another copy of the game, a damaged file), is ignored with a
-line in the log saying why: the replay plays from launch and takes it
-again. A snapshot is the state of the whole emulator, so one that would
-change the game's code, or run anything but the game's own code, is
-refused the same way. A game that starts within
-20 seconds of launch gets none, and neither does a recording still being
-written. Taking it rewrites the file in place, keeping its last write's
-time, which is how a game is matched to its high score (below).
+launch, however late in the session the game came. The app takes that
+snapshot as soon as a game ends: a second copy of LittleWing replays the
+file out of sight, at a lower priority than the game, one game after
+another, while you play on. Quit the app before it is done, or open a
+replay first, and it stops; then the first replay of that game (watching
+it or exporting from it) replays the part before the game itself,
+unseen, and keeps the snapshot. The snapshot holds what changed since a
+point shortly after launch that every replay of the file reaches by
+itself, less the game's own sounds and art, which come from your copy of
+the game, and never your registration. A snapshot works on any Mac with
+the same copy of the game and the same version of LittleWing, whoever's
+registration it has, so a shared replay carries its snapshot (below). One
+taken by another version of LittleWing, or that doesn't fit (another copy
+of the game, a damaged file), is ignored with a line in the log saying
+why: the replay plays from launch and takes it again. A snapshot is the
+state of the whole emulator, so one that would change the game's code, or
+run anything but the game's own code, is refused the same way. A game that
+starts within 20 seconds of launch gets none, and neither does a recording
+still being written. Taking it rewrites the file in place, keeping its
+last write's time, which is how a game is matched to its high score
+(below).
 `LOONY_GAMESTART=0` neither uses a snapshot nor takes one.
 `LOONY_GAMESTART=take`, with `LOONY_REPLAY`, replays only until the
 snapshot is kept in the file (or found there already, or known to be
