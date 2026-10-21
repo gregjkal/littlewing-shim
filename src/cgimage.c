@@ -149,6 +149,11 @@ void cgimage_release(uint32_t ref) {
         free_obj(o);
 }
 
+uint32_t cgimage_type_id(uint32_t ref) {
+    cg_obj *o = lookup(ref);
+    return !o ? 0 : o->is_image ? CGIMAGE_TYPE_ID : CGDATAPROVIDER_TYPE_ID;
+}
+
 /* CGDataProviderCreateWithURL(CFURLRef) -> CGDataProviderRef */
 static void h_data_provider_create_with_url(void) {
     const char *path = cf_url_path("CGDataProviderCreateWithURL", trap_arg(0));
