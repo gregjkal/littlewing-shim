@@ -22,6 +22,7 @@
 #include "replay.h"
 #include "seek.h"
 #include "sound.h"
+#include "strip.h"
 #include "util.h"
 
 /* The speeds, slowest first; 0 is as fast as it can. */
@@ -668,6 +669,14 @@ static void mark_in(void) {
     flash("a clip starts at %s: O ends it", t);
 }
 
+void watch_get_state(watch_state *s) {
+    s->now = W.going || W.seeking ? W.from : now_tick();
+    s->length = replay_play_length();
+    s->paused = W.paused;
+    s->at_end = W.at_end;
+    s->speed = speeds[W.speed];
+}
+
 bool watch_can(watch_action action) {
     if (!W.started)
         return false;
@@ -686,6 +695,7 @@ void watch_act(watch_action action, bool repeat) {
     bool step = action >= WATCH_BACK_SMALL && action <= WATCH_FRAME_AHEAD;
     if (!W.started || (repeat && !step)) /* only the steps go on while their key is held */
         return;
+    strip_poke();
     switch (action) {
     case WATCH_PLAY_PAUSE:
         if (!W.at_end)
@@ -875,6 +885,7 @@ void watch_start(const char *title) {
     replay_set_pace(pace);
     replay_set_end(held_at_end);
     seek_start(landed);
+    strip_install();
     display_raise_on_open();
     sound_open_monitor();
     atexit(log_at_exit);
