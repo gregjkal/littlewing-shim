@@ -21,4 +21,6 @@ description: Cut a LittleWing release on GitHub with tools/release.sh. Use when 
    - `gh release view v<x.y.z>` is a draft with `LittleWing-<x.y.z>.zip` and `appcast.xml` attached, and its notes open with the template;
    - `build-dist/updates/appcast.xml` offers version `<x.y.z>` at `releases/download/v<x.y.z>/LittleWing-<x.y.z>.zip`, with a `sparkle:edSignature`.
 
-5. **Hand off.** Give the user the draft and the command to publish it after they've looked: `gh release edit v<x.y.z> --draft=false --latest`. Publishing is what makes released apps offer the update, since they read the latest release's `appcast.xml`.
+5. **Summary.** Under `## What's Changed`, the user wants one sentence, above the list, that sums up the release in terms a player notices. Propose it from the pull requests in step 1, leaving out internal fixes the list already names. Once the user agrees, put it in the draft as its own paragraph, with a blank line before and after: write the body from `gh release view v<x.y.z> --json body -q .body` with the sentence added to a file, then run `gh release edit v<x.y.z> --notes-file <file>`. It belongs to this release alone, so it stays out of `tools/release_notes.md`, and it sits in GitHub's part, which step 2 doesn't compare.
+
+6. **Hand off.** Give the user the draft and the command to publish it after they've looked: `gh release edit v<x.y.z> --draft=false --latest`. Publishing is what makes released apps offer the update, since they read the latest release's `appcast.xml`.
