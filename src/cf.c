@@ -296,15 +296,17 @@ static const char *constant_text(uint32_t ref) {
         if (C.consts[i].addr == ref)
             return C.consts[i].text;
     uint32_t flags = gm_r32(ref + 4), bytes = gm_r32(ref + 8), len = gm_r32(ref + 12);
+    bool unicode = flags & CONST_UNICODE;
+    if (unicode && len > UINT32_MAX / 2)
+        trap_crash("constant string at 0x%08x: %u UniChars", ref, len);
+    const uint8_t *src = gm_ptr(bytes, len ? (unicode ? 2 * len : len) : 1);
     char *text = malloc((size_t)len + 1);
     if (!text)
         fatal("out of memory");
-    if (flags & CONST_UNICODE) {
-        if (len > UINT32_MAX / 2)
-            trap_crash("constant string at 0x%08x: %u UniChars", ref, len);
-        utf16_to_mac(gm_ptr(bytes, len ? 2 * len : 1), len, text);
+    if (unicode) {
+        utf16_to_mac(src, len, text);
     } else {
-        memcpy(text, gm_ptr(bytes, len ? len : 1), len);
+        memcpy(text, src, len);
         text[len] = '\0';
     }
     if (C.nconsts == C.consts_cap) {

@@ -80,8 +80,9 @@ uint32_t cf_string(const char *s);
    constant strings (a guest struct whose isa is
    __CFConstantStringClassReference, then flags, a pointer to the bytes and
    a length). A constant string whose flags say UTF-16 (non-ASCII text) is
-   converted to Mac Roman, '?' standing for a character it doesn't have.
-   Crashes, naming call, for anything else. The text stays valid until
+   converted to Mac Roman, '?' standing for a character it doesn't have,
+   and goes into a host path (a resource or nib name) as those bytes, so
+   names there are ASCII only. Crashes, naming call, for anything else. The text stays valid until
    cf_init(). */
 const char *cf_string_text(const char *call, uint32_t ref);
 
