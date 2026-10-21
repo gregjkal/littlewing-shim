@@ -1027,8 +1027,8 @@ static const uint8_t *pixel(const uint8_t *px, int w, float x, float y) {
 
 /* Watching the recording with clips saved beside it and one started, with
    the strip up: the timeline (strip.h) shows the marks, the clips and the
-   clip's start where they are, a click on a mark goes to it, and ] goes to
-   the next. */
+   clip's start where they are, a click on a mark goes to it, ] goes to the
+   next, and a clip under the pointer that leaves the list is forgotten. */
 static void child_timeline(void *unused) {
     (void)unused;
     char err[256], play_data[1300], list[1300];
@@ -1090,6 +1090,15 @@ static void child_timeline(void *unused) {
     o->press(&l, AT(2400) + 2 * d, cy, false);
     watch_key(SDL_SCANCODE_RIGHTBRACKET, true, false); /* none after it */
     watch_key(SDL_SCANCODE_LEFTBRACKET, true, false);
+    /* On the second clip's start when E reads the list again, emptied:
+       the strip forgets the clip rather than drawing it from the list it
+       had. */
+    o->pointer(&l, AT(1800), cy, true);
+    f = fopen(list, "w");
+    fclose(f);
+    watch_key(SDL_SCANCODE_E, true, false);
+    display_present();
+    free(display_read_window(&w, &h));
 #undef AT
     _exit(0);
 }

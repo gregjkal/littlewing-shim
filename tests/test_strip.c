@@ -218,6 +218,10 @@ TEST(strip_spot_tip_says_the_time_a_mark_or_a_clip) {
     s = (strip_spot){STRIP_ON_NOTHING, -1, 0};
     strip_spot_tip(&s, &w, tip, sizeof tip);
     CHECK_STR(tip, "");
+    s = (strip_spot){STRIP_ON_CLIP, 1, 36000}; /* the list was read again, shorter */
+    w.nclips = 1;
+    strip_spot_tip(&s, &w, tip, sizeof tip);
+    CHECK_STR(tip, "");
 }
 
 /* [ goes to the last mark more than WATCH_MARK_GRACE_TICKS before now, so

@@ -192,6 +192,16 @@ strip_spot strip_spot_at(const display_layout *l, const watch_state *w, float x,
     return (strip_spot){STRIP_ON_TIME, -1, (uint32_t)(f * (float)w->length + 0.5f)};
 }
 
+/* Whether s's index is still in w: the list of clips is read again at O
+   and before an export, and may be shorter than when the pointer moved. */
+static bool spot_holds(const strip_spot *s, const watch_state *w) {
+    switch (s->on) {
+    case STRIP_ON_MARK: return s->index >= 0 && (size_t)s->index < w->nmarks;
+    case STRIP_ON_CLIP: return s->index >= 0 && (size_t)s->index < w->nclips;
+    default: return true;
+    }
+}
+
 static const char *whole_seconds(uint32_t ticks, char *buf, size_t cap) {
     return clip_format_time(ticks - ticks % 60, buf, cap);
 }
@@ -199,6 +209,8 @@ static const char *whole_seconds(uint32_t ticks, char *buf, size_t cap) {
 void strip_spot_tip(const strip_spot *s, const watch_state *w, char *out, size_t cap) {
     char a[32], b[32];
     out[0] = '\0';
+    if (!spot_holds(s, w))
+        return;
     switch (s->on) {
     case STRIP_ON_TIME: snprintf(out, cap, "%s", whole_seconds(s->tick, a, sizeof a)); break;
     case STRIP_ON_MARK:
@@ -301,6 +313,8 @@ static look look_now(void) {
     k.speed = w.speed;
     k.hover = op > 0 ? S.hover : STRIP_NONE;
     k.tip = k.hover != STRIP_NONE && now() - S.hover_since >= STRIP_TIP_AFTER;
+    if (!spot_holds(&S.spot, &w)) /* the clip under the pointer is gone */
+        S.spot = (strip_spot){STRIP_ON_NOTHING, -1, 0};
     if (op > 0)
         k.spot = S.spot;
     else
