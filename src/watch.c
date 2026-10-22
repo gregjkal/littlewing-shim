@@ -253,10 +253,12 @@ static void anchor(void) {
 }
 
 void watch_rate_sample(watch_rate *r, double wall, uint64_t us) {
-    if (r->n && wall - r->wall[r->n - 1] < WATCH_RATE_GAP)
-        return;
-    if (r->n && wall - r->wall[r->n - 1] >= WATCH_STALL)
+    bool stalled = r->n && wall - r->last >= WATCH_STALL;
+    r->last = wall;
+    if (stalled)
         r->n = 0;
+    else if (r->n && wall - r->wall[r->n - 1] < WATCH_RATE_GAP)
+        return;
     if (r->n == WATCH_RATE_SAMPLES) {
         memmove(r->wall, r->wall + 1, (WATCH_RATE_SAMPLES - 1) * sizeof r->wall[0]);
         memmove(r->us, r->us + 1, (WATCH_RATE_SAMPLES - 1) * sizeof r->us[0]);
@@ -987,15 +989,17 @@ static void log_at_exit(void) {
 
 static void held_at_end(void) { watch_hold(); }
 
-/* The replay can't go on: said in a message box (main.c's failure hook),
-   while the window is still up. */
+/* The replay can't go on: said in a message box while the window is
+   still up, from a terminal too (main.c's failure hook is the app's). */
 static void desynced(const char *msg) {
     char t[32], text[256];
     (void)msg; /* logged already, with the step */
+    if (headless()) /* nobody to click it */
+        return;
     snprintf(text, sizeof text,
              "The replay went out of step with the recording at %s, so it can't go on.",
              fmt_seconds(now_tick(), t, sizeof t));
-    util_report_failure(text);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LittleWing", text, NULL);
 }
 
 void watch_start(const char *title) {

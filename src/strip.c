@@ -115,15 +115,20 @@ void strip_ascii(const char *text, char *out, size_t cap) {
     size_t n = 0;
     Uint32 c;
     while (cap && (c = SDL_StepUTF8(&text, NULL)) != 0) {
-        const char *as = c < 0x80                     ? NULL
+        const char *as = c < 0x20                     ? " "
+                         : c < 0x80                   ? NULL
                          : c == 0x2018 || c == 0x2019 ? "'"
                          : c == 0x201C || c == 0x201D ? "\""
                          : c == 0x2026                ? "..."
                          : c == 0x2013 || c == 0x2014 ? "-"
                                                       : "?";
         char one[2] = {(char)c, 0};
-        for (const char *a = as ? as : one; *a && n + 1 < cap; a++)
-            out[n++] = *a;
+        const char *a = as ? as : one;
+        size_t len = strlen(a);
+        if (n + len >= cap) /* all of a replacement or none */
+            break;
+        memcpy(out + n, a, len);
+        n += len;
     }
     if (cap)
         out[n] = '\0';
@@ -471,7 +476,8 @@ static void draw_tip(SDL_Renderer *r, const display_layout *l, float k, float x,
 
 /* The bar: how far the replay has got, the clips, a clip's start, the
    marks, and what's under the pointer. */
-static void draw_bar(SDL_Renderer *r, const display_layout *l, const places *p, const watch_state *w,
+static void draw_bar(SDL_Renderer *r, const display_layout *l, const places *p, int tip_row,
+                     const watch_state *w,
                      const look *k, float op) {
     display_rect bar = p->bar;
     float d = l->density, cy = bar.y + bar.h / 2;
@@ -517,7 +523,7 @@ static void draw_bar(SDL_Renderer *r, const display_layout *l, const places *p, 
     char t[64];
     strip_spot_tip(&k->spot, w, t, sizeof t);
     float cw = SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE * p->k;
-    draw_tip(r, l, p->k, x - ((float)strlen(t) + 1) * cw / 2, k->said ? 1 : 0, t,
+    draw_tip(r, l, p->k, x - ((float)strlen(t) + 1) * cw / 2, tip_row, t,
              op); /* centered on the spot, above a message */
 }
 
@@ -576,15 +582,51 @@ static void draw_sign(SDL_Renderer *r, const display_layout *l, bool paused, flo
     }
 }
 
-/* What the viewer said, above the strip at its left, cut to fit. */
-static void draw_said(SDL_Renderer *r, const display_layout *l, const places *p, float op) {
+int strip_wrap(const char *text, size_t fits, char *a, char *b, size_t cap) {
+    size_t len = strlen(text), cut = len;
+    b[0] = '\0';
+    if (len > fits && fits > 3) {
+        cut = fits;
+        for (size_t i = fits; i > 0; i--)
+            if (text[i] == ' ') {
+                cut = i;
+                break;
+            }
+    }
+    snprintf(a, cap, "%.*s", (int)cut, text);
+    if (cut == len)
+        return 1;
+    const char *rest = text + cut + (text[cut] == ' ');
+    snprintf(b, cap, "%s", rest);
+    if (strlen(b) > fits && fits > 3 && fits < cap)
+        snprintf(b + fits - 3, cap - (fits - 3), "...");
+    return 2;
+}
+
+/* The characters of a message that fit on a row above the strip. */
+static size_t said_fits(const display_layout *l, const places *p) {
     float ch = SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE * p->k, x = p->button[STRIP_PLAY].x;
-    size_t fits = (size_t)SDL_max(0.f, (l->strip.x + l->strip.w - 2 * x) / ch - 1);
-    char t[sizeof S.said];
-    snprintf(t, sizeof t, "%s", S.said);
-    if (strlen(t) > fits && fits > 3)
-        snprintf(t + fits - 3, sizeof t - (fits - 3), "...");
-    draw_tip(r, l, p->k, x, 0, t, op);
+    return (size_t)SDL_max(0.f, (l->strip.x + l->strip.w - 2 * x) / ch - 1);
+}
+
+/* What the viewer said, above the strip at its left, on as many rows as
+   it takes (strip_wrap). The rows it took. */
+static int draw_said(SDL_Renderer *r, const display_layout *l, const places *p, float op) {
+    char a[sizeof S.said], b[sizeof S.said];
+    int rows = strip_wrap(S.said, said_fits(l, p), a, b, sizeof a);
+    float x = p->button[STRIP_PLAY].x;
+    draw_tip(r, l, p->k, x, rows - 1, a, op);
+    if (rows > 1)
+        draw_tip(r, l, p->k, x, 0, b, op);
+    return rows;
+}
+
+/* The rows a message takes above the strip, so a tip goes above them. */
+static int said_rows(const display_layout *l, const places *p, const look *k) {
+    if (!k->said)
+        return 0;
+    char a[sizeof S.said], b[sizeof S.said];
+    return strip_wrap(S.said, said_fits(l, p), a, b, sizeof a);
 }
 
 /* A thin line across the bottom of the window: how far the replay has got. */
@@ -638,12 +680,12 @@ static void draw(void *renderer, const display_layout *l) {
     time_text(&w, t, sizeof t);
     text(r, p.time, p.k, t);
     if (p.bar.w > 0)
-        draw_bar(r, l, &p, &w, k, op);
+        draw_bar(r, l, &p, said_rows(l, &p, k), &w, k, op);
     if (k->said)
         draw_said(r, l, &p, op);
     if (k->tip) { /* above the strip (and a message), from the button's left */
         strip_tip(k->hover, t, sizeof t);
-        draw_tip(r, l, p.k, p.button[k->hover].x, k->said ? 1 : 0, t, op);
+        draw_tip(r, l, p.k, p.button[k->hover].x, said_rows(l, &p, k), t, op);
     }
 }
 

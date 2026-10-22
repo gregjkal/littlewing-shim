@@ -28,8 +28,9 @@
    known; it lights up for a moment when the speed changes. Pausing or
    going on shows a pause or play sign over the middle of the game, which
    fades in STRIP_SIGN seconds. What the viewer has to say (display_flash,
-   through the overlay's say) is shown above the strip, at its left, for
-   DISPLAY_FLASH_MS, with the strip up all the while; a tip goes above it.
+   through the overlay's say) is shown above the strip, at its left, on
+   two rows if it takes them, for DISPLAY_FLASH_MS, with the strip up all
+   the while; a tip goes above it.
 
    The strip comes up when the pointer moves over the window or one of the
    viewer's keys is pressed (strip_poke), and goes STRIP_HIDE_AFTER seconds
@@ -96,8 +97,14 @@ display_rect strip_bar(const display_layout *l, const watch_state *w);
    known: "5.2x", "18x". True when that is short of the speed asked. */
 bool strip_speed_text(const watch_state *w, char *out, size_t cap);
 
+/* A message on rows of fits characters: all of text in a, or its words
+   that fit in a and the rest in b, cut with "..." if it doesn't fit
+   either. The rows: 1 or 2. */
+int strip_wrap(const char *text, size_t fits, char *a, char *b, size_t cap);
+
 /* text as the strip's font can draw it, which is ASCII only: curly quotes
-   straight, an ellipsis "...", a dash "-", anything else "?". */
+   straight, an ellipsis "...", a dash "-", a control character a space,
+   anything else "?". A replacement goes in whole or not at all. */
 void strip_ascii(const char *text, char *out, size_t cap);
 
 /* What a button's tip says: its name and its key, "Back 10 s (J)". */

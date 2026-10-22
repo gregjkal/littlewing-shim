@@ -412,3 +412,44 @@ TEST(watch_rate_measures_the_speed_and_forgets_a_stall) {
         watch_rate_sample(&r, wall + i * WATCH_RATE_GAP, us + (uint64_t)i * 250000); /* 1x */
     CHECK(watch_rate_of(&r) > 0.99f && watch_rate_of(&r) < 1.01f);
 }
+
+/* A message too long for a row goes on two, at a space, and the second is
+   cut if it's too long too. */
+TEST(strip_wrap_puts_a_long_message_on_two_rows) {
+    char a[64], b[64];
+    CHECK_EQ(strip_wrap("clip 1 saved", 34, a, b, sizeof a), 1);
+    CHECK_STR(a, "clip 1 saved");
+    CHECK_STR(b, "");
+    CHECK_EQ(strip_wrap("I marks where a clip starts, then O where it ends", 34, a, b, sizeof a), 2);
+    CHECK_STR(a, "I marks where a clip starts, then");
+    CHECK_STR(b, "O where it ends");
+    CHECK_EQ(strip_wrap("one two three four five six", 10, a, b, sizeof a), 2);
+    CHECK_STR(a, "one two");
+    CHECK_STR(b, "three f...");
+    CHECK_EQ(strip_wrap("abcdefghijklmnop", 10, a, b, sizeof a), 2); /* no space: cut */
+    CHECK_STR(a, "abcdefghij");
+    CHECK_STR(b, "klmnop");
+}
+
+TEST(strip_ascii_spaces_control_characters_and_keeps_replacements_whole) {
+    char t[64];
+    strip_ascii("line one\nline\ttwo", t, sizeof t);
+    CHECK_STR(t, "line one line two");
+    strip_ascii("ab\xe2\x80\xa6", t, 5); /* "ab..." needs 6 */
+    CHECK_STR(t, "ab");
+}
+
+/* One slow read (a frame of HD at 8x) is not a stall: only a gap of
+   WATCH_STALL between reads is, however the samples fall. */
+TEST(watch_rate_counts_a_stall_between_reads_not_samples) {
+    watch_rate r;
+    memset(&r, 0, sizeof r);
+    double wall = 100;
+    uint64_t us = 0;
+    for (int i = 0; i < WATCH_RATE_SAMPLES; i++, wall += WATCH_RATE_GAP, us += 1250000)
+        watch_rate_sample(&r, wall, us);
+    wall -= WATCH_RATE_GAP; /* the last sample's time */
+    watch_rate_sample(&r, wall + 0.24, us); /* read, too soon to sample */
+    watch_rate_sample(&r, wall + 0.24 + 0.31, us + 1250000); /* a slow frame, 0.55 after the sample */
+    CHECK(watch_rate_of(&r) > 0);
+}

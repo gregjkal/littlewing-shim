@@ -151,7 +151,7 @@ void watch_get_state(watch_state *s);
    the wall clock, sampled at most every WATCH_RATE_GAP seconds of paced
    play, over the last WATCH_RATE_SAMPLES - 1 gaps. Paced play reads the
    clock many times a second, so a gap of WATCH_STALL or more between two
-   samples is a stall (a menu open, the window dragged), not the speed the
+   reads is a stall (a menu open, the window dragged), not the speed the
    replay can keep: the samples before it go, and it's measured afresh. */
 #define WATCH_RATE_GAP 0.25
 #define WATCH_RATE_SAMPLES 5
@@ -160,8 +160,9 @@ typedef struct {
     double wall[WATCH_RATE_SAMPLES];
     uint64_t us[WATCH_RATE_SAMPLES];
     int n;
+    double last; /* the wall clock at the last read, sampled or not */
 } watch_rate;
-/* The clock was at us at the wall clock's wall (seconds). */
+/* The clock was at us at the wall clock's wall (seconds): a read. */
 void watch_rate_sample(watch_rate *r, double wall, uint64_t us);
 /* The speed over the samples, or 0 until there are WATCH_RATE_SAMPLES. */
 float watch_rate_of(const watch_rate *r);
