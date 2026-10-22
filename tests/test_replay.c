@@ -12,13 +12,16 @@
 
 #include "asm.h"
 #include "clip.h"
+#include "display.h"
 #include "events.h"
 #include "harness.h"
 #include "memmgr.h"
 #include "misc.h"
 #include "plist.h"
+#include "qd.h"
 #include "replay.h"
 #include "sound.h"
+#include "strip.h"
 #include "util.h"
 #include "watch.h"
 
@@ -1012,6 +1015,119 @@ TEST(replay_watching_leaves_out_what_isnt_play) {
     CHECK_CONTAINS(out, "watch: leaving out what isn't play from 0:00.2"); /* its last ms isn't paced */
     CHECK_CONTAINS(out, "-0:00.60 at 1x");
     CHECK_CONTAINS(out, "reached the end of the recording at step 661"); /* each clock */
+}
+
+static double strip_t;
+static double strip_now(void) { return strip_t; }
+
+/* The pixel at (x, y) of a window read back, RGBA. */
+static const uint8_t *pixel(const uint8_t *px, int w, float x, float y) {
+    return px + ((size_t)(int)y * (size_t)w + (size_t)(int)x) * 4;
+}
+
+/* Watching the recording with clips saved beside it and one started, with
+   the strip up: the timeline (strip.h) shows the marks, the clips and the
+   clip's start where they are, a click on a mark goes to it, ] goes to the
+   next, and a clip under the pointer that leaves the list is forgotten. */
+static void child_timeline(void *unused) {
+    (void)unused;
+    char err[256], play_data[1300], list[1300];
+    snprintf(play_data, sizeof play_data, "%s/play", dir);
+    snprintf(list, sizeof list, "%s/run.clips", dir);
+    FILE *f = fopen(list, "w");
+    fputs("0:05-0:10\n0:30-0:35\n", f);
+    fclose(f);
+    replay_reset();
+    unsetenv("LOONY_RECORD");
+    setenv("LOONY_REPLAY", file, 1);
+    setenv("LOONY_WATCH", "1", 1);
+    setenv("LOONY_WATCH_PAUSED", "1", 1);
+    setenv("LOONY_WATCH_IN", "1200", 1); /* 0:20 */
+    setenv("SDL_VIDEO_DRIVER", "dummy", 1);
+    setenv("SDL_AUDIO_DRIVER", "dummy", 1);
+    if (!replay_open(err, sizeof err) || !watch_open(err, sizeof err) ||
+        !replay_start("loony-labyrinth", exe, sizeof exe, play_data, err, sizeof err)) {
+        fprintf(stderr, "%s\n", err);
+        _exit(1);
+    }
+    strip_t = 0;
+    strip_reset(strip_now);
+    watch_start("Game");
+    watch_state s;
+    watch_get_state(&s);
+    if (s.length != 3600 || s.nmarks != 2 || s.marks[0] != 900 || s.marks[1] != 2400 ||
+        s.nclips != 2 || s.clips[1].start != 1800 || !s.have_in || s.in != 1200) {
+        fprintf(stderr, "state: length %u, %zu marks, %zu clips\n", s.length, s.nmarks, s.nclips);
+        _exit(1);
+    }
+    gm_init();
+    mm_init();
+    qd_init(800, 600, 8);
+    (void)strip_overlay()->shown(); /* fading in from now */
+    strip_t = 1;
+    display_present();
+    int w, h;
+    uint8_t *px = display_read_window(&w, &h);
+    if (!px)
+        _exit(1);
+    display_layout l = display_lay_out((float)w, (float)h, 800, 600, STRIP_HEIGHT, false);
+    display_rect bar = strip_bar(&l, &s);
+    float cy = bar.y + bar.h / 2, d = l.density;
+#define AT(tick) (bar.x + bar.w * (float)(tick) / 3600)
+    const uint8_t *mark = pixel(px, w, AT(900), cy - 2 * d);       /* in the diamond, above the bar */
+    const uint8_t *clip = pixel(px, w, AT(450), cy + bar.h * 0.75f); /* in the clip, below the bar */
+    const uint8_t *in = pixel(px, w, AT(1200), cy - 1.25f * bar.h);  /* the bracket, above the bar */
+    const uint8_t *none = pixel(px, w, AT(600), cy + bar.h * 0.75f); /* between the clips */
+    if (mark[0] < 200 || mark[2] < 200 || clip[0] < 120 || clip[2] > 60 || in[0] < 200 ||
+        in[2] < 200 || none[0] > 60) {
+        fprintf(stderr, "mark %d %d %d, clip %d %d %d, in %d %d %d, none %d %d %d\n", mark[0], mark[1],
+                mark[2], clip[0], clip[1], clip[2], in[0], in[1], in[2], none[0], none[1], none[2]);
+        _exit(2);
+    }
+    free(px);
+    const display_overlay *o = strip_overlay();
+    o->press(&l, AT(2400) + 2 * d, cy, true); /* near enough the second mark */
+    o->press(&l, AT(2400) + 2 * d, cy, false);
+    watch_key(SDL_SCANCODE_RIGHTBRACKET, true, false); /* none after it */
+    watch_key(SDL_SCANCODE_LEFTBRACKET, true, false);
+    /* On the second clip's start when E reads the list again, emptied:
+       the strip forgets the clip rather than drawing it from the list it
+       had. */
+    o->pointer(&l, AT(1800), cy, true);
+    f = fopen(list, "w");
+    fclose(f);
+    watch_key(SDL_SCANCODE_E, true, false);
+    display_present();
+    free(display_read_window(&w, &h));
+#undef AT
+    _exit(0);
+}
+
+TEST(replay_watching_shows_marks_and_clips_on_the_timeline) {
+    BEGIN_TEST();
+    CHECK(record(NULL));
+    replay_clock(1000000); /* a second before the game */
+    replay_game(true);
+    replay_play(true);
+    replay_clock(16000000); /* 0:15 of play */
+    CHECK_EQ(replay_mark(), 1);
+    replay_step();
+    replay_clock(41000000); /* 0:40 */
+    CHECK_EQ(replay_mark(), 2);
+    replay_step();
+    replay_clock(61000000); /* 1:00, the end */
+    replay_step();
+    replay_finish();
+    char out[16384];
+    int status = test_run_child(child_timeline, NULL, out, sizeof out);
+    if (status)
+        fprintf(stderr, "%s", out);
+    CHECK_EQ(status, 0);
+    const char *click = strstr(out, "watch: going to 0:40");
+    CHECK(click);
+    const char *back = click ? strstr(click, "watch: to mark 1, at 0:15") : NULL;
+    CHECK(back);
+    CHECK(!strstr(out, "watch: to mark 2"));
 }
 
 /* The date is the recording's start plus the game's clock (Loony Labyrinth

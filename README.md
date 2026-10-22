@@ -502,6 +502,7 @@ LOONY_REPLAY=game.lwreplay LOONY_CLIP=clips ./build-release/loony
 | Left, Right | Back or ahead 5 seconds |
 | `,` and `.` (comma, period) | While paused, back or ahead a frame (1/60 s); comma at the end too, which pauses there |
 | 0 to 9 (on the keypad too) | Go to that tenth of the recording: 0 is its start, 5 its middle |
+| `[`, `]` | Go to the mark before or after (Cmd-S while recording) |
 | `<`, `>` (Shift-comma, Shift-period) | Slower or faster: 1x, 2x, 4x, 8x, as fast as it can |
 | I, O | Where a clip starts, and where it ends (O saves it) |
 | E | Export the clips, as `LOONY_CLIP=clips` does |
@@ -510,7 +511,11 @@ LOONY_REPLAY=game.lwreplay LOONY_CLIP=clips ./build-release/loony
 The same controls are on a strip below the game: play or pause, back and
 ahead 10 seconds, slower and faster with the speed between them, the time
 and the recording's length, and a bar of how far it has got. Resting the
-pointer on a button says its key. The strip comes up when the pointer moves
+pointer on a button says its key. The bar is the recording's timeline:
+marks are diamonds on it, saved clips yellow spans, and a clip started
+with I a bracket. The pointer over the bar says the time under it (or a
+mark's or clip's number), and a click goes there; a click on a mark or a
+clip's start goes to it exactly. The strip comes up when the pointer moves
 or a key is pressed and fades a couple of seconds later, unless the pointer
 is on it; a thin line along the bottom still shows the progress, and the
 pointer hides with the strip. In full screen the strip goes over the
