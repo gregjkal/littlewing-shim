@@ -537,9 +537,10 @@ all drawn on the window, never into the game's
 screen, so screenshots, clips and a replay's frame checks leave it out.
 
 These are YouTube's keys. A key with Cmd or Ctrl held goes to the menus,
-not the viewer, and so does one with Option but for the edge's. The **Replay** menu (next to Sound) lists
-every one of these with its key but 0 to 9, so it is also where to find
-them, and Help's search finds them by name.
+not the viewer, and so does one with Option but for the edge's. The
+**Replay** menu (next to Sound) lists every one of these with its key
+but 0 to 9, so it is also where to find them, and Help's search finds
+them by name.
 
 Watching starts where the game does. First it replays what came before the
 game, silent and as fast as it can, about 9 times real time in HD and 18
@@ -570,21 +571,22 @@ selected one, outlined on the timeline, with a taller bar on the edge
 nearer the playhead (its start and end count as in it). Where clips
 overlap, the shortest under the playhead is selected. I or O there moves
 its start or end to the playhead rather than starting a new clip, but I
-at a clip's very end starts the next one, and O after an I pressed
-outside every clip still saves the new one. Option-comma
-and Option-period move the edge with the bar a frame, Shift-Option-comma and
-Shift-Option-period a second, and the viewer pauses and goes with it so
-that the edge's frame is on screen; a clip keeps at least a frame, and
-an edge stops where another, shorter clip would be selected instead. (Shift-comma
-and Shift-period are the speed, so the edge takes Option.) Backspace deletes
-the selected clip at once; its exported video, if any, stays. With the
-playhead in no clip, I starts a new one, O says how to make one, and
-Backspace and the nudges do nothing. Each edit changes that clip's line
-in `.clips` and leaves the rest of the file, comments and all, as it was;
-a file left with nothing in it is removed. Marks aren't edited. Taking a line out
-of the file, or adding one, renames none of the other clips' files, though
-clips that come to overlap, or stop overlapping, get new files. A recording in
-`recordings` with a `.clips` file is kept, like a marked one.
+at a clip's very end starts the next one, and O after an I that started
+a clip still saves it. Option-comma and Option-period move the edge with
+the bar a frame, Shift-Option-comma and Shift-Option-period a second,
+and the viewer pauses and goes with it so that the edge's frame is on
+screen; a clip keeps at least a frame, and an edge stops where another,
+shorter clip would be selected instead. (Shift-comma and Shift-period
+are the speed, so the edge takes Option.) Backspace deletes the selected
+clip at once; its exported video, if any, stays. With the playhead in no
+clip, I starts a new one, O says how to make one, and Backspace and the
+nudges do nothing. Each edit changes that clip's line in `.clips` and
+leaves the rest of the file, comments and all, as it was; a file left
+with nothing in it is removed. Marks aren't edited. Taking a line out of
+the file, or adding one, renames none of the other clips' files, though
+clips that come to overlap, or stop overlapping, get new files. A
+recording in `recordings` with a `.clips` file is kept, like a marked
+one.
 
 Going ahead replays without pacing to the time. Going back is near
 instant: while you watch, the viewer keeps a snapshot of the emulator every

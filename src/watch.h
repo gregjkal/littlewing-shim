@@ -59,13 +59,14 @@
    end when they are as near (watch_edge_at). With a clip selected, I moves
    its start to the time and O its end, unless that would leave it no
    longer than nothing; but I at the clip's very end starts a new clip, and
-   O after an I made outside any clip saves the new clip as before. Option-comma and Option-period move the selected
-   edge a frame (WATCH_FRAME_TICKS), and with Shift a second
-   (WATCH_NUDGE_BIG_TICKS), keeping a frame between start and end and the
-   end within the recording, and pause and go to the edge, so it stays
-   selected and its frame is on the screen; held, they go on. An edge stops
-   short of where another clip would be selected instead. Backspace
-   deletes the selected clip, at once. With nothing selected, I starts a
+   O after an I that started a clip saves that one as before. Option-comma
+   and Option-period move the selected edge a frame (WATCH_FRAME_TICKS),
+   and with Shift a second (WATCH_NUDGE_BIG_TICKS), keeping a frame between
+   start and end and the end within the recording, and pause and go to the
+   edge, so it stays selected and its frame is on the screen; held, they go
+   on. An edge stops short of where another clip would be selected instead.
+   Backspace deletes the selected clip, at once. A list that doesn't parse
+   is said and left as it is: I still starts a new clip. With nothing selected, I starts a
    new clip, O without an I only says so, and the rest do nothing. An edit
    reads the list afresh, changes or takes out the clip's line alone, and
    writes it back whole (clip_list_edit), comments and all, removing a
@@ -144,9 +145,10 @@ typedef enum {
    in this order, with the first key for it as the item's key equivalent.
    A key matches when the Shift, Ctrl, Alt and Cmd held are exactly mods
    (either side's), so a key with Cmd or Ctrl, or with Alt but for the
-   nudges, goes past the viewer to the menus. A row without a label is a second key for its action (K), or
-   a key the menu leaves out (0 to 9, which would be ten items); scancode 0
-   is an item without a key (Export Marks). gap puts a separator before the
+   nudges, goes past the viewer to the menus. A row without a label is a
+   second key for its action (K), or a key the menu leaves out (0 to 9,
+   which would be ten items); scancode 0 is an item without a key (Export
+   Marks). gap puts a separator before the
    item. */
 typedef struct {
     watch_action action;

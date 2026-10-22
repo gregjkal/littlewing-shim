@@ -856,8 +856,6 @@ static void mark_in(void) {
     clip_span c;
     char *text;
     int i = edit_start(now, &c, &text, NULL, NULL);
-    if (i == -2)
-        return;
     if (i >= 0 && now < c.end) { /* at its very end, I starts the next clip */
         if (move_edge(text, i, c, false, now))
             W.have_in = false; /* I was the start: this clip's, not a new one's */
@@ -867,7 +865,10 @@ static void mark_in(void) {
     W.in = now;
     W.have_in = true;
     log_msg("watch: a clip starts at %s", clip_format_time(W.in, t, sizeof t));
-    flash("a clip starts at %s: O ends it", t);
+    if (i == -2) /* edit_start's flash would be gone at once */
+        flash("a clip starts at %s, but the clips' list is broken (see the log)", t);
+    else
+        flash("a clip starts at %s: O ends it", t);
 }
 
 /* Option-comma and -period: the selected edge by ticks (back when < 0),
@@ -898,7 +899,7 @@ static void nudge(int64_t ticks) {
     /* The edge stays selected where it goes, or a held key would go on
        with whichever clip is shorter there. */
     *(end ? &all[i].end : &all[i].start) = (uint32_t)to;
-    bool kept = watch_clip_at(all, n, (uint32_t)to) == i && watch_edge_at(&all[i], (uint32_t)to) == end;
+    bool kept = watch_clip_at(all, n, (uint32_t)to) == i; /* and its edge, which is at to */
     free(all);
     if (!kept) {
         free(text);

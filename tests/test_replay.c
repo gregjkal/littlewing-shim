@@ -1299,7 +1299,7 @@ static bool list_is(const char *list, const char *want) {
    -period (with Shift, a second) nudge the nearer edge, keeping a frame of
    clip, and Backspace deletes it. Away from every clip, Backspace, O and a
    nudge do nothing, and I starts a clip; at a clip's very end too. A held
-   nudge stops short of a shorter clip, and a broken list stops I. */
+   nudge stops short of a shorter clip, and a broken list is left alone. */
 static void child_edit(void *unused) {
     (void)unused;
     char list[1300];
@@ -1435,12 +1435,12 @@ static void child_edit(void *unused) {
         fprintf(stderr, "the held nudge: now %u\n", s.now);
         _exit(15);
     }
-    f = fopen(list, "w"); /* a list that isn't one: I says so, and starts nothing */
+    f = fopen(list, "w"); /* a list that isn't one: I says so, and starts a clip */
     fputs("junk\n", f);
     fclose(f);
     watch_key(SDL_SCANCODE_I, true, false);
     watch_get_state(&s);
-    if (!s.have_in || s.in != 2100) {
+    if (!s.have_in || s.in != 240 || !list_is(list, "junk\n")) {
         fprintf(stderr, "I with a broken list: in %d at %u\n", s.have_in, s.in);
         _exit(16);
     }
