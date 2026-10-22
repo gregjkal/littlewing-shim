@@ -35,6 +35,11 @@ static struct {
     bool cursor_hidden;
     bool cursor_wanted; /* by the game (display_set_cursor) */
     const display_overlay *overlay;
+    /* The left button went down on the strip and isn't up yet: the strip
+       gets its release wherever it is. Where the pointer last was, in
+       points, for a release that never comes (the window losing focus). */
+    bool grabbed;
+    float pointer_x, pointer_y;
     bool redraw;          /* the window wants drawing again: resized or uncovered */
     uint64_t presented;   /* SDL_GetTicksNS at the last present to the window */
     bool raise; /* on opening */
@@ -275,6 +280,7 @@ uint8_t *display_read_window(int *w, int *h) {
 
 void display_set_overlay(const display_overlay *o) {
     D.overlay = o;
+    D.grabbed = false;
     D.redraw = true;
 }
 
@@ -461,13 +467,21 @@ static bool inside(display_rect r, float x, float y) {
 }
 
 /* A left-button press or release at (x, y) in points: the strip's, when
-   it's on the strip (in full screen, while the strip is up), else the
-   game's, in the emulated screen's coordinates. */
+   it's on the strip (in full screen, while the strip is up) or the press
+   was, else the game's, in the emulated screen's coordinates. */
 static void press(float x, float y, bool down) {
+    if (down && D.grabbed) /* the last release never came: it ends here */
+        press(D.pointer_x, D.pointer_y, false);
+    D.pointer_x = x;
+    D.pointer_y = y;
     display_layout l = layout();
     x *= l.density;
     y *= l.density;
-    if (D.overlay && inside(l.strip, x, y) && (!l.fullscreen || D.overlay->shown() > 0)) {
+    bool on_strip = inside(l.strip, x, y) && (!l.fullscreen || (D.overlay && D.overlay->shown() > 0));
+    bool released = D.grabbed && !down;
+    D.grabbed = false;
+    if (D.overlay && (on_strip || released)) {
+        D.grabbed = down;
         D.overlay->press(&l, x, y, down);
         return;
     }
@@ -496,6 +510,8 @@ void display_poll(void) {
             break;
         case SDL_EVENT_WINDOW_FOCUS_GAINED:
         case SDL_EVENT_WINDOW_FOCUS_LOST:
+            if (D.grabbed && e.type == SDL_EVENT_WINDOW_FOCUS_LOST)
+                press(D.pointer_x, D.pointer_y, false);
             if (D.input.focus)
                 D.input.focus(e.type == SDL_EVENT_WINDOW_FOCUS_GAINED);
             break;
@@ -546,7 +562,11 @@ void display_poll(void) {
             break;
         case SDL_EVENT_MOUSE_MOTION:
         case SDL_EVENT_WINDOW_MOUSE_LEAVE:
-            if (D.overlay) {
+            if (e.type == SDL_EVENT_MOUSE_MOTION) {
+                D.pointer_x = e.motion.x;
+                D.pointer_y = e.motion.y;
+            }
+            if (D.overlay && !(D.grabbed && e.type == SDL_EVENT_WINDOW_MOUSE_LEAVE)) {
                 display_layout l = layout();
                 bool in = e.type == SDL_EVENT_MOUSE_MOTION;
                 D.overlay->pointer(&l, in ? e.motion.x * l.density : 0, in ? e.motion.y * l.density : 0, in);

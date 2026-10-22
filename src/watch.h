@@ -131,6 +131,7 @@ extern const size_t watch_nbindings;
 /* What the viewer shows (strip.h). Times are ticks of play. */
 typedef struct {
     uint32_t now;    /* the time, or the one being gone to */
+    uint32_t played; /* where playback is: now, unless going to a time */
     uint32_t length; /* the recording's (replay_play_length) */
     bool paused, at_end;
     int speed; /* 1, 2, 4 or 8, or 0 for as fast as it can */
@@ -172,9 +173,14 @@ float watch_rate_of(const watch_rate *r);
    or -1 for none. */
 int watch_mark_from(const watch_state *s, int dir);
 
-/* To tick, as a click on the strip's bar goes. Does nothing until
-   watch_start. */
-void watch_go_to(uint32_t tick);
+/* Dragging on the strip's bar (a click is a short drag): the press pauses
+   (unless paused already, or at the end), and the release goes to tick,
+   then goes on again if the press paused and nothing has paused or gone
+   on since (Space, or a frame back or ahead). Both do nothing until
+   watch_start. A newer seek replaces one not yet
+   served, so the last release wins. */
+void watch_scrub_start(void);
+void watch_scrub_end(uint32_t tick);
 
 /* Does what the action does, as its key would (repeat: the key is held).
    Does nothing until watch_start. */

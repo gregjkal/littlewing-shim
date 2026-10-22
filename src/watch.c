@@ -54,6 +54,7 @@ static struct {
     const char *title;
     int speed; /* in speeds */
     bool paused;
+    bool scrub_paused; /* paused by watch_scrub_start, to go on at watch_scrub_end */
     bool going; /* to from, without pacing or drawing every frame */
     bool seeking; /* to from, through a seek not served yet (seek.h), the same way */
     unsigned seek_generation; /* that seek's */
@@ -732,7 +733,8 @@ static void mark_in(void) {
 }
 
 void watch_get_state(watch_state *s) {
-    s->now = W.going || W.seeking ? W.from : now_tick();
+    s->played = now_tick();
+    s->now = W.going || W.seeking ? W.from : s->played;
     s->length = replay_play_length();
     s->paused = W.paused;
     s->at_end = W.at_end;
@@ -777,11 +779,24 @@ static void to_mark(int dir) {
     go_to(s.marks[i]);
 }
 
-void watch_go_to(uint32_t tick) {
+void watch_scrub_start(void) {
+    if (!W.started)
+        return;
+    strip_poke();
+    W.scrub_paused = !W.paused && !W.at_end;
+    if (W.scrub_paused)
+        toggle_pause();
+    update_title();
+}
+
+void watch_scrub_end(uint32_t tick) {
     if (!W.started)
         return;
     strip_poke();
     go_to(tick);
+    if (W.scrub_paused && W.paused)
+        toggle_pause();
+    W.scrub_paused = false;
     update_title();
 }
 
@@ -806,6 +821,8 @@ void watch_act(watch_action action, bool repeat) {
     if (!W.started || (repeat && !step)) /* only the steps go on while their key is held */
         return;
     strip_poke();
+    if (action == WATCH_PLAY_PAUSE || action == WATCH_FRAME_BACK || action == WATCH_FRAME_AHEAD)
+        W.scrub_paused = false; /* the pause is the user's again, mid-drag too */
     switch (action) {
     case WATCH_PLAY_PAUSE:
         if (!W.at_end)

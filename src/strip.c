@@ -20,7 +20,7 @@ static const watch_action actions[STRIP_NBUTTONS] = {
 /* What the strip looks like: when it changes, it's drawn again. */
 typedef struct {
     int opacity; /* in 64ths */
-    uint32_t seconds, length;
+    uint32_t seconds, played, length;
     bool paused, at_end, can_play;
     int speed;
     strip_button hover;
@@ -41,6 +41,7 @@ static struct {
     double (*clock)(void);
     double active; /* when the pointer last moved, or a key was pressed */
     bool over;     /* the pointer is on the strip */
+    bool drag;     /* the button went down on the bar and isn't up yet */
     strip_button hover;
     double hover_since;
     strip_spot spot;
@@ -251,6 +252,14 @@ strip_spot strip_spot_at(const display_layout *l, const watch_state *w, float x,
     return (strip_spot){STRIP_ON_TIME, -1, (uint32_t)(f * (float)w->length + 0.5f)};
 }
 
+/* Where a drag on the bar is at x: as strip_spot_at on the bar, with x
+   kept on it, wherever the pointer is. */
+static strip_spot drag_spot(const display_layout *l, const watch_state *w, float x) {
+    display_rect bar = place(l, w).bar;
+    x = x < bar.x ? bar.x : x >= bar.x + bar.w ? bar.x + bar.w - 0.01f : x;
+    return strip_spot_at(l, w, x, bar.y + bar.h / 2);
+}
+
 /* Whether s's index is still in w: the list of clips is read again at O
    and before an export, and may be shorter than when the pointer moved. */
 static bool spot_holds(const strip_spot *s, const watch_state *w) {
@@ -319,11 +328,15 @@ static void pointer(const display_layout *l, float x, float y, bool in) {
     settle();
     strip_button b = STRIP_NONE;
     bool was_over = S.over;
-    S.over = in && inside(l->strip, x, y);
+    S.over = S.drag || (in && inside(l->strip, x, y)); /* up while dragging */
     if (in || was_over) /* leaving the strip, its time to go starts then */
         S.active = now();
     S.spot = (strip_spot){STRIP_ON_NOTHING, -1, 0};
-    if (S.over) {
+    if (S.drag) {
+        watch_state w;
+        watch_get_state(&w);
+        S.spot = drag_spot(l, &w, x);
+    } else if (S.over) {
         watch_state w;
         watch_get_state(&w);
         b = strip_button_at(l, x, y);
@@ -336,23 +349,54 @@ static void pointer(const display_layout *l, float x, float y, bool in) {
     settle();
 }
 
+/* Pausing for a drag and going on after it show no sign: when the sign
+   was up to date before (pause_settled), the pause after is no news. */
+static bool pause_settled(void) {
+    watch_state w;
+    watch_get_state(&w);
+    return w.paused == S.seen_paused;
+}
+
+static void pause_seen(bool settled) {
+    watch_state w;
+    watch_get_state(&w);
+    if (settled)
+        S.seen_paused = w.paused;
+}
+
 static void press(const display_layout *l, float x, float y, bool down) {
     settle();
     S.active = now();
     settle();
-    if (!down)
+    watch_state w;
+    watch_get_state(&w);
+    if (!down) {
+        if (!S.drag)
+            return;
+        S.drag = false;
+        strip_spot s = drag_spot(l, &w, x);
+        bool settled = pause_settled();
+        watch_scrub_end(s.on != STRIP_ON_NOTHING ? s.tick : w.now); /* no bar: stays */
+        pause_seen(settled);
+        watch_get_state(&w);
+        S.over = inside(l->strip, x, y);
+        S.spot = S.over ? strip_spot_at(l, &w, x, y) : (strip_spot){STRIP_ON_NOTHING, -1, 0};
         return;
+    }
     strip_button b = strip_button_at(l, x, y);
     if (b != STRIP_NONE) {
         S.hover_since = now(); /* the tip goes, and comes back after resting again */
         watch_act(actions[b], false);
         return;
     }
-    watch_state w;
-    watch_get_state(&w);
     strip_spot s = strip_spot_at(l, &w, x, y);
-    if (s.on != STRIP_ON_NOTHING)
-        watch_go_to(s.tick);
+    if (s.on == STRIP_ON_NOTHING)
+        return;
+    S.drag = true;
+    S.spot = s;
+    bool settled = pause_settled();
+    watch_scrub_start();
+    pause_seen(settled);
 }
 
 /* ---- drawing ---- */
@@ -378,6 +422,7 @@ static look look_now(void) {
     memset(&k, 0, sizeof k); /* padding too: looks are compared whole */
     k.opacity = (int)(op * 64 + 0.5);
     k.seconds = w.now / 60;
+    k.played = w.played / 60;
     k.length = w.length;
     k.paused = w.paused;
     k.at_end = w.at_end;
@@ -484,7 +529,7 @@ static void draw_bar(SDL_Renderer *r, const display_layout *l, const places *p, 
     color(r, 255, 0.25f * op);
     fill(r, bar);
     SDL_SetRenderDrawColor(r, 220, 50, 40, (Uint8)(op * 255 + 0.5f));
-    fill(r, (display_rect){bar.x, bar.y, x_of(bar, w, w->now) - bar.x, bar.h});
+    fill(r, (display_rect){bar.x, bar.y, x_of(bar, w, w->played) - bar.x, bar.h});
     float ch = 2 * bar.h; /* a clip is taller than the bar */
     for (size_t i = 0; i < w->nclips; i++) {
         float a = x_of(bar, w, w->clips[i].start), b = x_of(bar, w, w->clips[i].end);
@@ -493,7 +538,7 @@ static void draw_bar(SDL_Renderer *r, const display_layout *l, const places *p, 
         fill(r, (display_rect){a, cy - ch / 2, b - a > d ? b - a : d, ch});
     }
     if (w->have_in) { /* [ at the start, and the span to now lighter */
-        float a = x_of(bar, w, w->in), now = x_of(bar, w, w->now), h = 3 * bar.h;
+        float a = x_of(bar, w, w->in), now = x_of(bar, w, w->played), h = 3 * bar.h;
         float t = SDL_ceilf(d * 1.5f), x = SDL_floorf(a - t / 2), y = SDL_floorf(cy - h / 2);
         if (now > a) {
             SDL_SetRenderDrawColor(r, 240, 190, 40, (Uint8)(op * 0.3f * 255 + 0.5f));
@@ -513,13 +558,16 @@ static void draw_bar(SDL_Renderer *r, const display_layout *l, const places *p, 
         color(r, on ? 255 : 235, op);
         diamond(r, x, cy, h);
     }
+    color(r, 255, 0.8f * op);
+    if (w->now != w->played) { /* a caret where it's going, the bar where it is */
+        float x = x_of(bar, w, w->now);
+        fill(r, (display_rect){x - d / 2, cy - 2 * bar.h, d, 4 * bar.h});
+    }
     if (k->spot.on == STRIP_ON_NOTHING)
         return;
     float x = x_of(bar, w, k->spot.tick);
-    if (k->spot.on == STRIP_ON_TIME) { /* a caret where a click goes */
-        color(r, 255, 0.8f * op);
+    if (k->spot.on == STRIP_ON_TIME) /* a caret where a click goes */
         fill(r, (display_rect){x - d / 2, cy - 2 * bar.h, d, 4 * bar.h});
-    }
     char t[64];
     strip_spot_tip(&k->spot, w, t, sizeof t);
     float cw = SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE * p->k;
@@ -632,7 +680,7 @@ static int said_rows(const display_layout *l, const places *p, const look *k) {
 /* A thin line across the bottom of the window: how far the replay has got. */
 static void draw_line(SDL_Renderer *r, const display_layout *l, const watch_state *w, float alpha) {
     float th = 2 * l->density, y = l->strip.y + l->strip.h - th;
-    float f = w->length ? (float)w->now / (float)w->length : 0;
+    float f = w->length ? (float)w->played / (float)w->length : 0;
     f = f > 1 ? 1 : f;
     color(r, 255, 0.2f * alpha);
     fill(r, (display_rect){l->strip.x, y, l->strip.w, th});
