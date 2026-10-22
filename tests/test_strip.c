@@ -241,3 +241,139 @@ TEST(watch_mark_from_finds_the_marks_before_and_after) {
     w.nmarks = 0;
     CHECK_EQ(watch_mark_from(&w, 1), -1);
 }
+
+/* The speed asked, or the speed reached when it falls short or at max. */
+TEST(strip_speed_text_says_the_speed_reached) {
+    watch_state w;
+    memset(&w, 0, sizeof w);
+    char t[16];
+    w.speed = 8;
+    CHECK(!strip_speed_text(&w, t, sizeof t)); /* not known yet */
+    CHECK_STR(t, "8x");
+    w.reached = 7.6f; /* close enough */
+    CHECK(!strip_speed_text(&w, t, sizeof t));
+    CHECK_STR(t, "8x");
+    w.reached = 5.2f; /* HD falling behind */
+    CHECK(strip_speed_text(&w, t, sizeof t));
+    CHECK_STR(t, "5.2x");
+    w.speed = 0;
+    w.reached = 0;
+    CHECK(!strip_speed_text(&w, t, sizeof t));
+    CHECK_STR(t, "max");
+    w.reached = 17.7f;
+    CHECK(!strip_speed_text(&w, t, sizeof t));
+    CHECK_STR(t, "18x");
+    w.reached = 8.8f;
+    CHECK(!strip_speed_text(&w, t, sizeof t));
+    CHECK_STR(t, "8.8x");
+}
+
+/* The overlay drawn into a 1000 x 632 surface cleared to blue. */
+static SDL_Surface *surface;
+static SDL_Renderer *renderer;
+static void draw_strip(const display_overlay *o, const display_layout *l) {
+    SDL_SetRenderDrawColor(renderer, 0, 0, 255, 255);
+    SDL_RenderClear(renderer);
+    o->draw(renderer, l);
+    SDL_FlushRenderer(renderer);
+}
+static bool blue_at(int x, int y) {
+    Uint8 r, g, b, a;
+    SDL_ReadSurfacePixel(surface, x, y, &r, &g, &b, &a);
+    return r == 0 && g == 0 && b == 255;
+}
+static int red_at(int x, int y) {
+    Uint8 r, g, b, a;
+    SDL_ReadSurfacePixel(surface, x, y, &r, &g, &b, &a);
+    return r;
+}
+static void start_watching(void) {
+    char err[256];
+    setenv("LOONY_WATCH", "1", 1);
+    setenv("LOONY_REPLAY", "game.lwreplay", 1);
+    CHECK(watch_open(err, sizeof err));
+    strip_reset(fake_now);
+    watch_start("Game");
+    surface = SDL_CreateSurface(1000, 600 + STRIP_HEIGHT, SDL_PIXELFORMAT_RGBA32);
+    renderer = SDL_CreateSoftwareRenderer(surface);
+}
+
+/* Pausing and going on show their sign over the middle of the game, which
+   fades; the strip's own drawing is left alone. */
+TEST(strip_shows_a_sign_for_pause_and_play) {
+    t = 1;
+    start_watching();
+    CHECK(renderer);
+    const display_overlay *o = strip_overlay();
+    display_layout l = window_layout();
+    draw_strip(o, &l);
+    CHECK(blue_at(500, 300)); /* nothing over the game yet */
+    t = 10;
+    draw_strip(o, &l); /* the strip has gone */
+    CHECK(!o->changed());
+    watch_act(WATCH_PLAY_PAUSE, false);
+    CHECK(o->changed());
+    draw_strip(o, &l);
+    CHECK(!blue_at(500, 300)); /* the sign's disc, between the bars */
+    t = 10 + STRIP_SIGN / 2;
+    CHECK(o->changed()); /* fading */
+    t = 10 + STRIP_SIGN;
+    draw_strip(o, &l);
+    CHECK(blue_at(500, 300));
+    watch_act(WATCH_PLAY_PAUSE, false); /* going on: the play sign */
+    draw_strip(o, &l);
+    CHECK(!blue_at(500, 300));
+    watch_reset();
+}
+
+/* What the viewer says goes above the strip, which stays up while it's
+   shown, longer than it would for a key. */
+TEST(strip_shows_what_the_viewer_says) {
+    t = 1;
+    start_watching();
+    CHECK(renderer);
+    const display_overlay *o = strip_overlay();
+    display_layout l = window_layout();
+    float x = STRIP_HEIGHT / 4 + 2, y = 600 - 15; /* inside the message's box */
+    t = 10;
+    draw_strip(o, &l);
+    CHECK(blue_at((int)x, (int)y));
+    CHECK(o->shown() == 0);
+    display_flash("clip 1 saved: 0:10-0:20"); /* through the overlay */
+    CHECK(o->changed());
+    t = 10 + STRIP_FADE;
+    CHECK(o->shown() == 1);
+    draw_strip(o, &l);
+    CHECK(!blue_at((int)x, (int)y));
+    t = 10 + DISPLAY_FLASH_MS / 1000.0 - 0.01; /* past STRIP_HIDE_AFTER */
+    CHECK(o->shown() == 1);
+    t = 10 + DISPLAY_FLASH_MS / 1000.0 + 0.01;
+    draw_strip(o, &l); /* gone, as the strip fades */
+    CHECK(blue_at((int)x, (int)y));
+    t = 10 + DISPLAY_FLASH_MS / 1000.0 + STRIP_FADE;
+    CHECK(o->shown() == 0);
+    watch_reset();
+}
+
+/* A change of speed lights the speed up for a moment. */
+TEST(strip_lights_the_speed_when_it_changes) {
+    t = 1;
+    start_watching();
+    CHECK(renderer);
+    const display_overlay *o = strip_overlay();
+    display_layout l = window_layout();
+    float b = STRIP_HEIGHT;
+    int x = (int)(b / 4 + 3 * b + b / 4 + 0.75f * b + 1), y = 600 + 2; /* the speed's corner */
+    CHECK(o->shown() == 0); /* fading in */
+    t = 1 + STRIP_FADE;
+    draw_strip(o, &l);
+    int dark = red_at(x, y);
+    watch_act(WATCH_FASTER, false);
+    CHECK(o->changed());
+    draw_strip(o, &l);
+    CHECK(red_at(x, y) > dark + 30);
+    t = 1 + STRIP_FADE + STRIP_SPEED_LIT;
+    draw_strip(o, &l);
+    CHECK_EQ(red_at(x, y), dark);
+    watch_reset();
+}

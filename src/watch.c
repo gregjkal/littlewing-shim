@@ -48,6 +48,10 @@ static const int speeds[] = {1, 2, 4, 8, 0};
 #define EXPORT_POLL_GAP 0.25
 /* How long the viewer waits, quitting, for the export it stops. */
 #define EXPORT_STOP_WAIT 2.0
+/* The speed reached (watch_state's reached) is measured over the last
+   RATE_SAMPLES - 1 gaps of RATE_GAP seconds of paced play. */
+#define RATE_GAP 0.25
+#define RATE_SAMPLES 5
 
 static struct {
     bool on, started, at_end;
@@ -78,6 +82,10 @@ static struct {
     uint64_t anchor_us;
     double paced_wall; /* the wall clock when the clock last moved */
     unsigned minutes;  /* whole minutes of the clock logged since the anchor */
+    /* The clock against the wall clock, oldest first, for the speed reached. */
+    double rate_wall[RATE_SAMPLES];
+    uint64_t rate_us[RATE_SAMPLES];
+    int nrate;
     bool pending;      /* the screen changed and isn't drawn yet */
     double drawn, polled;
     /* An unpaced stretch (going or skipping): when it began on both clocks,
@@ -234,12 +242,44 @@ static bool sound_on(void) {
     return speeds[W.speed] == 1 && !W.paused && !W.going && !W.seeking && !W.skipping && !W.at_end;
 }
 
-/* The wall clock and the replay's clock line up from now. */
-static void anchor(void) {
+/* The wall clock and the replay's clock line up from now, after falling
+   behind: the speed reached is measured on across it. */
+static void realign(void) {
     W.anchor_wall = W.paced_wall = wall_seconds();
     W.anchor_us = W.clock_us;
     W.minutes = 0;
     sound_monitor(sound_on());
+}
+
+/* They line up from now, after anything but falling behind: the speed
+   reached is measured afresh. */
+static void anchor(void) {
+    realign();
+    W.nrate = 0;
+}
+
+/* The replay's clock moved, paced: a sample for the speed reached, at most
+   every RATE_GAP. */
+static void sample_rate(void) {
+    double now = wall_seconds();
+    if (W.nrate && now - W.rate_wall[W.nrate - 1] < RATE_GAP)
+        return;
+    if (W.nrate == RATE_SAMPLES) {
+        memmove(W.rate_wall, W.rate_wall + 1, (RATE_SAMPLES - 1) * sizeof W.rate_wall[0]);
+        memmove(W.rate_us, W.rate_us + 1, (RATE_SAMPLES - 1) * sizeof W.rate_us[0]);
+        W.nrate--;
+    }
+    W.rate_wall[W.nrate] = now;
+    W.rate_us[W.nrate++] = W.clock_us;
+}
+
+/* The speed reached over the samples, or 0 until they span RATE_SAMPLES
+   - 1 gaps. */
+static float rate(void) {
+    if (W.nrate < RATE_SAMPLES)
+        return 0;
+    double wall = W.rate_wall[W.nrate - 1] - W.rate_wall[0];
+    return wall > 0 ? (float)((double)(W.rate_us[W.nrate - 1] - W.rate_us[0]) / 1e6 / wall) : 0;
 }
 
 /* At 1x: how long the game's time since the anchor took on the wall clock. */
@@ -360,7 +400,7 @@ static void pace(uint64_t clock_us) {
                     log_msg("watch: %.2f s behind at %s; going on from there", now - at,
                             clip_format_time(play_tick_of(clock_us), t, sizeof t));
                 W.clock_us = clock_us;
-                anchor();
+                realign();
             }
             break;
         }
@@ -373,6 +413,7 @@ static void pace(uint64_t clock_us) {
     }
     W.clock_us = clock_us;
     W.paced_wall = wall_seconds();
+    sample_rate();
     if (speeds[W.speed] == 1 && (W.clock_us - W.anchor_us) / 60000000 > W.minutes) {
         W.minutes++;
         log_run("a minute");
@@ -703,6 +744,7 @@ void watch_get_state(watch_state *s) {
     s->paused = W.paused;
     s->at_end = W.at_end;
     s->speed = speeds[W.speed];
+    s->reached = W.paused || W.at_end || W.going || W.seeking || W.skipping ? 0 : rate();
     s->have_in = W.have_in;
     s->in = W.in;
     s->marks = W.marks;
@@ -953,6 +995,17 @@ static void log_at_exit(void) {
 
 static void held_at_end(void) { watch_hold(); }
 
+/* The replay can't go on: said in a message box (main.c's failure hook),
+   while the window is still up. */
+static void desynced(const char *msg) {
+    char t[32], text[256];
+    (void)msg; /* logged already, with the step */
+    snprintf(text, sizeof text,
+             "The replay went out of step with the recording at %s, so it can't go on.",
+             fmt_seconds(now_tick(), t, sizeof t));
+    util_report_failure(text);
+}
+
 void watch_start(const char *title) {
     if (!W.on)
         return;
@@ -962,6 +1015,7 @@ void watch_start(const char *title) {
     read_clips();
     replay_set_pace(pace);
     replay_set_end(held_at_end);
+    replay_set_desync(desynced);
     seek_start(landed);
     strip_install();
     display_raise_on_open();

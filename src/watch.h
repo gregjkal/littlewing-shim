@@ -25,7 +25,9 @@
 
    The window's title says the game's time and the speed, and so does a
    strip of controls below the game (strip.h), whose buttons do what their
-   keys do. Only 1x has sound.
+   keys do. What the viewer has to say ("clip 1 saved") goes on the strip
+   (display_flash). Only 1x has sound. A desync says so in a message box
+   before the window closes.
 
    Exporting runs in a second copy of this program while the viewer goes on,
    one export at a time, and the title says how far it has got. Once it is
@@ -132,6 +134,10 @@ typedef struct {
     uint32_t length; /* the recording's (replay_play_length) */
     bool paused, at_end;
     int speed; /* 1, 2, 4 or 8, or 0 for as fast as it can */
+    /* The speed the replay has reached, measured over the last second of
+       play at this speed (HD at 8x may not keep up), or 0 when not known:
+       paused, going to a time, or just changed. */
+    float reached;
     bool have_in;
     uint32_t in; /* a clip's start, I, not yet ended */
     const uint32_t *marks; /* the replay's, in order */

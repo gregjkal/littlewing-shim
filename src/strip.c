@@ -29,6 +29,12 @@ typedef struct {
     bool have_in;
     uint32_t in;
     size_t nmarks, nclips;
+    char speed_text[16];
+    bool short_of;
+    int lit;  /* the speed's light, in 64ths */
+    int sign; /* the pause or play sign, in 64ths */
+    bool sign_paused;
+    unsigned said; /* the message's number, or 0 when none is shown */
 } look;
 
 static struct {
@@ -41,6 +47,14 @@ static struct {
     /* The fade: toward up (or down) from opacity from_op at from_t. */
     bool up;
     double from_op, from_t;
+    /* The pause and the speed as last seen, to light up what changed. */
+    bool seen, seen_paused;
+    int seen_speed;
+    double sign_at, lit_at; /* when they changed, or 0 */
+    /* What the viewer said last (say), and when. */
+    char said[200];
+    unsigned said_n;
+    double said_at;
     look drawn;
 } S;
 
@@ -61,16 +75,25 @@ static double opacity_at(double t) {
     return op < 1e-6 ? 0 : op > 1 - 1e-6 ? 1 : op; /* ends that rounding misses by a hair */
 }
 
+#define SAY_FOR (DISPLAY_FLASH_MS / 1000.0)
+
+/* Whether a message is shown at t. */
+static bool saying(double t) { return S.said_n && t - S.said_at < SAY_FOR; }
+
 /* How far up the strip is now, after turning it toward up or down. It
    turns up at an event, which settles it before and after (settle), and
-   down STRIP_HIDE_AFTER after the last, however late that's seen. */
+   down STRIP_HIDE_AFTER after the last, or as a message goes, however late
+   that's seen. */
 static double opacity(void) {
     double t = now();
-    bool up = S.over || t - S.active < STRIP_HIDE_AFTER;
+    double until = S.active + STRIP_HIDE_AFTER;
+    if (S.said_n && S.said_at + SAY_FOR > until)
+        until = S.said_at + SAY_FOR;
+    bool up = S.over || t < until;
     if (up != S.up) {
         double at = t;
-        if (!up && S.active + STRIP_HIDE_AFTER < t && S.active + STRIP_HIDE_AFTER > S.from_t)
-            at = S.active + STRIP_HIDE_AFTER;
+        if (!up && until < t && until > S.from_t)
+            at = until;
         S.from_op = opacity_at(at);
         S.from_t = at;
         S.up = up;
@@ -87,6 +110,14 @@ void strip_poke(void) {
 }
 
 static float shown(void) { return (float)opacity(); }
+
+static void say(const char *msg) {
+    settle();
+    snprintf(S.said, sizeof S.said, "%s", msg);
+    S.said_n++;
+    S.said_at = now();
+    settle();
+}
 
 /* ---- where things go ---- */
 
@@ -109,11 +140,16 @@ static void time_text(const watch_state *w, char *out, size_t cap) {
     snprintf(out, cap, "%s / %s", a, b);
 }
 
-static void speed_text(int speed, char *out, size_t cap) {
-    if (speed)
-        snprintf(out, cap, "%dx", speed);
+bool strip_speed_text(const watch_state *w, char *out, size_t cap) {
+    float r = w->reached;
+    bool short_of = w->speed && r > 0 && r < STRIP_SHORT_OF * (float)w->speed;
+    if (short_of || (!w->speed && r > 0))
+        snprintf(out, cap, r < 9.95f ? "%.1fx" : "%.0fx", (double)r);
+    else if (w->speed)
+        snprintf(out, cap, "%dx", w->speed);
     else
         snprintf(out, cap, "max");
+    return short_of;
 }
 
 static places place(const display_layout *l, const watch_state *w) {
@@ -127,7 +163,7 @@ static places place(const display_layout *l, const watch_state *w) {
     x += b / 4;
     p.button[STRIP_SLOWER] = (display_rect){x, y, b * 0.75f, b};
     x += b * 0.75f;
-    p.speed = (display_rect){x, y, 4 * ch, b}; /* "max", with room */
+    p.speed = (display_rect){x, y, 4 * ch, b}; /* "max" or "5.2x" */
     x += 4 * ch;
     p.button[STRIP_FASTER] = (display_rect){x, y, b * 0.75f, b};
     x += b * 0.75f + b / 2;
@@ -298,10 +334,23 @@ static void press(const display_layout *l, float x, float y, bool down) {
 
 /* ---- drawing ---- */
 
+/* 1 at the moment at, fading to 0 over secs; 0 if at is 0. In 64ths. */
+static int fading(double at, double secs, double t) {
+    double f = at ? 1 - (t - at) / secs : 0;
+    return f <= 0 ? 0 : f >= 1 ? 64 : (int)(f * 64 + 0.5);
+}
+
 static look look_now(void) {
     watch_state w;
     watch_get_state(&w);
-    double op = opacity();
+    double op = opacity(), t = now();
+    if (S.seen && w.paused != S.seen_paused)
+        S.sign_at = t;
+    if (S.seen && w.speed != S.seen_speed)
+        S.lit_at = t;
+    S.seen = true;
+    S.seen_paused = w.paused;
+    S.seen_speed = w.speed;
     look k;
     memset(&k, 0, sizeof k); /* padding too: looks are compared whole */
     k.opacity = (int)(op * 64 + 0.5);
@@ -323,6 +372,11 @@ static look look_now(void) {
     k.in = w.have_in ? w.in : 0;
     k.nmarks = w.nmarks;
     k.nclips = w.nclips;
+    k.short_of = strip_speed_text(&w, k.speed_text, sizeof k.speed_text);
+    k.lit = fading(S.lit_at, STRIP_SPEED_LIT, t);
+    k.sign = fading(S.sign_at, STRIP_SIGN, t);
+    k.sign_paused = w.paused;
+    k.said = saying(t) ? S.said_n : 0;
     return k;
 }
 
@@ -380,11 +434,13 @@ static void diamond(SDL_Renderer *r, float cx, float cy, float h) {
     SDL_RenderGeometry(r, NULL, v, 4, ix, 6);
 }
 
-/* A tip above the strip, from x, kept in the window. */
-static void draw_tip(SDL_Renderer *r, const display_layout *l, float k, float x, const char *t,
-                     float op) {
+/* A tip above the strip, from x, kept in the window: on the row just
+   above it (row 0), or rows higher. */
+static void draw_tip(SDL_Renderer *r, const display_layout *l, float k, float x, int row,
+                     const char *t, float op) {
     float ch = SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE * k, pad = ch / 2;
-    display_rect tip = {x, l->strip.y - ch - 3 * pad, (float)strlen(t) * ch + 2 * pad, ch + 2 * pad};
+    display_rect tip = {x, l->strip.y - (float)(row + 1) * (ch + 3 * pad),
+                        (float)strlen(t) * ch + 2 * pad, ch + 2 * pad};
     if (tip.x + tip.w > l->strip.x + l->strip.w)
         tip.x = l->strip.x + l->strip.w - tip.w;
     if (tip.x < 0)
@@ -443,7 +499,8 @@ static void draw_bar(SDL_Renderer *r, const display_layout *l, const places *p, 
     char t[64];
     strip_spot_tip(&k->spot, w, t, sizeof t);
     float cw = SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE * p->k;
-    draw_tip(r, l, p->k, x - ((float)strlen(t) + 1) * cw / 2, t, op); /* centered on the spot */
+    draw_tip(r, l, p->k, x - ((float)strlen(t) + 1) * cw / 2, k->said ? 1 : 0, t,
+             op); /* centered on the spot, above a message */
 }
 
 static void draw_icon(SDL_Renderer *r, strip_button b, display_rect d, const look *k, float kk) {
@@ -471,6 +528,47 @@ static void draw_icon(SDL_Renderer *r, strip_button b, display_rect d, const loo
     }
 }
 
+/* The pause sign (paused) or the play sign over the middle of the game, at
+   alpha, growing as it fades, as YouTube's does. */
+static void draw_sign(SDL_Renderer *r, const display_layout *l, bool paused, float alpha) {
+    enum { N = 48 };
+    float side = l->game.w < l->game.h ? l->game.w : l->game.h;
+    float rad = side * 0.07f * (1.5f - alpha / 2), cx = l->game.x + l->game.w / 2,
+          cy = l->game.y + l->game.h / 2;
+    SDL_FColor bg = {16 / 255.f, 16 / 255.f, 16 / 255.f, 0.6f * alpha};
+    SDL_Vertex v[N + 1];
+    int ix[3 * N];
+    v[N] = (SDL_Vertex){{cx, cy}, bg, {0, 0}};
+    for (int i = 0; i < N; i++) {
+        float a = 2 * SDL_PI_F * (float)i / N;
+        v[i] = (SDL_Vertex){{cx + rad * SDL_cosf(a), cy + rad * SDL_sinf(a)}, bg, {0, 0}};
+        ix[3 * i] = N;
+        ix[3 * i + 1] = i;
+        ix[3 * i + 2] = (i + 1) % N;
+    }
+    SDL_RenderGeometry(r, NULL, v, N + 1, ix, 3 * N);
+    color(r, 235, alpha);
+    float s = rad * 0.9f;
+    if (paused) {
+        float bw = s * 0.3f;
+        fill(r, (display_rect){cx - s * 0.4f, cy - s / 2, bw, s});
+        fill(r, (display_rect){cx + s * 0.4f - bw, cy - s / 2, bw, s});
+    } else {
+        triangle(r, cx + s * 0.08f, cy, s, 1); /* nudged right: it looks centered */
+    }
+}
+
+/* What the viewer said, above the strip at its left, cut to fit. */
+static void draw_said(SDL_Renderer *r, const display_layout *l, const places *p, float op) {
+    float ch = SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE * p->k, x = p->button[STRIP_PLAY].x;
+    size_t fits = (size_t)SDL_max(0.f, (l->strip.x + l->strip.w - 2 * x) / ch - 1);
+    char t[sizeof S.said];
+    snprintf(t, sizeof t, "%s", S.said);
+    if (strlen(t) > fits && fits > 3)
+        snprintf(t + fits - 3, sizeof t - (fits - 3), "...");
+    draw_tip(r, l, p->k, x, 0, t, op);
+}
+
 /* A thin line across the bottom of the window: how far the replay has got. */
 static void draw_line(SDL_Renderer *r, const display_layout *l, const watch_state *w, float alpha) {
     float th = 2 * l->density, y = l->strip.y + l->strip.h - th;
@@ -490,6 +588,8 @@ static void draw(void *renderer, const display_layout *l) {
     watch_get_state(&w);
     float op = (float)k->opacity / 64;
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    if (k->sign)
+        draw_sign(r, l, k->sign_paused, (float)k->sign / 64);
     if (op < 1)
         draw_line(r, l, &w, 1 - op);
     if (op <= 0)
@@ -507,16 +607,25 @@ static void draw(void *renderer, const display_layout *l) {
         draw_icon(r, (strip_button)i, p.button[i], k, p.k);
     }
     char t[64];
+    if (k->lit) {
+        color(r, 255, 0.3f * op * (float)k->lit / 64);
+        fill(r, p.speed);
+    }
+    if (k->short_of)
+        SDL_SetRenderDrawColor(r, 240, 190, 40, (Uint8)(op * 255 + 0.5f));
+    else
+        color(r, 235, op);
+    text(r, p.speed, p.k, k->speed_text);
     color(r, 235, op);
-    speed_text(w.speed, t, sizeof t);
-    text(r, p.speed, p.k, t);
     time_text(&w, t, sizeof t);
     text(r, p.time, p.k, t);
     if (p.bar.w > 0)
         draw_bar(r, l, &p, &w, k, op);
-    if (k->tip) { /* above the strip, from the button's left */
+    if (k->said)
+        draw_said(r, l, &p, op);
+    if (k->tip) { /* above the strip (and a message), from the button's left */
         strip_tip(k->hover, t, sizeof t);
-        draw_tip(r, l, p.k, p.button[k->hover].x, t, op);
+        draw_tip(r, l, p.k, p.button[k->hover].x, k->said ? 1 : 0, t, op);
     }
 }
 
@@ -528,6 +637,7 @@ static const display_overlay overlay = {
     .shown = shown,
     .pointer = pointer,
     .press = press,
+    .say = say,
 };
 
 const display_overlay *strip_overlay(void) { return &overlay; }

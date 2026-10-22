@@ -354,7 +354,19 @@ static void ov_press(const display_layout *l, float x, float y, bool down) {
     press_x = x;
     press_y = y;
 }
-static const display_overlay test_overlay = {16, 100, ov_draw, ov_changed, ov_shown, ov_pointer, ov_press};
+static char ov_said[64];
+static void ov_say(const char *msg) { snprintf(ov_said, sizeof ov_said, "%s", msg); }
+static const display_overlay test_overlay = {16,       100,        ov_draw,  ov_changed,
+                                             ov_shown, ov_pointer, ov_press, ov_say};
+
+/* With an overlay, a message goes to it rather than the window's title,
+   window or not. */
+TEST(display_flash_goes_to_the_overlay) {
+    display_set_overlay(&test_overlay);
+    display_flash("clip 1 saved: 0:10-0:20");
+    CHECK_STR(ov_said, "clip 1 saved: 0:10-0:20");
+    display_set_overlay(NULL);
+}
 
 /* With an overlay, the window grows by its strip, a click on the strip is
    its and a click on the game still maps to the screen, and the pointer's

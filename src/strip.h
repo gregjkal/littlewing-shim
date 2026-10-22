@@ -23,18 +23,31 @@
    clip's start; a click goes there (watch_go_to): to a mark or a clip's
    start exactly, and elsewhere to the time under the pointer.
 
+   The speed says the speed the replay reaches (watch_state's reached)
+   when it falls short of the one asked, in amber, and at "max" once it's
+   known; it lights up for a moment when the speed changes. Pausing or
+   going on shows a pause or play sign over the middle of the game, which
+   fades in STRIP_SIGN seconds. What the viewer has to say (display_flash,
+   through the overlay's say) is shown above the strip, at its left, for
+   DISPLAY_FLASH_MS, with the strip up all the while; a tip goes above it.
+
    The strip comes up when the pointer moves over the window or one of the
    viewer's keys is pressed (strip_poke), and goes STRIP_HIDE_AFTER seconds
-   after the last, fading out, but not while the pointer is on it. Down, a
-   thin line across the bottom of the window still says how far the replay
-   has got, and the pointer hides with the strip. It's up for its first
-   STRIP_HIDE_AFTER seconds, so that it's seen. */
+   after the last, fading out, but not while the pointer is on it or a
+   message is shown. Down, a thin line across the bottom of the window
+   still says how far the replay has got, and the pointer hides with the
+   strip. It's up for its first STRIP_HIDE_AFTER seconds, so that it's
+   seen. */
 
 #define STRIP_HEIGHT 32       /* points */
 #define STRIP_MIN_WIDTH 440   /* points: the narrowest window that holds the controls */
 #define STRIP_HIDE_AFTER 2.25 /* seconds */
 #define STRIP_FADE 0.2        /* seconds, in or out */
 #define STRIP_TIP_AFTER 0.5   /* seconds the pointer rests on a button before its tip shows */
+#define STRIP_SIGN 0.6        /* seconds the pause or play sign takes to fade */
+#define STRIP_SPEED_LIT 0.6   /* seconds the speed stays lit after it changes, fading */
+/* Below this much of the speed asked, the speed reached is shown. */
+#define STRIP_SHORT_OF 0.9
 
 /* Makes the strip the display's overlay. Before the window opens. */
 void strip_install(void);
@@ -77,6 +90,11 @@ void strip_spot_tip(const strip_spot *s, const watch_state *w, char *out, size_t
 
 /* For tests: the bar, in the window's pixels. */
 display_rect strip_bar(const display_layout *l, const watch_state *w);
+
+/* What the speed says: "2x", "max", or the speed reached (w->reached)
+   when it's below STRIP_SHORT_OF of the speed asked, or at max once it's
+   known: "5.2x", "18x". True when that is short of the speed asked. */
+bool strip_speed_text(const watch_state *w, char *out, size_t cap);
 
 /* What a button's tip says: its name and its key, "Back 10 s (J)". */
 void strip_tip(strip_button b, char *out, size_t cap);
