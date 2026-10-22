@@ -175,7 +175,8 @@ int watch_mark_from(const watch_state *s, int dir);
 
 /* Dragging on the strip's bar (a click is a short drag): the press pauses
    (unless paused already, or at the end), and the release goes to tick,
-   then goes on again if the press paused. Both do nothing until
+   then goes on again if the press paused and nothing has paused or gone
+   on since (Space, or a frame back or ahead). Both do nothing until
    watch_start. A newer seek replaces one not yet
    served, so the last release wins. */
 void watch_scrub_start(void);

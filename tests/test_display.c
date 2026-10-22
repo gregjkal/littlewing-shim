@@ -332,7 +332,7 @@ TEST(display_lay_out_letterboxes_the_game_and_places_the_strip) {
     CHECK_EQ((int)l.game.w, 0);
 }
 
-static int strip_presses, strip_releases, strip_moves;
+static int strip_presses, strip_releases, strip_moves, strip_leaves;
 static float strip_up = 1;
 static float press_x, press_y;
 static void ov_draw(void *r, const display_layout *l) {
@@ -345,8 +345,9 @@ static void ov_draw(void *r, const display_layout *l) {
 static bool ov_changed(void) { return false; }
 static float ov_shown(void) { return strip_up; }
 static void ov_pointer(const display_layout *l, float x, float y, bool in) {
-    (void)l, (void)x, (void)y, (void)in;
+    (void)l, (void)x, (void)y;
     strip_moves++;
+    strip_leaves += !in;
 }
 static void ov_press(const display_layout *l, float x, float y, bool down) {
     (void)l;
@@ -418,8 +419,9 @@ static void push_motion(float x, float y) {
 }
 
 /* A press on the strip is a drag: its release is the strip's wherever it
-   comes, over the game too, and the window losing focus first releases it
-   where the pointer was. A release with no press on the strip before it
+   comes, over the game too, the pointer leaving the window meanwhile isn't
+   news to it, and the window losing focus first releases it where the
+   pointer was. A release with no press on the strip before it
    is the game's. */
 TEST(display_poll_gives_a_drag_on_the_strip_its_release) {
     gm_init();
@@ -429,9 +431,14 @@ TEST(display_poll_gives_a_drag_on_the_strip_its_release) {
     display_present(); /* a 128 x 96 game and the 16-point strip */
     static const display_input in = {on_key, on_focus, on_quit, on_mouse, on_paste, on_mark};
     display_set_input(&in);
-    clicks = strip_presses = strip_releases = 0;
+    display_poll(); /* what opening the window queued */
+    clicks = strip_presses = strip_releases = strip_leaves = 0;
     mouse_x = -1;
     push_click(64, 104, true, SDL_BUTTON_LEFT);
+    SDL_Event leave;
+    memset(&leave, 0, sizeof leave);
+    leave.type = SDL_EVENT_WINDOW_MOUSE_LEAVE;
+    SDL_PushEvent(&leave);
     push_motion(30, 20);
     push_click(30, 20, false, SDL_BUTTON_LEFT); /* over the game */
     display_poll();
@@ -439,6 +446,10 @@ TEST(display_poll_gives_a_drag_on_the_strip_its_release) {
     CHECK_EQ(strip_releases, 1);
     CHECK_EQ((int)press_y, 20);
     CHECK_EQ(mouse_x, -1);
+    CHECK_EQ(strip_leaves, 0);
+    SDL_PushEvent(&leave); /* not dragging: the strip hears of it */
+    display_poll();
+    CHECK_EQ(strip_leaves, 1);
     push_click(30, 20, false, SDL_BUTTON_LEFT); /* no press before it: the game's */
     display_poll();
     CHECK_EQ(strip_releases, 1);

@@ -349,12 +349,19 @@ static void pointer(const display_layout *l, float x, float y, bool in) {
     settle();
 }
 
-/* The pause as it is now is no news: pausing for a drag and going on
-   after it show no sign. */
-static void pause_seen(void) {
+/* Pausing for a drag and going on after it show no sign: when the sign
+   was up to date before (pause_settled), the pause after is no news. */
+static bool pause_settled(void) {
     watch_state w;
     watch_get_state(&w);
-    S.seen_paused = w.paused;
+    return w.paused == S.seen_paused;
+}
+
+static void pause_seen(bool settled) {
+    watch_state w;
+    watch_get_state(&w);
+    if (settled)
+        S.seen_paused = w.paused;
 }
 
 static void press(const display_layout *l, float x, float y, bool down) {
@@ -367,8 +374,10 @@ static void press(const display_layout *l, float x, float y, bool down) {
         if (!S.drag)
             return;
         S.drag = false;
-        watch_scrub_end(drag_spot(l, &w, x).tick);
-        pause_seen();
+        strip_spot s = drag_spot(l, &w, x);
+        bool settled = pause_settled();
+        watch_scrub_end(s.on != STRIP_ON_NOTHING ? s.tick : w.now); /* no bar: stays */
+        pause_seen(settled);
         watch_get_state(&w);
         S.over = inside(l->strip, x, y);
         S.spot = S.over ? strip_spot_at(l, &w, x, y) : (strip_spot){STRIP_ON_NOTHING, -1, 0};
@@ -385,8 +394,9 @@ static void press(const display_layout *l, float x, float y, bool down) {
         return;
     S.drag = true;
     S.spot = s;
+    bool settled = pause_settled();
     watch_scrub_start();
-    pause_seen();
+    pause_seen(settled);
 }
 
 /* ---- drawing ---- */

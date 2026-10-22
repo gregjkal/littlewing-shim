@@ -1153,8 +1153,9 @@ TEST(replay_watching_shows_marks_and_clips_on_the_timeline) {
 
 /* Dragging on the bar while playing: the press pauses, moving the
    pointer (off the strip too) goes nowhere, and the release goes to the
-   time under it and plays on. On the way there, the bar shows where
-   playback is and a caret where it's going. */
+   time under it and plays on, with no pause or play sign for either. On
+   the way there, the bar shows where playback is and a caret where it's
+   going. */
 static void child_drag(void *unused) {
     (void)unused;
     char list[1300];
@@ -1163,8 +1164,13 @@ static void child_drag(void *unused) {
     watch_get_state(&s);
     display_present();
     int w, h;
-    free(display_read_window(&w, &h));
+    uint8_t *before = display_read_window(&w, &h);
+    if (!before)
+        _exit(1);
     display_layout l = display_lay_out((float)w, (float)h, 800, 600, STRIP_HEIGHT, false);
+    uint8_t middle[4];
+    memcpy(middle, pixel(before, w, l.game.x + l.game.w / 2, l.game.y + l.game.h / 2), 4);
+    free(before);
     display_rect bar = strip_bar(&l, &s);
     float cy = bar.y + bar.h / 2;
 #define AT(tick) (bar.x + bar.w * (float)(tick) / 3600)
@@ -1192,6 +1198,13 @@ static void child_drag(void *unused) {
     uint8_t *px = display_read_window(&w, &h);
     if (!px)
         _exit(1);
+    /* The sign would be over the middle of the game, and isn't. */
+    const uint8_t *mid = pixel(px, w, l.game.x + l.game.w / 2, l.game.y + l.game.h / 2);
+    if (memcmp(mid, middle, 4) != 0) {
+        fprintf(stderr, "a sign: %d %d %d, was %d %d %d\n", mid[0], mid[1], mid[2], middle[0],
+                middle[1], middle[2]);
+        _exit(6);
+    }
     const uint8_t *caret = pixel(px, w, AT(3000) - 1, cy - 1.5f * bar.h); /* a pixel wide */
     for (int i = 0; i <= 2; i++) {
         const uint8_t *p = pixel(px, w, AT(3000) - 1 + (float)i, cy - 1.5f * bar.h);
@@ -1206,6 +1219,50 @@ static void child_drag(void *unused) {
     free(px);
 #undef AT
     _exit(0);
+}
+
+/* What a drag leaves the pause as: paused before it, still paused; playing
+   with Space pressed once during it (going on), playing; with Space twice
+   (paused again, on purpose), paused. */
+enum { DRAG_PAUSED, DRAG_SPACE_ONCE, DRAG_SPACE_TWICE };
+static void child_drag_pause(void *arg) {
+    int how = *(const int *)arg;
+    char list[1300];
+    watch_with_clips(how == DRAG_PAUSED, list, sizeof list);
+    watch_state s;
+    watch_get_state(&s);
+    display_present();
+    int w, h;
+    free(display_read_window(&w, &h));
+    display_layout l = display_lay_out((float)w, (float)h, 800, 600, STRIP_HEIGHT, false);
+    display_rect bar = strip_bar(&l, &s);
+    float cy = bar.y + bar.h / 2, x = bar.x + bar.w * 3000 / 3600;
+    const display_overlay *o = strip_overlay();
+    o->press(&l, x, cy, true);
+    for (int i = 0; i < how; i++)
+        watch_key(SDL_SCANCODE_SPACE, true, false);
+    o->press(&l, x, cy, false);
+    watch_get_state(&s);
+    bool paused = how != DRAG_SPACE_ONCE;
+    if (s.now != 3000 || s.paused != paused) {
+        fprintf(stderr, "after: now %u, paused %d\n", s.now, s.paused);
+        _exit(2);
+    }
+    _exit(0);
+}
+
+TEST(replay_watching_leaves_the_pause_after_a_drag_as_the_user_left_it) {
+    BEGIN_TEST();
+    CHECK(record_marked());
+    static const int hows[] = {DRAG_PAUSED, DRAG_SPACE_ONCE, DRAG_SPACE_TWICE};
+    for (size_t i = 0; i < sizeof hows / sizeof hows[0]; i++) {
+        char out[16384];
+        int status = test_run_child(child_drag_pause, (void *)&hows[i], out, sizeof out);
+        if (status)
+            fprintf(stderr, "case %zu: %s", i, out);
+        CHECK_EQ(status, 0);
+        CHECK_CONTAINS(out, "watch: going to 0:50");
+    }
 }
 
 TEST(replay_watching_seeks_once_at_the_end_of_a_drag) {

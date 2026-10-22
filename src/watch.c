@@ -794,7 +794,7 @@ void watch_scrub_end(uint32_t tick) {
         return;
     strip_poke();
     go_to(tick);
-    if (W.scrub_paused && W.paused) /* not if Space went on already */
+    if (W.scrub_paused && W.paused)
         toggle_pause();
     W.scrub_paused = false;
     update_title();
@@ -821,6 +821,8 @@ void watch_act(watch_action action, bool repeat) {
     if (!W.started || (repeat && !step)) /* only the steps go on while their key is held */
         return;
     strip_poke();
+    if (action == WATCH_PLAY_PAUSE || action == WATCH_FRAME_BACK || action == WATCH_FRAME_AHEAD)
+        W.scrub_paused = false; /* the pause is the user's again, mid-drag too */
     switch (action) {
     case WATCH_PLAY_PAUSE:
         if (!W.at_end)
