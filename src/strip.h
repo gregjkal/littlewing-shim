@@ -96,6 +96,10 @@ display_rect strip_bar(const display_layout *l, const watch_state *w);
    known: "5.2x", "18x". True when that is short of the speed asked. */
 bool strip_speed_text(const watch_state *w, char *out, size_t cap);
 
+/* text as the strip's font can draw it, which is ASCII only: curly quotes
+   straight, an ellipsis "...", a dash "-", anything else "?". */
+void strip_ascii(const char *text, char *out, size_t cap);
+
 /* What a button's tip says: its name and its key, "Back 10 s (J)". */
 void strip_tip(strip_button b, char *out, size_t cap);
 

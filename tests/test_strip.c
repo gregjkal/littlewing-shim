@@ -377,3 +377,38 @@ TEST(strip_lights_the_speed_when_it_changes) {
     CHECK_EQ(red_at(x, y), dark);
     watch_reset();
 }
+
+/* The font draws ASCII only, so a message from macOS ("“game.lwreplay”
+   couldn’t be moved") is folded to it, a character a character. */
+TEST(strip_ascii_folds_what_the_font_cannot_draw) {
+    char t[64];
+    strip_ascii("\xe2\x80\x9cgame.lwreplay\xe2\x80\x9d couldn\xe2\x80\x99t be moved", t, sizeof t);
+    CHECK_STR(t, "\"game.lwreplay\" couldn't be moved");
+    strip_ascii("wait\xe2\x80\xa6 caf\xc3\xa9 1\xe2\x80\x93" "2", t, sizeof t);
+    CHECK_STR(t, "wait... caf? 1-2");
+    strip_ascii("abcdef", t, 4); /* cut to fit */
+    CHECK_STR(t, "abc");
+}
+
+/* The speed reached: 0 until there are enough samples, the clock against
+   the wall clock over them, and measured afresh after a stall. */
+TEST(watch_rate_measures_the_speed_and_forgets_a_stall) {
+    watch_rate r;
+    memset(&r, 0, sizeof r);
+    double wall = 100;
+    uint64_t us = 0;
+    for (int i = 0; i < WATCH_RATE_SAMPLES - 1; i++, wall += WATCH_RATE_GAP, us += 1250000)
+        watch_rate_sample(&r, wall, us); /* 5x */
+    CHECK(watch_rate_of(&r) == 0);
+    watch_rate_sample(&r, wall, us);
+    CHECK(watch_rate_of(&r) > 4.99f && watch_rate_of(&r) < 5.01f);
+    watch_rate_sample(&r, wall + WATCH_RATE_GAP / 2, us + 1); /* too soon: not a sample */
+    CHECK(watch_rate_of(&r) > 4.99f && watch_rate_of(&r) < 5.01f);
+    wall += 2; /* a menu held the loop for 2 s */
+    us += 1250000;
+    watch_rate_sample(&r, wall, us);
+    CHECK(watch_rate_of(&r) == 0); /* not 5 / 9 x: measured afresh */
+    for (int i = 1; i < WATCH_RATE_SAMPLES; i++)
+        watch_rate_sample(&r, wall + i * WATCH_RATE_GAP, us + (uint64_t)i * 250000); /* 1x */
+    CHECK(watch_rate_of(&r) > 0.99f && watch_rate_of(&r) < 1.01f);
+}

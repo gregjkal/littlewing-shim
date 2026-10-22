@@ -48,10 +48,6 @@ static const int speeds[] = {1, 2, 4, 8, 0};
 #define EXPORT_POLL_GAP 0.25
 /* How long the viewer waits, quitting, for the export it stops. */
 #define EXPORT_STOP_WAIT 2.0
-/* The speed reached (watch_state's reached) is measured over the last
-   RATE_SAMPLES - 1 gaps of RATE_GAP seconds of paced play. */
-#define RATE_GAP 0.25
-#define RATE_SAMPLES 5
 
 static struct {
     bool on, started, at_end;
@@ -82,10 +78,7 @@ static struct {
     uint64_t anchor_us;
     double paced_wall; /* the wall clock when the clock last moved */
     unsigned minutes;  /* whole minutes of the clock logged since the anchor */
-    /* The clock against the wall clock, oldest first, for the speed reached. */
-    double rate_wall[RATE_SAMPLES];
-    uint64_t rate_us[RATE_SAMPLES];
-    int nrate;
+    watch_rate rate; /* the speed reached */
     bool pending;      /* the screen changed and isn't drawn yet */
     double drawn, polled;
     /* An unpaced stretch (going or skipping): when it began on both clocks,
@@ -243,7 +236,8 @@ static bool sound_on(void) {
 }
 
 /* The wall clock and the replay's clock line up from now, after falling
-   behind: the speed reached is measured on across it. */
+   behind: the speed reached is measured on across it, unless it was a
+   stall (watch_rate_sample). */
 static void realign(void) {
     W.anchor_wall = W.paced_wall = wall_seconds();
     W.anchor_us = W.clock_us;
@@ -255,31 +249,28 @@ static void realign(void) {
    reached is measured afresh. */
 static void anchor(void) {
     realign();
-    W.nrate = 0;
+    W.rate.n = 0;
 }
 
-/* The replay's clock moved, paced: a sample for the speed reached, at most
-   every RATE_GAP. */
-static void sample_rate(void) {
-    double now = wall_seconds();
-    if (W.nrate && now - W.rate_wall[W.nrate - 1] < RATE_GAP)
+void watch_rate_sample(watch_rate *r, double wall, uint64_t us) {
+    if (r->n && wall - r->wall[r->n - 1] < WATCH_RATE_GAP)
         return;
-    if (W.nrate == RATE_SAMPLES) {
-        memmove(W.rate_wall, W.rate_wall + 1, (RATE_SAMPLES - 1) * sizeof W.rate_wall[0]);
-        memmove(W.rate_us, W.rate_us + 1, (RATE_SAMPLES - 1) * sizeof W.rate_us[0]);
-        W.nrate--;
+    if (r->n && wall - r->wall[r->n - 1] >= WATCH_STALL)
+        r->n = 0;
+    if (r->n == WATCH_RATE_SAMPLES) {
+        memmove(r->wall, r->wall + 1, (WATCH_RATE_SAMPLES - 1) * sizeof r->wall[0]);
+        memmove(r->us, r->us + 1, (WATCH_RATE_SAMPLES - 1) * sizeof r->us[0]);
+        r->n--;
     }
-    W.rate_wall[W.nrate] = now;
-    W.rate_us[W.nrate++] = W.clock_us;
+    r->wall[r->n] = wall;
+    r->us[r->n++] = us;
 }
 
-/* The speed reached over the samples, or 0 until they span RATE_SAMPLES
-   - 1 gaps. */
-static float rate(void) {
-    if (W.nrate < RATE_SAMPLES)
+float watch_rate_of(const watch_rate *r) {
+    if (r->n < WATCH_RATE_SAMPLES)
         return 0;
-    double wall = W.rate_wall[W.nrate - 1] - W.rate_wall[0];
-    return wall > 0 ? (float)((double)(W.rate_us[W.nrate - 1] - W.rate_us[0]) / 1e6 / wall) : 0;
+    double wall = r->wall[r->n - 1] - r->wall[0];
+    return wall > 0 ? (float)((double)(r->us[r->n - 1] - r->us[0]) / 1e6 / wall) : 0;
 }
 
 /* At 1x: how long the game's time since the anchor took on the wall clock. */
@@ -413,7 +404,7 @@ static void pace(uint64_t clock_us) {
     }
     W.clock_us = clock_us;
     W.paced_wall = wall_seconds();
-    sample_rate();
+    watch_rate_sample(&W.rate, W.paced_wall, W.clock_us);
     if (speeds[W.speed] == 1 && (W.clock_us - W.anchor_us) / 60000000 > W.minutes) {
         W.minutes++;
         log_run("a minute");
@@ -590,7 +581,7 @@ static void reveal(char *const *files, size_t n) {
 /* The export ended with status: says how, and shows what it wrote. */
 static void export_ended(int status) {
     const export_progress *p = export_now();
-    set_title(); /* without the progress, which the flash would repeat */
+    set_title(); /* without the progress: the export has ended */
     if (export_cancelled() && status == 128 + SIGTERM) {
         log_msg("watch: export cancelled");
         flash("export cancelled");
@@ -744,7 +735,8 @@ void watch_get_state(watch_state *s) {
     s->paused = W.paused;
     s->at_end = W.at_end;
     s->speed = speeds[W.speed];
-    s->reached = W.paused || W.at_end || W.going || W.seeking || W.skipping ? 0 : rate();
+    bool paced = !W.paused && !W.at_end && !W.going && !W.seeking && !W.skipping;
+    s->reached = paced ? watch_rate_of(&W.rate) : 0;
     s->have_in = W.have_in;
     s->in = W.in;
     s->marks = W.marks;

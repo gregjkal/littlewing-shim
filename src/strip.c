@@ -111,9 +111,27 @@ void strip_poke(void) {
 
 static float shown(void) { return (float)opacity(); }
 
+void strip_ascii(const char *text, char *out, size_t cap) {
+    size_t n = 0;
+    Uint32 c;
+    while (cap && (c = SDL_StepUTF8(&text, NULL)) != 0) {
+        const char *as = c < 0x80                     ? NULL
+                         : c == 0x2018 || c == 0x2019 ? "'"
+                         : c == 0x201C || c == 0x201D ? "\""
+                         : c == 0x2026                ? "..."
+                         : c == 0x2013 || c == 0x2014 ? "-"
+                                                      : "?";
+        char one[2] = {(char)c, 0};
+        for (const char *a = as ? as : one; *a && n + 1 < cap; a++)
+            out[n++] = *a;
+    }
+    if (cap)
+        out[n] = '\0';
+}
+
 static void say(const char *msg) {
     settle();
-    snprintf(S.said, sizeof S.said, "%s", msg);
+    strip_ascii(msg, S.said, sizeof S.said);
     S.said_n++;
     S.said_at = now();
     settle();

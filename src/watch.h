@@ -147,6 +147,25 @@ typedef struct {
 } watch_state;
 void watch_get_state(watch_state *s);
 
+/* The speed reached (watch_state's reached): the replay's clock against
+   the wall clock, sampled at most every WATCH_RATE_GAP seconds of paced
+   play, over the last WATCH_RATE_SAMPLES - 1 gaps. Paced play reads the
+   clock many times a second, so a gap of WATCH_STALL or more between two
+   samples is a stall (a menu open, the window dragged), not the speed the
+   replay can keep: the samples before it go, and it's measured afresh. */
+#define WATCH_RATE_GAP 0.25
+#define WATCH_RATE_SAMPLES 5
+#define WATCH_STALL 0.5
+typedef struct {
+    double wall[WATCH_RATE_SAMPLES];
+    uint64_t us[WATCH_RATE_SAMPLES];
+    int n;
+} watch_rate;
+/* The clock was at us at the wall clock's wall (seconds). */
+void watch_rate_sample(watch_rate *r, double wall, uint64_t us);
+/* The speed over the samples, or 0 until there are WATCH_RATE_SAMPLES. */
+float watch_rate_of(const watch_rate *r);
+
 /* The mark [ (dir < 0) or ] (dir > 0) goes to from s->now: the last before
    it by more than WATCH_MARK_GRACE_TICKS, or the first after it. Its index,
    or -1 for none. */
