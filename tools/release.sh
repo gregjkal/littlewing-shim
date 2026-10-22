@@ -8,23 +8,28 @@
 # commit vx.y.z, push the tag and make a draft GitHub release with the zip and
 # the feed. The notes are tools/release_notes.md with its @VERSION@, @MACOS@,
 # @UNICORN@, @SDL@ and @SPARKLE@ filled in, followed by GitHub's list of the
-# pull requests since the last release, which is also the feed's notes. The
-# app updates itself with Sparkle (tools/make_app.sh) and reads the latest
-# release's feed, so apps see the update once the release is published.
+# pull requests since the last release with LOONY_RELEASE_SUMMARY, one
+# sentence about the release, under its "## What's Changed" heading. That
+# part, without the template, is also the feed's notes. The app updates itself
+# with Sparkle (tools/make_app.sh) and reads the latest release's feed, so
+# apps see the update once the release is published.
 # Check the draft on GitHub, then publish it.
 # The profile is notarize.sh's (default loony-notary).
-#   LOONY_SIGN_ID=<identity> tools/release.sh <x.y.z> [keychain profile]
+#   LOONY_SIGN_ID=<identity> LOONY_RELEASE_SUMMARY=<sentence> \
+#       tools/release.sh <x.y.z> [keychain profile]
 set -eu
 die() {
     echo "release.sh: $*" >&2
     exit 1
 }
-[ $# -ge 1 ] || die "usage: LOONY_SIGN_ID=<identity> tools/release.sh <x.y.z> [keychain profile]"
+[ $# -ge 1 ] || die "usage: LOONY_SIGN_ID=<identity> LOONY_RELEASE_SUMMARY=<sentence> tools/release.sh <x.y.z> [keychain profile]"
 version=$1
 profile=${2:-loony-notary}
 tag=v$version
 echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || die "the version must be x.y.z, not $version"
 [ -n "${LOONY_SIGN_ID:-}" ] || die "set LOONY_SIGN_ID to your Developer ID Application identity"
+[ -n "${LOONY_RELEASE_SUMMARY:-}" ] || die "set LOONY_RELEASE_SUMMARY to one sentence about what's new in $version"
+export LOONY_RELEASE_SUMMARY  # awk reads it from the environment
 cd "$(dirname "$0")/.."
 
 git fetch -q origin
@@ -65,12 +70,20 @@ unicorn=$(pkg-config --modversion unicorn)
 sdl=$(pkg-config --modversion sdl3)
 sparkle_version=$(plutil -extract CFBundleShortVersionString raw "$sparkle/Sparkle.framework/Resources/Info.plist")
 # GitHub's list of the pull requests since the last release, made before the
-# tag exists, so nothing is pushed until the update feed is signed.
+# tag exists, so nothing is pushed until the update feed is signed. The summary
+# goes under its "## What's Changed" heading, which it's given when no pull
+# requests were merged and it has none. Sparkle shows the feed's copy, so it's
+# added here, not to the draft afterwards.
 generated=$(gh api repos/gregjkal/littlewing-shim/releases/generate-notes \
     -f tag_name="$tag" -f target_commitish="$(git rev-parse HEAD)" -q .body)
 [ -n "$generated" ] || die "GitHub made no notes for $tag"
+if printf '%s\n' "$generated" | grep -q "^## What's Changed"; then
+    generated=$(printf '%s\n' "$generated" | awk '{ print } !done && /^## What.s Changed/ { print ""; print ENVIRON["LOONY_RELEASE_SUMMARY"]; print ""; done = 1 }')
+else
+    generated=$(printf "## What's Changed\n\n%s\n\n%s\n" "$LOONY_RELEASE_SUMMARY" "$generated")
+fi
 
-# The update feed, with GitHub's list as its notes.
+# The update feed, with the summary and GitHub's list as its notes.
 updates="$build/updates"
 mkdir "$updates"
 cp "$zip" "$updates/"

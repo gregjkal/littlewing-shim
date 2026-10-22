@@ -195,7 +195,8 @@ To publish a version on the
 clean `main` that matches GitHub:
 
 ```bash
-LOONY_SIGN_ID="Developer ID Application: Your Name (TEAMID)" tools/release.sh 0.1.0
+LOONY_SIGN_ID="Developer ID Application: Your Name (TEAMID)" \
+  LOONY_RELEASE_SUMMARY="One sentence about what's new." tools/release.sh 0.1.0
 ```
 
 This builds Unicorn and SDL3 from their sources (`tools/build_deps.sh`) and a
@@ -208,9 +209,12 @@ against Homebrew's Unicorn plays the same, only slower there. It then builds
 the app as version 0.1.0, checks that it runs on macOS 14, and notarizes it.
 It tags the commit `v0.1.0`, pushes the tag, and makes a draft release with
 `LittleWing-0.1.0.zip` and `appcast.xml`, the feed that released apps read to
-find updates. Check the draft on GitHub, then publish it: apps see the update
-once it's the latest release. Other builds of the app say version 0.0.0 (set
-`LOONY_VERSION` to change it), and don't update themselves.
+find updates. `LOONY_RELEASE_SUMMARY` goes under "What's Changed", above the
+list of pull requests, in both the release's notes and the feed's, which are
+what the app's update dialog shows. Check the draft on GitHub, then publish
+it: apps see the update once it's the latest release. Other builds of the app
+say version 0.0.0 (set `LOONY_VERSION` to change it), and don't update
+themselves.
 
 The updates are signed with a [Sparkle](https://sparkle-project.org) key kept
 in the keychain of the Mac that releases, and apps check the signature with
