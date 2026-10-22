@@ -110,6 +110,13 @@ bool clip_list_path(const char *replay, char *out, size_t cap);
    with err naming the line, if one isn't a span. */
 bool clip_parse_list(const char *text, clip_span **spans, size_t *n, char *err, size_t errlen);
 
+/* An edit of a list of clips that leaves every other line as it was: the
+   list's index-th span (from 0, as clip_parse_list counts them) made to's
+   "<start>-<end>" in clip_format_time's times, keeping its line's
+   indentation and ending, or its line taken out when to is NULL. A new
+   string (to free), or NULL when the list has no such span. */
+char *clip_list_edit(const char *text, size_t index, const clip_span *to);
+
 /* Sorts n spans by start and merges those that overlap or touch, in place:
    returns how many there are then. */
 size_t clip_merge_spans(clip_span *spans, size_t n);

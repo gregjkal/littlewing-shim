@@ -19,7 +19,12 @@
      0 to 9        to that tenth of the recording (replay_play_length); the
                    keypad's too
      <, >          slower or faster: 1x, 2x, 4x, 8x, as fast as it can
-     I, O          the start and end of a clip; O saves it
+     I, O          the start and end of a clip; O saves it. In a clip,
+                   they move its start or end instead (below)
+     Option-",", Option-"."
+                   move the selected clip's nearer edge back or ahead a
+                   frame (Shift: a second)
+     Backspace     delete the selected clip
      E             export the clips (LOONY_CLIP=clips, export.h)
      Esc           cancel the export
 
@@ -47,6 +52,26 @@
    beside game.lwreplay), one "<start>-<end>" a line as LOONY_CLIP takes
    them, and LOONY_CLIP=clips renders them (clip.h).
 
+   Fixing a clip: the selected clip is the one under the time shown
+   (watch_state's now, the time being gone to while going), its start and
+   end included; of several, the shortest, and of those, the first in the
+   list (watch_clip_at). Its selected edge is the one nearer that time, the
+   end when they are as near (watch_edge_at). With a clip selected, I moves
+   its start to the time and O its end, unless that would leave it no
+   longer than nothing; but I at the clip's very end starts a new clip, and
+   O after an I that started a clip saves that one as before. Option-comma
+   and Option-period move the selected edge a frame (WATCH_FRAME_TICKS),
+   and with Shift a second (WATCH_NUDGE_BIG_TICKS), keeping a frame between
+   start and end and the end within the recording, and pause and go to the
+   edge, so it stays selected and its frame is on the screen; held, they go
+   on. An edge stops short of where another clip would be selected instead.
+   Backspace deletes the selected clip, at once. A list that doesn't parse
+   is said and left as it is: I still starts a new clip. With nothing selected, I starts a
+   new clip, O without an I only says so, and the rest do nothing. An edit
+   reads the list afresh, changes or takes out the clip's line alone, and
+   writes it back whole (clip_list_edit), comments and all, removing a
+   list left empty. Marks aren't edited.
+
    Going to a time: the replay keeps snapshots of the emulator as it plays
    (seek.h). Going back puts back the last one before the time wanted, and
    the replay goes on from there to the time without pacing; going ahead
@@ -70,6 +95,7 @@
 #define WATCH_STEP_TICKS 600        /* J and L: 10 s */
 #define WATCH_BIG_STEP_TICKS 3600   /* with Shift: a minute */
 #define WATCH_FRAME_TICKS 1         /* comma and period: a frame */
+#define WATCH_NUDGE_BIG_TICKS 60    /* Shift-Option-comma and -period: a second */
 /* [ passes over a mark this close behind, so that pressed again just after
    landing on one, it goes on to the one before. */
 #define WATCH_MARK_GRACE_TICKS 60
@@ -103,6 +129,12 @@ typedef enum {
     WATCH_FASTER,
     WATCH_MARK_IN,
     WATCH_MARK_OUT,     /* saves the clip */
+    /* the selected clip's edge, which go on while their key is held: */
+    WATCH_NUDGE_BACK,       /* a frame */
+    WATCH_NUDGE_AHEAD,      /* a frame */
+    WATCH_NUDGE_BACK_BIG,   /* a second */
+    WATCH_NUDGE_AHEAD_BIG,  /* a second */
+    WATCH_DELETE_CLIP,
     WATCH_EXPORT_CLIPS,
     WATCH_EXPORT_MARKS,
     WATCH_CANCEL_EXPORT,
@@ -112,10 +144,11 @@ typedef enum {
    and the Replay menu (menu.h) is built from it, one item for each label
    in this order, with the first key for it as the item's key equivalent.
    A key matches when the Shift, Ctrl, Alt and Cmd held are exactly mods
-   (either side's), so a key with Cmd, Ctrl or Alt goes past the viewer to
-   the menus. A row without a label is a second key for its action (K), or
-   a key the menu leaves out (0 to 9, which would be ten items); scancode 0
-   is an item without a key (Export Marks). gap puts a separator before the
+   (either side's), so a key with Cmd or Ctrl, or with Alt but for the
+   nudges, goes past the viewer to the menus. A row without a label is a
+   second key for its action (K), or a key the menu leaves out (0 to 9,
+   which would be ten items); scancode 0 is an item without a key (Export
+   Marks). gap puts a separator before the
    item. */
 typedef struct {
     watch_action action;
@@ -143,10 +176,21 @@ typedef struct {
     uint32_t in; /* a clip's start, I, not yet ended */
     const uint32_t *marks; /* the replay's, in order */
     size_t nmarks;
-    const clip_span *clips; /* the list's, in its order, as read at the start and at O */
+    const clip_span *clips; /* the list's, in its order, as read at the start and at an edit */
     size_t nclips;
+    bool have_selected;
+    size_t selected;   /* the selected clip, in clips (watch_clip_at at now) */
+    bool selected_end; /* its selected edge is its end (watch_edge_at) */
 } watch_state;
 void watch_get_state(watch_state *s);
+
+/* The clip selected at tick: of the n that hold it, start and end
+   included, the shortest, and of those the first. Its index, or -1. */
+int watch_clip_at(const clip_span *clips, size_t n, uint32_t tick);
+
+/* Whether c's selected edge at tick is its end: tick is at least as near
+   its end as its start. */
+bool watch_edge_at(const clip_span *c, uint32_t tick);
 
 /* The speed reached (watch_state's reached): the replay's clock against
    the wall clock, sampled at most every WATCH_RATE_GAP seconds of paced
@@ -189,7 +233,8 @@ void watch_act(watch_action action, bool repeat);
 /* Whether the action can be done now, for its menu item: an export only
    while none runs, cancelling only while one does, pausing not at the
    replay's end, a frame back while paused or at the end, and a frame ahead
-   while paused but not at the end. */
+   while paused but not at the end, and moving an edge or deleting only
+   with a clip selected. */
 bool watch_can(watch_action action);
 
 /* After replay_open and clip_open: reads LOONY_WATCH and the settings a

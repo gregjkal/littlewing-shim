@@ -242,6 +242,35 @@ TEST(watch_mark_from_finds_the_marks_before_and_after) {
     CHECK_EQ(watch_mark_from(&w, 1), -1);
 }
 
+/* The selected clip is the one under the time, ends included; of several,
+   the shortest, then the first; under none, none. Its selected edge is the
+   nearer, the end when they are as near. */
+TEST(watch_clip_at_selects_the_shortest_clip_under_the_time) {
+    static const clip_span c[] = {
+        {600, 1800, 0, 0},  /* 0:10-0:30 */
+        {900, 1200, 0, 0},  /* inside it */
+        {1100, 1400, 0, 0}, /* overlapping both, as long as the second */
+        {3000, 3600, 0, 0},
+    };
+    CHECK_EQ(watch_clip_at(c, 4, 0), -1);
+    CHECK_EQ(watch_clip_at(c, 4, 599), -1);
+    CHECK_EQ(watch_clip_at(c, 4, 600), 0); /* its start */
+    CHECK_EQ(watch_clip_at(c, 4, 899), 0);
+    CHECK_EQ(watch_clip_at(c, 4, 900), 1); /* nested: the shorter */
+    CHECK_EQ(watch_clip_at(c, 4, 1150), 1); /* as short: the first */
+    CHECK_EQ(watch_clip_at(c, 4, 1300), 2);
+    CHECK_EQ(watch_clip_at(c, 4, 1500), 0);
+    CHECK_EQ(watch_clip_at(c, 4, 1800), 0); /* its end */
+    CHECK_EQ(watch_clip_at(c, 4, 1801), -1);
+    CHECK_EQ(watch_clip_at(c, 4, 3600), 3);
+    CHECK_EQ(watch_clip_at(c, 0, 900), -1);
+    CHECK(!watch_edge_at(&c[0], 600));
+    CHECK(!watch_edge_at(&c[0], 1199));
+    CHECK(watch_edge_at(&c[0], 1200)); /* the middle: the end */
+    CHECK(watch_edge_at(&c[0], 1800));
+    CHECK(watch_edge_at(&c[0], 1900)); /* past it, though never selected there */
+}
+
 /* The speed asked, or the speed reached when it falls short or at max. */
 TEST(strip_speed_text_says_the_speed_reached) {
     watch_state w;

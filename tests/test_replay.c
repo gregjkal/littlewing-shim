@@ -1281,6 +1281,188 @@ TEST(replay_watching_seeks_once_at_the_end_of_a_drag) {
     CHECK_CONTAINS(out, "watch: going on at");
 }
 
+/* Whether the list of clips at list says want, exactly. */
+static bool list_is(const char *list, const char *want) {
+    size_t len;
+    char *text = (char *)read_file(list, &len);
+    bool same = text && strcmp(text, want) == 0;
+    if (!same)
+        fprintf(stderr, "the list: \"%s\", not \"%s\"\n", text ? text : "(none)", want);
+    free(text);
+    return same;
+}
+
+/* Fixing clips: with the clips 0:05-0:10 and 0:30-0:35 and a clip started
+   at 0:20, O inside the second still saves the new one, and the shortest
+   clip under the time is the one selected, drawn outlined with a bar on
+   its nearer edge. Then I and O in a clip move its edges, Option-comma and
+   -period (with Shift, a second) nudge the nearer edge, keeping a frame of
+   clip, and Backspace deletes it. Away from every clip, Backspace, O and a
+   nudge do nothing, and I starts a clip; at a clip's very end too. A held
+   nudge stops short of a shorter clip, and a broken list is left alone. */
+static void child_edit(void *unused) {
+    (void)unused;
+    char list[1300];
+    watch_with_clips(true, list, sizeof list);
+    watch_scrub_start();
+    watch_scrub_end(1950); /* 0:32.50, in the second clip */
+    watch_key(SDL_SCANCODE_O, true, false);
+    if (!list_is(list, "0:05-0:10\n0:30-0:35\n0:20-0:32.50\n"))
+        _exit(2);
+    watch_state s;
+    watch_get_state(&s);
+    if (s.have_in || s.nclips != 3 || !s.have_selected || s.selected != 1 || !s.selected_end) {
+        fprintf(stderr, "after O: in %d, %zu clips, selected %d %zu %d\n", s.have_in, s.nclips,
+                s.have_selected, s.selected, s.selected_end);
+        _exit(3);
+    }
+    display_present();
+    int w, h;
+    uint8_t *px = display_read_window(&w, &h);
+    if (!px)
+        _exit(1);
+    display_layout l = display_lay_out((float)w, (float)h, 800, 600, STRIP_HEIGHT, false);
+    display_rect bar = strip_bar(&l, &s);
+    float cy = bar.y + bar.h / 2;
+#define AT(tick) (bar.x + bar.w * (float)(tick) / 3600)
+    const uint8_t *edge = pixel(px, w, AT(2100), cy - 1.25f * bar.h); /* the end's bar, above the clip */
+    const uint8_t *other = pixel(px, w, AT(300), cy - 1.25f * bar.h); /* the first clip's start */
+    float above = (float)(int)(cy - bar.h) - 1; /* just above a clip */
+    const uint8_t *top = pixel(px, w, AT(1900), above); /* the outline */
+    const uint8_t *plain = pixel(px, w, AT(450), above); /* not outlined */
+    if (edge[2] < 200 || other[2] > 150 || top[2] < 200 || plain[2] > 150) {
+        fprintf(stderr, "edge %d %d %d, other %d %d %d, top %d %d %d, plain %d %d %d\n", edge[0],
+                edge[1], edge[2], other[0], other[1], other[2], top[0], top[1], top[2], plain[0],
+                plain[1], plain[2]);
+        _exit(4);
+    }
+    free(px);
+#undef AT
+    watch_scrub_start();
+    watch_scrub_end(420); /* 0:07, nearer the first clip's start */
+    watch_key(SDL_SCANCODE_I, true, false);
+    if (!list_is(list, "0:07-0:10\n0:30-0:35\n0:20-0:32.50\n"))
+        _exit(5);
+    watch_key(SDL_SCANCODE_LALT, true, false);
+    watch_key(SDL_SCANCODE_LSHIFT, true, false);
+    watch_key(SDL_SCANCODE_PERIOD, true, false); /* a second ahead */
+    watch_key(SDL_SCANCODE_LSHIFT, false, false);
+    watch_key(SDL_SCANCODE_COMMA, true, false); /* a frame back */
+    watch_key(SDL_SCANCODE_LALT, false, false);
+    watch_get_state(&s);
+    if (!list_is(list, "0:07.98-0:10\n0:30-0:35\n0:20-0:32.50\n") || s.now != 479 || !s.paused ||
+        s.selected != 0 || s.selected_end) {
+        fprintf(stderr, "after the nudges: now %u, paused %d, selected %zu %d\n", s.now, s.paused,
+                s.selected, s.selected_end);
+        _exit(6);
+    }
+    watch_scrub_start();
+    watch_scrub_end(560); /* nearer its end */
+    watch_key(SDL_SCANCODE_O, true, false);
+    if (!list_is(list, "0:07.98-0:09.33\n0:30-0:35\n0:20-0:32.50\n"))
+        _exit(7);
+    watch_key(SDL_SCANCODE_RALT, true, false);
+    watch_key(SDL_SCANCODE_RSHIFT, true, false);
+    watch_key(SDL_SCANCODE_COMMA, true, false); /* the end a second back, to 0:08.33 */
+    watch_key(SDL_SCANCODE_COMMA, true, true);  /* held: no nearer than a frame after the start */
+    watch_key(SDL_SCANCODE_COMMA, true, true);  /* there already */
+    watch_key(SDL_SCANCODE_RSHIFT, false, false);
+    watch_key(SDL_SCANCODE_RALT, false, false);
+    watch_get_state(&s);
+    if (!list_is(list, "0:07.98-0:08\n0:30-0:35\n0:20-0:32.50\n") || s.now != 480 ||
+        !s.selected_end) {
+        fprintf(stderr, "after nudging the end: now %u, selected end %d\n", s.now, s.selected_end);
+        _exit(8);
+    }
+    watch_key(SDL_SCANCODE_BACKSPACE, true, false);
+    if (!list_is(list, "0:30-0:35\n0:20-0:32.50\n"))
+        _exit(9);
+    watch_scrub_start();
+    watch_scrub_end(2500); /* 0:41.67, in no clip */
+    watch_get_state(&s);
+    if (s.have_selected || watch_can(WATCH_DELETE_CLIP) || watch_can(WATCH_NUDGE_BACK)) {
+        fprintf(stderr, "selected in no clip\n");
+        _exit(10);
+    }
+    watch_key(SDL_SCANCODE_BACKSPACE, true, false);
+    watch_key(SDL_SCANCODE_O, true, false);
+    watch_key(SDL_SCANCODE_LALT, true, false);
+    watch_key(SDL_SCANCODE_PERIOD, true, false);
+    watch_key(SDL_SCANCODE_LALT, false, false);
+    if (!list_is(list, "0:30-0:35\n0:20-0:32.50\n"))
+        _exit(11);
+    watch_key(SDL_SCANCODE_I, true, false);
+    watch_get_state(&s);
+    if (!s.have_in || s.in != 2500) {
+        fprintf(stderr, "I in no clip: in %d at %u\n", s.have_in, s.in);
+        _exit(12);
+    }
+    watch_scrub_start(); /* I at a clip's very end starts the next clip */
+    watch_scrub_end(2100);
+    watch_key(SDL_SCANCODE_I, true, false);
+    watch_scrub_start(); /* and I on its start already keeps that I */
+    watch_scrub_end(1800);
+    watch_key(SDL_SCANCODE_I, true, false);
+    watch_get_state(&s);
+    if (!list_is(list, "0:30-0:35\n0:20-0:32.50\n") || !s.have_in || s.in != 2100) {
+        fprintf(stderr, "I at a clip's edges: in %d at %u\n", s.have_in, s.in);
+        _exit(14);
+    }
+    watch_scrub_start(); /* the last clips go, and so does the list */
+    watch_scrub_end(1900);
+    watch_key(SDL_SCANCODE_BACKSPACE, true, false);
+    watch_key(SDL_SCANCODE_BACKSPACE, true, false);
+    if (access(list, F_OK) == 0) {
+        fprintf(stderr, "the list is still there\n");
+        _exit(13);
+    }
+    /* A held nudge stops short of a shorter clip, which would be selected
+       there and go on moving in its place. */
+    FILE *f = fopen(list, "w");
+    fputs("0:00-0:10\n0:05-0:06\n", f);
+    fclose(f);
+    watch_scrub_start();
+    watch_scrub_end(30); /* nearer the long clip's start */
+    watch_key(SDL_SCANCODE_LALT, true, false);
+    watch_key(SDL_SCANCODE_LSHIFT, true, false);
+    watch_key(SDL_SCANCODE_PERIOD, true, false);
+    for (int k = 0; k < 6; k++)
+        watch_key(SDL_SCANCODE_PERIOD, true, true);
+    watch_key(SDL_SCANCODE_LSHIFT, false, false);
+    watch_key(SDL_SCANCODE_LALT, false, false);
+    watch_get_state(&s);
+    if (!list_is(list, "0:04-0:10\n0:05-0:06\n") || s.now != 240) {
+        fprintf(stderr, "the held nudge: now %u\n", s.now);
+        _exit(15);
+    }
+    f = fopen(list, "w"); /* a list that isn't one: I says so, and starts a clip */
+    fputs("junk\n", f);
+    fclose(f);
+    watch_key(SDL_SCANCODE_I, true, false);
+    watch_get_state(&s);
+    if (!s.have_in || s.in != 240 || !list_is(list, "junk\n")) {
+        fprintf(stderr, "I with a broken list: in %d at %u\n", s.have_in, s.in);
+        _exit(16);
+    }
+    _exit(0);
+}
+
+TEST(replay_watching_moves_nudges_and_deletes_the_selected_clip) {
+    BEGIN_TEST();
+    CHECK(record_marked());
+    char out[16384];
+    int status = test_run_child(child_edit, NULL, out, sizeof out);
+    if (status)
+        fprintf(stderr, "%s", out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "watch: clip 3, 0:20-0:32.50, saved");
+    CHECK_CONTAINS(out, "watch: clip 1 is now 0:07-0:10");
+    CHECK_CONTAINS(out, "watch: clip 1, 0:07.98-0:08, deleted");
+    CHECK_CONTAINS(out, "watch: clip 1 is now 0:04-0:10");
+    CHECK(!strstr(out, "watch: clip 2 is now"));
+    CHECK_CONTAINS(out, "watch: line 1: junk");
+}
+
 /* The date is the recording's start plus the game's clock (Loony Labyrinth
    stamps a high score with it), so a replay a second later sees the same. */
 TEST(replay_dates_come_back) {

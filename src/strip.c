@@ -29,6 +29,9 @@ typedef struct {
     bool have_in;
     uint32_t in;
     size_t nmarks, nclips;
+    bool have_selected, selected_end; /* and the selected clip, which an edit moves */
+    size_t selected;
+    uint32_t selected_start, selected_until;
     char speed_text[16];
     bool short_of;
     int lit;  /* the speed's light, in 64ths */
@@ -260,8 +263,8 @@ static strip_spot drag_spot(const display_layout *l, const watch_state *w, float
     return strip_spot_at(l, w, x, bar.y + bar.h / 2);
 }
 
-/* Whether s's index is still in w: the list of clips is read again at O
-   and before an export, and may be shorter than when the pointer moved. */
+/* Whether s's index is still in w: the list of clips is read again at an
+   edit and before an export, and may be shorter than when the pointer moved. */
 static bool spot_holds(const strip_spot *s, const watch_state *w) {
     switch (s->on) {
     case STRIP_ON_MARK: return s->index >= 0 && (size_t)s->index < w->nmarks;
@@ -440,6 +443,13 @@ static look look_now(void) {
     k.in = w.have_in ? w.in : 0;
     k.nmarks = w.nmarks;
     k.nclips = w.nclips;
+    k.have_selected = w.have_selected;
+    if (w.have_selected) {
+        k.selected = w.selected;
+        k.selected_end = w.selected_end;
+        k.selected_start = w.clips[w.selected].start;
+        k.selected_until = w.clips[w.selected].end;
+    }
     k.short_of = strip_speed_text(&w, k.speed_text, sizeof k.speed_text);
     k.lit = fading(S.lit_at, STRIP_SPEED_LIT, t);
     k.sign = fading(S.sign_at, STRIP_SIGN, t);
@@ -536,6 +546,21 @@ static void draw_bar(SDL_Renderer *r, const display_layout *l, const places *p, 
         bool on = k->spot.on == STRIP_ON_CLIP && k->spot.index == (int)i;
         SDL_SetRenderDrawColor(r, 240, 190, 40, (Uint8)(op * (on ? 0.9f : 0.6f) * 255 + 0.5f));
         fill(r, (display_rect){a, cy - ch / 2, b - a > d ? b - a : d, ch});
+    }
+    if (w->have_selected && w->selected < w->nclips) { /* outlined, its edge a bar */
+        const clip_span *c = &w->clips[w->selected];
+        float a = SDL_floorf(x_of(bar, w, c->start)), b = SDL_ceilf(x_of(bar, w, c->end));
+        float t = SDL_ceilf(d), y = SDL_floorf(cy - ch / 2) - t, h = SDL_ceilf(ch) + 2 * t;
+        if (b - a < t)
+            b = a + t;
+        color(r, 235, op);
+        fill(r, (display_rect){a, y, b - a, t});
+        fill(r, (display_rect){a, y + h - t, b - a, t});
+        fill(r, (display_rect){a, y, t, h});
+        fill(r, (display_rect){b - t, y, t, h});
+        float e = w->selected_end ? b : a, et = SDL_ceilf(d * 2.5f), eh = 3 * bar.h;
+        color(r, 255, op);
+        fill(r, (display_rect){SDL_floorf(e - et / 2), SDL_floorf(cy - eh / 2), et, eh});
     }
     if (w->have_in) { /* [ at the start, and the span to now lighter */
         float a = x_of(bar, w, w->in), now = x_of(bar, w, w->played), h = 3 * bar.h;
