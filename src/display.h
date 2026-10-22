@@ -146,7 +146,8 @@ void display_take_launch_events(uint32_t wait_ms);
    screen, through the letterboxing and scaling, unless they are on the
    overlay's strip, which gets them and the pointer's movements. A press on
    the strip is a drag: the strip gets its release wherever it comes, and
-   one when the window loses focus first. With an
+   one where the pointer last was when the window loses focus first or the
+   button goes down again without one. With an
    overlay, the window is drawn again whenever it changes. */
 void display_poll(void);
 

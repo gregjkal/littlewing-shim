@@ -470,6 +470,10 @@ static bool inside(display_rect r, float x, float y) {
    it's on the strip (in full screen, while the strip is up) or the press
    was, else the game's, in the emulated screen's coordinates. */
 static void press(float x, float y, bool down) {
+    if (down && D.grabbed) /* the last release never came: it ends here */
+        press(D.pointer_x, D.pointer_y, false);
+    D.pointer_x = x;
+    D.pointer_y = y;
     display_layout l = layout();
     x *= l.density;
     y *= l.density;

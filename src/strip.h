@@ -27,7 +27,7 @@
    and until the release only the caret and its tip move, along the bar
    wherever the pointer goes, snapping to marks and clips' starts as a
    click does. The release goes there, and goes on playing if the press
-   paused. While the replay is on its way to a time, the bar shows where
+   paused and neither Space nor a frame step has paused or gone on since. While the replay is on its way to a time, the bar shows where
    playback is, and a caret where it's going.
 
    The speed says the speed the replay reaches (watch_state's reached)

@@ -420,8 +420,8 @@ static void push_motion(float x, float y) {
 
 /* A press on the strip is a drag: its release is the strip's wherever it
    comes, over the game too, the pointer leaving the window meanwhile isn't
-   news to it, and the window losing focus first releases it where the
-   pointer was. A release with no press on the strip before it
+   news to it, and the window losing focus first, or the button going down
+   again, releases it where the pointer was. A release with no press on the strip before it
    is the game's. */
 TEST(display_poll_gives_a_drag_on_the_strip_its_release) {
     gm_init();
@@ -465,6 +465,17 @@ TEST(display_poll_gives_a_drag_on_the_strip_its_release) {
     CHECK_EQ(strip_releases, 2);
     CHECK_EQ((int)press_x, 100);
     CHECK_EQ((int)press_y, 10);
+    push_click(70, 104, true, SDL_BUTTON_LEFT); /* not moved since: released where it was */
+    SDL_PushEvent(&e);
+    display_poll();
+    CHECK_EQ(strip_releases, 3);
+    CHECK_EQ((int)press_x, 70);
+    push_click(64, 104, true, SDL_BUTTON_LEFT);
+    push_click(20, 104, true, SDL_BUTTON_LEFT); /* the release was lost: one first */
+    display_poll();
+    CHECK_EQ(strip_presses, 5);
+    CHECK_EQ(strip_releases, 4);
+    CHECK_EQ((int)press_x, 20);
     CHECK_EQ(clicks, 0);
     display_set_overlay(NULL);
 }
