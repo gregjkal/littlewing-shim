@@ -27,9 +27,10 @@ void display_set_title(const char *title);
    (watch.h: after a restart, it would otherwise open behind the others). */
 void display_raise_on_open(void);
 
-/* Shows msg after the title for DISPLAY_FLASH_MS, on an open window. A
-   window shows LOONY_FLASH this way as it opens, for a message that goes
-   across a restart (main.c), and unsets it. */
+/* Shows msg for DISPLAY_FLASH_MS: on the overlay when there is one (its
+   say), else after the title, on an open window. A window shows
+   LOONY_FLASH this way as it opens, for a message that goes across a
+   restart (main.c), and unsets it. */
 void display_flash(const char *msg);
 
 /* Draws the current screen. */
@@ -81,6 +82,9 @@ typedef struct {
     void (*pointer)(const display_layout *l, float x, float y, bool inside);
     /* The left button went down or up at (x, y), on the strip. */
     void (*press)(const display_layout *l, float x, float y, bool down);
+    /* Shows msg for DISPLAY_FLASH_MS (display_flash), in place of the
+       window's title. */
+    void (*say)(const char *msg);
 } display_overlay;
 
 /* Sets the overlay, or none (NULL). Before the window opens, so that the
@@ -136,7 +140,7 @@ void display_take_launch_events(uint32_t wait_ms);
 
 /* Handles pending SDL events: keys go to the input callbacks, except Cmd-Q
    (quit), Cmd-F (toggle full screen), Cmd-V (paste) and Cmd-S (mark a clip,
-   said in the window's title for DISPLAY_FLASH_MS), which the game never
+   said as display_flash says things), which the game never
    sees. Left-button clicks are mapped from the window to the emulated
    screen, through the letterboxing and scaling, unless they are on the
    overlay's strip, which gets them and the pointer's movements. With an

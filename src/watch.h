@@ -25,7 +25,9 @@
 
    The window's title says the game's time and the speed, and so does a
    strip of controls below the game (strip.h), whose buttons do what their
-   keys do. Only 1x has sound.
+   keys do. What the viewer has to say ("clip 1 saved") goes on the strip
+   (display_flash). Only 1x has sound. A desync says so in a message box
+   before the window closes.
 
    Exporting runs in a second copy of this program while the viewer goes on,
    one export at a time, and the title says how far it has got. Once it is
@@ -132,6 +134,10 @@ typedef struct {
     uint32_t length; /* the recording's (replay_play_length) */
     bool paused, at_end;
     int speed; /* 1, 2, 4 or 8, or 0 for as fast as it can */
+    /* The speed the replay has reached, measured over the last second of
+       play at this speed (HD at 8x may not keep up), or 0 when not known:
+       paused, going to a time, or just changed. */
+    float reached;
     bool have_in;
     uint32_t in; /* a clip's start, I, not yet ended */
     const uint32_t *marks; /* the replay's, in order */
@@ -140,6 +146,26 @@ typedef struct {
     size_t nclips;
 } watch_state;
 void watch_get_state(watch_state *s);
+
+/* The speed reached (watch_state's reached): the replay's clock against
+   the wall clock, sampled at most every WATCH_RATE_GAP seconds of paced
+   play, over the last WATCH_RATE_SAMPLES - 1 gaps. Paced play reads the
+   clock many times a second, so a gap of WATCH_STALL or more between two
+   reads is a stall (a menu open, the window dragged), not the speed the
+   replay can keep: the samples before it go, and it's measured afresh. */
+#define WATCH_RATE_GAP 0.25
+#define WATCH_RATE_SAMPLES 5
+#define WATCH_STALL 0.5
+typedef struct {
+    double wall[WATCH_RATE_SAMPLES];
+    uint64_t us[WATCH_RATE_SAMPLES];
+    int n;
+    double last; /* the wall clock at the last read, sampled or not */
+} watch_rate;
+/* The clock was at us at the wall clock's wall (seconds): a read. */
+void watch_rate_sample(watch_rate *r, double wall, uint64_t us);
+/* The speed over the samples, or 0 until there are WATCH_RATE_SAMPLES. */
+float watch_rate_of(const watch_rate *r);
 
 /* The mark [ (dir < 0) or ] (dir > 0) goes to from s->now: the last before
    it by more than WATCH_MARK_GRACE_TICKS, or the first after it. Its index,

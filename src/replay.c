@@ -130,6 +130,7 @@ static struct {
     uint8_t identity[CC_SHA256_DIGEST_LENGTH]; /* replay_identity */
     void (*pace)(uint64_t clock_us);
     void (*end)(void);
+    void (*desync)(const char *msg);
 } R;
 
 /* A snapshot's walk (snapshot.h): the cursor, the step and the counts are
@@ -176,6 +177,7 @@ static void snap_walk(snapshot_walker *w) {
     SNAPSHOT_HOST(w, R.identity);
     SNAPSHOT_HOST(w, R.pace);
     SNAPSHOT_HOST(w, R.end);
+    SNAPSHOT_HOST(w, R.desync);
     uint64_t pos = R.in.pos - R.records_at;
     SNAPSHOT_HOST(w, R.in.pos);
     snapshot_bytes(w, &pos, sizeof pos);
@@ -224,11 +226,14 @@ _Noreturn void replay_desync(const char *fmt, ...) {
     log_msg("replay: desync at step %llu (tick %u): %s", (unsigned long long)R.step, tick(), msg);
     R.mode = OFF; /* nothing more to report at exit */
     R.desynced = true;
+    if (R.desync)
+        R.desync(msg);
     exit(REPLAY_DESYNC_STATUS);
 }
 
 void replay_set_pace(void (*fn)(uint64_t clock_us)) { R.pace = fn; }
 void replay_set_end(void (*fn)(void)) { R.end = fn; }
+void replay_set_desync(void (*fn)(const char *msg)) { R.desync = fn; }
 
 bool replay_desynced(void) { return R.desynced; }
 bool replay_reached_end(void) { return R.reached_end; }

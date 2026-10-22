@@ -523,7 +523,12 @@ clip's start goes to it exactly. The strip comes up when the pointer moves
 or a key is pressed and fades a couple of seconds later, unless the pointer
 is on it; a thin line along the bottom still shows the progress, and the
 pointer hides with the strip. In full screen the strip goes over the
-bottom edge of the game. It is drawn on the window, never into the game's
+bottom edge of the game. What the viewer has to say ("clip 1 saved", "no
+marks") shows above the strip for a couple of seconds, with the strip up,
+rather than in the window's title, so it shows in full screen too. Pausing
+or going on shows a pause or play sign over the middle of the game that
+fades away, and the speed lights up for a moment when it changes. It is
+all drawn on the window, never into the game's
 screen, so screenshots, clips and a replay's frame checks leave it out.
 
 These are YouTube's keys. A key with Cmd, Ctrl or Option held goes to
@@ -546,7 +551,10 @@ The window's title shows the play time and the speed, and a clip's start
 once I has marked it. Only 1x has sound. Cut scenes draw up to twice as many
 frames as play, more than the window can show; when watching falls behind,
 it skips frames to keep time, and shows the latest once it has caught up,
-or a few times a second when it can't catch up (HD at 8x). Each clip goes
+or a few times a second when it can't catch up (HD at 8x); the strip then
+shows the speed it reaches, in amber ("5.2x" for 8x), and at "as fast as
+it can" it shows how fast that is. If a replay goes out of step with its
+recording (a desync), a message box says so before the window closes. Each clip goes
 into `game.clips` next to `game.lwreplay`, one `<start>-<end>` a line in `LOONY_CLIP`'s
 format, so the file can be edited by hand too; `LOONY_CLIP=clips` then
 renders each into `game-0m01-0m03.mp4` and so on, in one pass, as
@@ -595,7 +603,7 @@ replay plays on while a second copy of LittleWing renders them, as
 ("exporting clip 2 of 3, 40%", or "exporting, finding clip 2 of 3, 15%"
 while it replays up to that clip). When it is done, Finder opens with the
 new files selected, next to the recording, where the clips always go.
-With every clip exported already, the title says so and Finder shows
+With every clip exported already, the viewer says so and Finder shows
 those. Esc cancels, which leaves no file behind. One export runs at a
 time; going back (J) doesn't stop it, and quitting does. The **Replay**
 menu has the same: **Export Clips**, **Export Marks** (as
