@@ -17,7 +17,9 @@
 
    The bar is the recording's timeline: the marks (Cmd-S while recording)
    are diamonds on it, the saved clips tinted spans, and a clip's start not
-   yet ended (I) a bracket, with the span from it to now tinted lighter. The
+   yet ended (I) a bracket, with the span from it to now tinted lighter.
+   The selected clip (watch_state's selected, the one I, O, the nudges and
+   Backspace edit) is outlined, with a taller bar on its selected edge. The
    pointer over the bar says the time under it at once, or a mark's number
    and time, or a clip's number and span when it's on the mark or the
    clip's start; a click goes there: to a mark or a clip's start exactly,

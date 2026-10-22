@@ -228,6 +228,40 @@ bad:
     return false;
 }
 
+char *clip_list_edit(const char *text, size_t index, const clip_span *to) {
+    size_t len = strlen(text), k = 0;
+    for (const char *p = text; *p;) {
+        const char *eol = strchr(p, '\n');
+        if (!eol)
+            eol = p + strlen(p);
+        const char *line = p, *a = p, *b = eol;
+        while (a < b && (*a == ' ' || *a == '\t'))
+            a++;
+        while (b > a && (b[-1] == ' ' || b[-1] == '\t' || b[-1] == '\r'))
+            b--;
+        p = *eol ? eol + 1 : eol;
+        if (a == b || *a == '#' || k++ != index)
+            continue;
+        /* The span's line: its text changes, or the whole line goes. */
+        char span[80] = "";
+        if (to) {
+            char s[32], e[32];
+            snprintf(span, sizeof span, "%s-%s", clip_format_time(to->start, s, sizeof s),
+                     clip_format_time(to->end, e, sizeof e));
+        }
+        const char *from = to ? a : line, *until = to ? b : p;
+        size_t n = strlen(span), head = (size_t)(from - text), cut = (size_t)(until - from);
+        char *out = malloc(len - cut + n + 1);
+        if (!out)
+            fatal("out of memory");
+        memcpy(out, text, head);
+        memcpy(out + head, span, n);
+        memcpy(out + head + n, until, len - head - cut + 1); /* with the NUL */
+        return out;
+    }
+    return NULL;
+}
+
 static int by_start(const void *a, const void *b) {
     const clip_span *x = a, *y = b;
     return x->start < y->start ? -1 : x->start > y->start;
