@@ -68,6 +68,10 @@ void display_set_title(const char *title) {
 void display_raise_on_open(void) { D.raise = true; }
 
 void display_flash(const char *msg) {
+    if (D.overlay && D.overlay->say) {
+        D.overlay->say(msg);
+        return;
+    }
     if (!D.window)
         return;
     snprintf(D.flash, sizeof D.flash, "%s: %s", D.title ? D.title : "LittleWing", msg);

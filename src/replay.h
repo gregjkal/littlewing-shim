@@ -296,6 +296,9 @@ void replay_frame(uint32_t hash);
 /* Replay: a desync (or a damaged file). Logs it with the step and tick, and
    exits with REPLAY_DESYNC_STATUS. */
 _Noreturn void replay_desync(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+/* fn hears of a desync, with what replay_desync logs, before the exit:
+   the viewer says so while its window is still up. */
+void replay_set_desync(void (*fn)(const char *msg));
 /* For what runs at exit: true once replay_desync has run, and true once the
    replay has exited where the recording stopped (run past its end, or
    finished at it, as when the game quits there on its own). */
