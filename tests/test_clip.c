@@ -127,6 +127,47 @@ TEST(clip_lists_are_a_span_a_line) {
     CHECK_EQ(n, 0);
 }
 
+/* Editing a clip in a list changes or takes out its line alone: comments,
+   blank lines, indentation and line endings of a list written by hand stay
+   as they were, and the list still reads. */
+TEST(clip_list_edits_change_one_line) {
+    const char *old = "# ramps\n9:40-10:15\n\n  1:00-1:30 \r\n600-700";
+    clip_span to = {3660, 5400, 0, 0};
+    char *e = clip_list_edit(old, 1, &to);
+    CHECK_STR(e, "# ramps\n9:40-10:15\n\n  1:01-1:30 \r\n600-700");
+    clip_span *s;
+    size_t n;
+    char err[256] = "";
+    CHECK(clip_parse_list(e, &s, &n, err, sizeof err));
+    CHECK_EQ(n, 3);
+    CHECK_EQ(s[1].start, 3660);
+    CHECK_EQ(s[1].end, 5400);
+    free(s);
+    free(e);
+    to = (clip_span){601, 730, 0, 0}; /* the last line, with no line break */
+    e = clip_list_edit(old, 2, &to);
+    CHECK_STR(e, "# ramps\n9:40-10:15\n\n  1:00-1:30 \r\n0:10.01-0:12.16");
+    CHECK(clip_parse_list(e, &s, &n, err, sizeof err));
+    CHECK_EQ(s[2].start, 601);
+    CHECK_EQ(s[2].end, 730);
+    free(s);
+    free(e);
+    e = clip_list_edit(old, 0, NULL); /* taken out, line break and all */
+    CHECK_STR(e, "# ramps\n\n  1:00-1:30 \r\n600-700");
+    free(e);
+    e = clip_list_edit(old, 1, NULL);
+    CHECK_STR(e, "# ramps\n9:40-10:15\n\n600-700");
+    free(e);
+    e = clip_list_edit(old, 2, NULL);
+    CHECK_STR(e, "# ramps\n9:40-10:15\n\n  1:00-1:30 \r\n");
+    free(e);
+    e = clip_list_edit("0:05-0:10\n", 0, NULL); /* nothing left */
+    CHECK_STR(e, "");
+    free(e);
+    CHECK(!clip_list_edit(old, 3, NULL)); /* no fourth clip */
+    CHECK(!clip_list_edit("# none\n", 0, &to));
+}
+
 /* Spans from a list are sorted, and those that overlap or touch are one. */
 TEST(clip_list_spans_are_sorted_and_merged_where_they_overlap) {
     clip_span s[] = {{600, 700, 0, 0}, {100, 200, 0, 0}, {650, 900, 0, 0}, {200, 300, 0, 0},

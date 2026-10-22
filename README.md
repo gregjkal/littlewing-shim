@@ -508,7 +508,9 @@ LOONY_REPLAY=game.lwreplay LOONY_CLIP=clips ./build-release/loony
 | 0 to 9 (on the keypad too) | Go to that tenth of the recording: 0 is its start, 5 its middle |
 | `[`, `]` | Go to the mark before or after (Cmd-S while recording) |
 | `<`, `>` (Shift-comma, Shift-period) | Slower or faster: 1x, 2x, 4x, 8x, as fast as it can |
-| I, O | Where a clip starts, and where it ends (O saves it) |
+| I, O | Where a clip starts, and where it ends (O saves it); inside a saved clip, move its start or end there instead |
+| Option-`,` and Option-`.` | Move the selected clip's nearer edge back or ahead a frame (with Shift, a second) |
+| Backspace (Delete) | Delete the selected clip |
 | E | Export the clips, as `LOONY_CLIP=clips` does |
 | Esc | Cancel the export |
 
@@ -534,8 +536,8 @@ fades away, and the speed lights up for a moment when it changes. It is
 all drawn on the window, never into the game's
 screen, so screenshots, clips and a replay's frame checks leave it out.
 
-These are YouTube's keys. A key with Cmd, Ctrl or Option held goes to
-the menus, not the viewer. The **Replay** menu (next to Sound) lists
+These are YouTube's keys. A key with Cmd or Ctrl held goes to the menus,
+not the viewer, and so does one with Option but for the edge's. The **Replay** menu (next to Sound) lists
 every one of these with its key but 0 to 9, so it is also where to find
 them, and Help's search finds them by name.
 
@@ -561,7 +563,23 @@ recording (a desync), a message box says so before the window closes. Each clip 
 into `game.clips` next to `game.lwreplay`, one `<start>-<end>` a line in `LOONY_CLIP`'s
 format, so the file can be edited by hand too; `LOONY_CLIP=clips` then
 renders each into `game-0m01-0m03.mp4` and so on, in one pass, as
-`LOONY_CLIP=marks` does (clips that overlap become one). Taking a line out
+`LOONY_CLIP=marks` does (clips that overlap become one).
+
+To fix a clip after saving it, put the playhead in it: that clip is the
+selected one, outlined on the timeline, with a taller bar on the edge
+nearer the playhead (its start and end count as in it). Where clips
+overlap, the shortest under the playhead is selected. I or O there moves
+its start or end to the playhead rather than starting a new clip, but O
+after an I pressed outside every clip still saves the new one. Option-comma
+and Option-period move the edge with the bar a frame, Shift-Option-comma and
+Shift-Option-period a second, and the viewer pauses and goes with it so
+that the edge's frame is on screen; a clip keeps at least a frame. (Shift-comma
+and Shift-period are the speed, so the edge takes Option.) Backspace deletes
+the selected clip at once; its exported video, if any, stays. With the
+playhead in no clip, I starts a new one, O says how to make one, and
+Backspace and the nudges do nothing. Each edit changes that clip's line
+in `.clips` and leaves the rest of the file, comments and all, as it was;
+a file left with nothing in it is removed. Marks aren't edited. Taking a line out
 of the file, or adding one, renames none of the other clips' files, though
 clips that come to overlap, or stop overlapping, get new files. A recording in
 `recordings` with a `.clips` file is kept, like a marked one.

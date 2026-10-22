@@ -281,8 +281,11 @@ static void add_scores_menu(void) {
 @implementation LoonyReplayMenu
 - (void)act:(NSMenuItem *)item {
     NSEvent *e = NSApp.currentEvent;
-    if (e.type == NSEventTypeKeyDown && item.keyEquivalent.length &&
-        [e.charactersIgnoringModifiers caseInsensitiveCompare:item.keyEquivalent] == NSOrderedSame)
+    NSString *typed = e.type == NSEventTypeKeyDown ? e.charactersIgnoringModifiers : nil;
+    if ([typed isEqualToString:@"\x7f"]) /* the Delete key types DEL, its equivalent is a backspace */
+        typed = @"\b";
+    if (typed && item.keyEquivalent.length &&
+        [typed caseInsensitiveCompare:item.keyEquivalent] == NSOrderedSame)
         return;
     watch_act((watch_action)item.tag, false);
 }
@@ -297,8 +300,9 @@ static LoonyReplayMenu *replay_menu; /* its items' target, once added */
 
 /* The key equivalent that shows b's key, with its modifiers in *mask: a
    shifted key shows what it types on this keyboard ("<" for Shift-comma),
-   unless that is only its capital (Shift-J shows as Shift and J). "" for
-   none. */
+   unless that is only its capital (Shift-J shows as Shift and J), and
+   with Option too it's what Shift alone types (Shift-Option-comma shows as
+   Option and "<"). "" for none. */
 static NSString *key_equivalent(const watch_binding *b, NSEventModifierFlags *mask) {
     *mask = 0;
     if (b->mods & SDL_KMOD_CTRL)
@@ -314,7 +318,8 @@ static NSString *key_equivalent(const watch_binding *b, NSEventModifierFlags *ma
         c = NSLeftArrowFunctionKey;
     } else {
         SDL_Keycode base = SDL_GetKeyFromScancode((SDL_Scancode)b->scancode, SDL_KMOD_NONE, false);
-        SDL_Keycode typed = SDL_GetKeyFromScancode((SDL_Scancode)b->scancode, b->mods, false);
+        SDL_Keycode typed = SDL_GetKeyFromScancode((SDL_Scancode)b->scancode,
+                                                   b->mods & SDL_KMOD_SHIFT, false);
         if (base == SDLK_UNKNOWN || (base & SDLK_SCANCODE_MASK) || base > 0xFFFF)
             return @"";
         c = (unichar)base;

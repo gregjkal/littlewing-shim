@@ -541,13 +541,126 @@ static void read_marks(void) {
     W.nmarks = n;
 }
 
-/* O: the clip from I to now goes into the list. */
+/* The time shown: now, or the one being gone to. */
+static uint32_t shown_tick(void) { return W.going || W.seeking ? W.from : now_tick(); }
+
+int watch_clip_at(const clip_span *clips, size_t n, uint32_t tick) {
+    int best = -1;
+    for (size_t i = 0; i < n; i++)
+        if (clips[i].start <= tick && tick <= clips[i].end &&
+            (best < 0 || clips[i].end - clips[i].start < clips[best].end - clips[best].start))
+            best = (int)i;
+    return best;
+}
+
+bool watch_edge_at(const clip_span *c, uint32_t tick) {
+    uint64_t to_start = tick > c->start ? tick - c->start : c->start - tick;
+    uint64_t to_end = tick > c->end ? tick - c->end : c->end - tick;
+    return to_end <= to_start;
+}
+
+/* An edit of the list (clip_list_edit): reads it afresh, so that the clip
+   selected at tick is found in what's on disk now. Its index, with its
+   span in *c and the list's text in *text (to free), or -1 when there is
+   no clip there or no list to read. */
+static int edit_start(uint32_t tick, clip_span *c, char **text) {
+    size_t len, n;
+    clip_span *spans;
+    char err[256];
+    *text = (char *)read_file(W.list, &len);
+    if (!*text)
+        return -1;
+    if (!clip_parse_list(*text, &spans, &n, err, sizeof err)) {
+        log_msg("watch: %s", err);
+        flash("can't edit the clips: %s", err);
+        free(*text);
+        *text = NULL;
+        return -1;
+    }
+    int i = watch_clip_at(spans, n, tick);
+    if (i >= 0)
+        *c = spans[i];
+    free(spans);
+    if (i < 0) {
+        free(*text);
+        *text = NULL;
+    }
+    return i;
+}
+
+/* Ends an edit: the list made text's edit of clip i (to, or NULL to take
+   it out), written whole beside it and renamed over it, or removed when
+   nothing is left. Frees text. False, said, if it can't be written. */
+static bool edit_end(char *text, int i, const clip_span *to) {
+    char *edited = clip_list_edit(text, (size_t)i, to);
+    free(text);
+    if (!edited)
+        return false;
+    bool ok;
+    if (!edited[0]) {
+        ok = unlink(W.list) == 0 || errno == ENOENT;
+    } else {
+        char tmp[PATH_MAX + 8];
+        snprintf(tmp, sizeof tmp, "%s.new", W.list);
+        FILE *f = fopen(tmp, "w");
+        ok = f && fputs(edited, f) >= 0;
+        if (f && fclose(f) != 0)
+            ok = false;
+        ok = ok && rename(tmp, W.list) == 0;
+        if (!ok)
+            unlink(tmp);
+    }
+    free(edited);
+    if (!ok) {
+        log_msg("watch: can't write %s: %s", W.list, strerror(errno));
+        flash("can't change the clips (%s)", strerror(errno));
+    }
+    read_clips();
+    return ok;
+}
+
+/* Moves clip i's start (or its end) to tick, if that leaves it a frame or
+   more. Frees text. True if it moved. */
+static bool move_edge(char *text, int i, clip_span c, bool end, uint32_t tick) {
+    char a[32], b[32];
+    uint32_t *edge = end ? &c.end : &c.start;
+    if (*edge == tick) {
+        free(text);
+        flash("clip %d %s at %s already", i + 1, end ? "ends" : "starts",
+              clip_format_time(tick, a, sizeof a));
+        return false;
+    }
+    if (end ? tick <= c.start : tick >= c.end) {
+        free(text);
+        flash("clip %d would %s at %s, %s it %s at %s", i + 1, end ? "end" : "start",
+              clip_format_time(tick, a, sizeof a), end ? "before" : "after", end ? "starts" : "ends",
+              clip_format_time(end ? c.start : c.end, b, sizeof b));
+        return false;
+    }
+    *edge = tick;
+    if (!edit_end(text, i, &c))
+        return false;
+    clip_format_time(c.start, a, sizeof a);
+    clip_format_time(c.end, b, sizeof b);
+    log_msg("watch: clip %d is now %s-%s", i + 1, a, b);
+    flash("clip %d: %s-%s", i + 1, a, b);
+    return true;
+}
+
+/* O: the clip from I to now goes into the list, or without an I, the
+   selected clip's end moves here. */
 static void save_clip(void) {
+    uint32_t out = shown_tick();
     if (!W.have_in) {
-        flash("I marks where a clip starts, then O where it ends");
+        clip_span c;
+        char *text;
+        int i = edit_start(out, &c, &text);
+        if (i >= 0)
+            move_edge(text, i, c, true, out);
+        else
+            flash("I marks where a clip starts, then O where it ends");
         return;
     }
-    uint32_t out = now_tick();
     char a[32], b[32];
     clip_format_time(W.in, a, sizeof a);
     clip_format_time(out, b, sizeof b);
@@ -708,6 +821,12 @@ const watch_binding watch_bindings[] = {
     {WATCH_FASTER, SDL_SCANCODE_PERIOD, SDL_KMOD_SHIFT, "Faster", false}, /* > */
     {WATCH_MARK_IN, SDL_SCANCODE_I, 0, "Mark In", true},
     {WATCH_MARK_OUT, SDL_SCANCODE_O, 0, "Mark Out", false},
+    /* Shift-comma and Shift-period are the speed, so the edge takes Option */
+    {WATCH_NUDGE_BACK, SDL_SCANCODE_COMMA, SDL_KMOD_ALT, "Edge Back a Frame", false},
+    {WATCH_NUDGE_AHEAD, SDL_SCANCODE_PERIOD, SDL_KMOD_ALT, "Edge Ahead a Frame", false},
+    {WATCH_NUDGE_BACK_BIG, SDL_SCANCODE_COMMA, SDL_KMOD_ALT | SDL_KMOD_SHIFT, "Edge Back 1 s", false},
+    {WATCH_NUDGE_AHEAD_BIG, SDL_SCANCODE_PERIOD, SDL_KMOD_ALT | SDL_KMOD_SHIFT, "Edge Ahead 1 s", false},
+    {WATCH_DELETE_CLIP, SDL_SCANCODE_BACKSPACE, 0, "Delete Clip", false},
     {WATCH_EXPORT_CLIPS, SDL_SCANCODE_E, 0, "Export Clips", true},
     {WATCH_EXPORT_MARKS, 0, 0, "Export Marks", false},
     {WATCH_CANCEL_EXPORT, SDL_SCANCODE_ESCAPE, 0, "Cancel Export", true},
@@ -724,17 +843,69 @@ static void toggle_pause(void) {
     anchor();
 }
 
+/* I: a clip starts now, or the selected clip's start moves here. */
 static void mark_in(void) {
     char t[32];
-    W.in = now_tick();
+    uint32_t now = shown_tick();
+    clip_span c;
+    char *text;
+    int i = edit_start(now, &c, &text);
+    if (i >= 0) {
+        W.have_in = false; /* I is the start: this clip's, not a new one's */
+        move_edge(text, i, c, false, now);
+        return;
+    }
+    W.in = now;
     W.have_in = true;
     log_msg("watch: a clip starts at %s", clip_format_time(W.in, t, sizeof t));
     flash("a clip starts at %s: O ends it", t);
 }
 
+/* Option-comma and -period: the selected edge by ticks (back when < 0),
+   and the replay paused there. */
+static void nudge(int64_t ticks) {
+    clip_span c;
+    char *text;
+    int i = edit_start(shown_tick(), &c, &text);
+    if (i < 0)
+        return;
+    bool end = watch_edge_at(&c, shown_tick());
+    int64_t lo = end ? (int64_t)c.start + 1 : 0;
+    int64_t hi = end ? (int64_t)UINT32_MAX : (int64_t)c.end - 1;
+    uint32_t length = replay_play_length();
+    if (end && length > c.start) /* within the recording, unless it's past it already */
+        hi = length > c.end ? length : c.end;
+    int64_t to = (int64_t)(end ? c.end : c.start) + ticks;
+    to = to < lo ? lo : to > hi ? hi : to;
+    if (to == (end ? c.end : c.start)) {
+        free(text);
+        flash("clip %d's %s can't go %s", i + 1, end ? "end" : "start",
+              ticks < 0 ? "back further" : "further ahead");
+        return;
+    }
+    if (!move_edge(text, i, c, end, (uint32_t)to))
+        return;
+    W.paused = true; /* the edge's frame stays up */
+    go_to((uint32_t)to);
+}
+
+/* Backspace: the selected clip goes from the list. */
+static void delete_clip(void) {
+    clip_span c;
+    char *text;
+    int i = edit_start(shown_tick(), &c, &text);
+    if (i < 0 || !edit_end(text, i, NULL))
+        return;
+    char a[32], b[32];
+    clip_format_time(c.start, a, sizeof a);
+    clip_format_time(c.end, b, sizeof b);
+    log_msg("watch: clip %d, %s-%s, deleted from %s", i + 1, a, b, W.list);
+    flash("clip %d deleted: %s-%s", i + 1, a, b);
+}
+
 void watch_get_state(watch_state *s) {
     s->played = now_tick();
-    s->now = W.going || W.seeking ? W.from : s->played;
+    s->now = shown_tick();
     s->length = replay_play_length();
     s->paused = W.paused;
     s->at_end = W.at_end;
@@ -747,6 +918,10 @@ void watch_get_state(watch_state *s) {
     s->nmarks = W.nmarks;
     s->clips = W.clips;
     s->nclips = W.nclips;
+    int i = watch_clip_at(W.clips, W.nclips, s->now);
+    s->have_selected = i >= 0;
+    s->selected = i >= 0 ? (size_t)i : 0;
+    s->selected_end = i >= 0 && watch_edge_at(&W.clips[i], s->now);
 }
 
 int watch_mark_from(const watch_state *s, int dir) {
@@ -812,16 +987,23 @@ bool watch_can(watch_action action) {
     case WATCH_CANCEL_EXPORT: return export_running();
     case WATCH_PREV_MARK:
     case WATCH_NEXT_MARK: return W.nmarks > 0;
+    case WATCH_NUDGE_BACK:
+    case WATCH_NUDGE_AHEAD:
+    case WATCH_NUDGE_BACK_BIG:
+    case WATCH_NUDGE_AHEAD_BIG:
+    case WATCH_DELETE_CLIP: return watch_clip_at(W.clips, W.nclips, shown_tick()) >= 0;
     default: return true;
     }
 }
 
 void watch_act(watch_action action, bool repeat) {
-    bool step = action >= WATCH_BACK_SMALL && action <= WATCH_FRAME_AHEAD;
+    bool edge = action >= WATCH_NUDGE_BACK && action <= WATCH_NUDGE_AHEAD_BIG;
+    bool step = (action >= WATCH_BACK_SMALL && action <= WATCH_FRAME_AHEAD) || edge;
     if (!W.started || (repeat && !step)) /* only the steps go on while their key is held */
         return;
     strip_poke();
-    if (action == WATCH_PLAY_PAUSE || action == WATCH_FRAME_BACK || action == WATCH_FRAME_AHEAD)
+    if (action == WATCH_PLAY_PAUSE || action == WATCH_FRAME_BACK || action == WATCH_FRAME_AHEAD ||
+        edge)
         W.scrub_paused = false; /* the pause is the user's again, mid-drag too */
     switch (action) {
     case WATCH_PLAY_PAUSE:
@@ -868,6 +1050,11 @@ void watch_act(watch_action action, bool repeat) {
     case WATCH_NEXT_MARK: to_mark(1); break;
     case WATCH_MARK_IN: mark_in(); break;
     case WATCH_MARK_OUT: save_clip(); break;
+    case WATCH_NUDGE_BACK: nudge(-WATCH_FRAME_TICKS); break;
+    case WATCH_NUDGE_AHEAD: nudge(WATCH_FRAME_TICKS); break;
+    case WATCH_NUDGE_BACK_BIG: nudge(-WATCH_NUDGE_BIG_TICKS); break;
+    case WATCH_NUDGE_AHEAD_BIG: nudge(WATCH_NUDGE_BIG_TICKS); break;
+    case WATCH_DELETE_CLIP: delete_clip(); break;
     case WATCH_EXPORT_CLIPS: watch_export(false); break;
     case WATCH_EXPORT_MARKS: watch_export(true); break;
     case WATCH_CANCEL_EXPORT: watch_cancel_export(); break;
