@@ -61,6 +61,10 @@ static struct {
     bool skipping; /* what isn't play, without pacing, drawing or sound */
     bool have_in;
     uint32_t in;
+    uint32_t *marks; /* in play time, malloc'd */
+    size_t nmarks;
+    clip_span *clips; /* the list's, as last read, malloc'd */
+    size_t nclips;
     SDL_Keymod held; /* the modifier keys down, as watch_key has seen them */
     char list[PATH_MAX]; /* the clips' list */
     char replay[PATH_MAX]; /* the recording, as an absolute path, for an export */
@@ -85,7 +89,11 @@ static struct {
     char text[256]; /* the window's title */
 } W;
 
-void watch_reset(void) { memset(&W, 0, sizeof W); }
+void watch_reset(void) {
+    free(W.marks);
+    free(W.clips);
+    memset(&W, 0, sizeof W);
+}
 
 bool watch_on(void) { return W.on; }
 
@@ -464,20 +472,38 @@ static void step_by(int64_t step) {
     go_to(to < 0 ? 0 : to > UINT32_MAX ? UINT32_MAX : (uint32_t)to);
 }
 
-/* The clips in the list, or -1 if it can't be read. */
-static int clips_in_list(void) {
+/* Reads the list again, for the strip: the clips in it, or -1 if it can't
+   be read (none are shown then). */
+static int read_clips(void) {
+    free(W.clips);
+    W.clips = NULL;
+    W.nclips = 0;
     size_t len;
     char *text = (char *)read_file(W.list, &len);
     if (!text)
         return -1;
-    clip_span *spans;
-    size_t n;
     char err[256];
-    int count = clip_parse_list(text, &spans, &n, err, sizeof err) ? (int)n : -1;
+    bool ok = clip_parse_list(text, &W.clips, &W.nclips, err, sizeof err);
     free(text);
-    if (count >= 0)
-        free(spans);
-    return count;
+    if (!ok)
+        log_msg("watch: %s", err);
+    return ok ? (int)W.nclips : -1;
+}
+
+/* The replay's marks, in play time, for the strip and [ and ]. */
+static void read_marks(void) {
+    const uint32_t *ticks;
+    size_t n = replay_marks(&ticks);
+    free(W.marks);
+    W.marks = NULL;
+    W.nmarks = 0;
+    if (!n)
+        return;
+    if (!(W.marks = malloc(n * sizeof *W.marks)))
+        fatal("out of memory");
+    for (size_t i = 0; i < n; i++)
+        W.marks[i] = replay_play_ticks(ticks[i]);
+    W.nmarks = n;
 }
 
 /* O: the clip from I to now goes into the list. */
@@ -504,7 +530,7 @@ static void save_clip(void) {
         return;
     }
     W.have_in = false;
-    int n = clips_in_list();
+    int n = read_clips();
     log_msg("watch: clip %d, %s-%s, saved in %s", n, a, b, W.list);
     flash("clip %d saved: %s-%s", n, a, b);
 }
@@ -570,7 +596,7 @@ void watch_export(bool marks) {
         flash("already exporting: Esc cancels it");
         return;
     }
-    if (kind == EXPORT_CLIPS && (access(W.list, F_OK) != 0 || clips_in_list() == 0)) {
+    if (kind == EXPORT_CLIPS && (access(W.list, F_OK) != 0 || read_clips() == 0)) {
         log_msg("watch: no clips to export in %s", W.list);
         flash("no clips to export: I marks where one starts, O where it ends");
         return;
@@ -641,6 +667,8 @@ const watch_binding watch_bindings[] = {
     {WATCH_TENTH_7, SDL_SCANCODE_KP_7, 0, NULL, false},
     {WATCH_TENTH_8, SDL_SCANCODE_KP_8, 0, NULL, false},
     {WATCH_TENTH_9, SDL_SCANCODE_KP_9, 0, NULL, false},
+    {WATCH_PREV_MARK, SDL_SCANCODE_LEFTBRACKET, 0, "Previous Mark", true},
+    {WATCH_NEXT_MARK, SDL_SCANCODE_RIGHTBRACKET, 0, "Next Mark", false},
     {WATCH_SLOWER, SDL_SCANCODE_COMMA, SDL_KMOD_SHIFT, "Slower", true}, /* <, as on YouTube */
     {WATCH_FASTER, SDL_SCANCODE_PERIOD, SDL_KMOD_SHIFT, "Faster", false}, /* > */
     {WATCH_MARK_IN, SDL_SCANCODE_I, 0, "Mark In", true},
@@ -675,6 +703,50 @@ void watch_get_state(watch_state *s) {
     s->paused = W.paused;
     s->at_end = W.at_end;
     s->speed = speeds[W.speed];
+    s->have_in = W.have_in;
+    s->in = W.in;
+    s->marks = W.marks;
+    s->nmarks = W.nmarks;
+    s->clips = W.clips;
+    s->nclips = W.nclips;
+}
+
+int watch_mark_from(const watch_state *s, int dir) {
+    if (dir > 0) {
+        for (size_t i = 0; i < s->nmarks; i++)
+            if (s->marks[i] > s->now)
+                return (int)i;
+        return -1;
+    }
+    for (size_t i = s->nmarks; i-- > 0;)
+        if (s->marks[i] + WATCH_MARK_GRACE_TICKS < s->now)
+            return (int)i;
+    return -1;
+}
+
+/* [ and ]: to the mark before or after now. */
+static void to_mark(int dir) {
+    watch_state s;
+    watch_get_state(&s);
+    int i = watch_mark_from(&s, dir);
+    if (i < 0) {
+        if (s.nmarks)
+            flash("no mark %s here", dir > 0 ? "after" : "before");
+        else
+            flash("no marks: Cmd-S marks one while recording");
+        return;
+    }
+    char t[32];
+    log_msg("watch: to mark %d, at %s", i + 1, clip_format_time(s.marks[i], t, sizeof t));
+    go_to(s.marks[i]);
+}
+
+void watch_go_to(uint32_t tick) {
+    if (!W.started)
+        return;
+    strip_poke();
+    go_to(tick);
+    update_title();
 }
 
 bool watch_can(watch_action action) {
@@ -687,6 +759,8 @@ bool watch_can(watch_action action) {
     case WATCH_EXPORT_CLIPS:
     case WATCH_EXPORT_MARKS: return !export_running();
     case WATCH_CANCEL_EXPORT: return export_running();
+    case WATCH_PREV_MARK:
+    case WATCH_NEXT_MARK: return W.nmarks > 0;
     default: return true;
     }
 }
@@ -737,6 +811,8 @@ void watch_act(watch_action action, bool repeat) {
         if (W.speed + 1 < NSPEEDS)
             set_speed(W.speed + 1);
         break;
+    case WATCH_PREV_MARK: to_mark(-1); break;
+    case WATCH_NEXT_MARK: to_mark(1); break;
     case WATCH_MARK_IN: mark_in(); break;
     case WATCH_MARK_OUT: save_clip(); break;
     case WATCH_EXPORT_CLIPS: watch_export(false); break;
@@ -882,6 +958,8 @@ void watch_start(const char *title) {
         return;
     W.title = title;
     W.started = true;
+    read_marks();
+    read_clips();
     replay_set_pace(pace);
     replay_set_end(held_at_end);
     seek_start(landed);
