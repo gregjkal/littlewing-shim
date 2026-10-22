@@ -80,7 +80,8 @@ typedef struct {
     float (*shown)(void);
     /* The pointer moved to (x, y), or left the window (inside false). */
     void (*pointer)(const display_layout *l, float x, float y, bool inside);
-    /* The left button went down or up at (x, y), on the strip. */
+    /* The left button went down or up at (x, y), on the strip, or up
+       anywhere after going down on it. */
     void (*press)(const display_layout *l, float x, float y, bool down);
     /* Shows msg for DISPLAY_FLASH_MS (display_flash), in place of the
        window's title. */
@@ -143,7 +144,9 @@ void display_take_launch_events(uint32_t wait_ms);
    said as display_flash says things), which the game never
    sees. Left-button clicks are mapped from the window to the emulated
    screen, through the letterboxing and scaling, unless they are on the
-   overlay's strip, which gets them and the pointer's movements. With an
+   overlay's strip, which gets them and the pointer's movements. A press on
+   the strip is a drag: the strip gets its release wherever it comes, and
+   one when the window loses focus first. With an
    overlay, the window is drawn again whenever it changes. */
 void display_poll(void);
 

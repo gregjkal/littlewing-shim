@@ -1025,15 +1025,12 @@ static const uint8_t *pixel(const uint8_t *px, int w, float x, float y) {
     return px + ((size_t)(int)y * (size_t)w + (size_t)(int)x) * 4;
 }
 
-/* Watching the recording with clips saved beside it and one started, with
-   the strip up: the timeline (strip.h) shows the marks, the clips and the
-   clip's start where they are, a click on a mark goes to it, ] goes to the
-   next, and a clip under the pointer that leaves the list is forgotten. */
-static void child_timeline(void *unused) {
-    (void)unused;
-    char err[256], play_data[1300], list[1300];
+/* Starts watching the recording with clips saved beside it (the list
+   at list) and one started, paused or not, with the strip coming up. */
+static void watch_with_clips(bool paused, char *list, size_t cap) {
+    char err[256], play_data[1300];
     snprintf(play_data, sizeof play_data, "%s/play", dir);
-    snprintf(list, sizeof list, "%s/run.clips", dir);
+    snprintf(list, cap, "%s/run.clips", dir);
     FILE *f = fopen(list, "w");
     fputs("0:05-0:10\n0:30-0:35\n", f);
     fclose(f);
@@ -1041,7 +1038,10 @@ static void child_timeline(void *unused) {
     unsetenv("LOONY_RECORD");
     setenv("LOONY_REPLAY", file, 1);
     setenv("LOONY_WATCH", "1", 1);
-    setenv("LOONY_WATCH_PAUSED", "1", 1);
+    if (paused)
+        setenv("LOONY_WATCH_PAUSED", "1", 1);
+    else
+        unsetenv("LOONY_WATCH_PAUSED");
     setenv("LOONY_WATCH_IN", "1200", 1); /* 0:20 */
     setenv("SDL_VIDEO_DRIVER", "dummy", 1);
     setenv("SDL_AUDIO_DRIVER", "dummy", 1);
@@ -1065,6 +1065,18 @@ static void child_timeline(void *unused) {
     qd_init(800, 600, 8);
     (void)strip_overlay()->shown(); /* fading in from now */
     strip_t = 1;
+}
+
+/* Watching the recording with clips saved beside it and one started, with
+   the strip up: the timeline (strip.h) shows the marks, the clips and the
+   clip's start where they are, a click on a mark goes to it, ] goes to the
+   next, and a clip under the pointer that leaves the list is forgotten. */
+static void child_timeline(void *unused) {
+    (void)unused;
+    char list[1300];
+    watch_with_clips(true, list, sizeof list);
+    watch_state s;
+    watch_get_state(&s);
     display_present();
     int w, h;
     uint8_t *px = display_read_window(&w, &h);
@@ -1094,7 +1106,7 @@ static void child_timeline(void *unused) {
        the strip forgets the clip rather than drawing it from the list it
        had. */
     o->pointer(&l, AT(1800), cy, true);
-    f = fopen(list, "w");
+    FILE *f = fopen(list, "w");
     fclose(f);
     watch_key(SDL_SCANCODE_E, true, false);
     display_present();
@@ -1103,21 +1115,30 @@ static void child_timeline(void *unused) {
     _exit(0);
 }
 
-TEST(replay_watching_shows_marks_and_clips_on_the_timeline) {
-    BEGIN_TEST();
-    CHECK(record(NULL));
+/* A minute of play, marked at 0:15 and 0:40. */
+static bool record_marked(void) {
+    if (!record(NULL))
+        return false;
     replay_clock(1000000); /* a second before the game */
     replay_game(true);
     replay_play(true);
     replay_clock(16000000); /* 0:15 of play */
-    CHECK_EQ(replay_mark(), 1);
+    if (replay_mark() != 1)
+        return false;
     replay_step();
     replay_clock(41000000); /* 0:40 */
-    CHECK_EQ(replay_mark(), 2);
+    if (replay_mark() != 2)
+        return false;
     replay_step();
     replay_clock(61000000); /* 1:00, the end */
     replay_step();
     replay_finish();
+    return true;
+}
+
+TEST(replay_watching_shows_marks_and_clips_on_the_timeline) {
+    BEGIN_TEST();
+    CHECK(record_marked());
     char out[16384];
     int status = test_run_child(child_timeline, NULL, out, sizeof out);
     if (status)
@@ -1128,6 +1149,79 @@ TEST(replay_watching_shows_marks_and_clips_on_the_timeline) {
     const char *back = click ? strstr(click, "watch: to mark 1, at 0:15") : NULL;
     CHECK(back);
     CHECK(!strstr(out, "watch: to mark 2"));
+}
+
+/* Dragging on the bar while playing: the press pauses, moving the
+   pointer (off the strip too) goes nowhere, and the release goes to the
+   time under it and plays on. On the way there, the bar shows where
+   playback is and a caret where it's going. */
+static void child_drag(void *unused) {
+    (void)unused;
+    char list[1300];
+    watch_with_clips(false, list, sizeof list);
+    watch_state s;
+    watch_get_state(&s);
+    display_present();
+    int w, h;
+    free(display_read_window(&w, &h));
+    display_layout l = display_lay_out((float)w, (float)h, 800, 600, STRIP_HEIGHT, false);
+    display_rect bar = strip_bar(&l, &s);
+    float cy = bar.y + bar.h / 2;
+#define AT(tick) (bar.x + bar.w * (float)(tick) / 3600)
+    const display_overlay *o = strip_overlay();
+    o->press(&l, AT(600), cy, true); /* 0:10, between the clips */
+    watch_get_state(&s);
+    if (!s.paused) {
+        fprintf(stderr, "the press didn't pause\n");
+        _exit(2);
+    }
+    o->pointer(&l, AT(1500), cy, true);
+    o->pointer(&l, AT(3000), 10, true); /* over the game */
+    watch_get_state(&s);
+    if (s.now != 0) {
+        fprintf(stderr, "went to %u while dragging\n", s.now);
+        _exit(3);
+    }
+    o->press(&l, AT(3000), 10, false);
+    watch_get_state(&s);
+    if (s.now != 3000 || s.played >= 3000 || s.paused) {
+        fprintf(stderr, "after: now %u, played %u, paused %d\n", s.now, s.played, s.paused);
+        _exit(4);
+    }
+    display_present();
+    uint8_t *px = display_read_window(&w, &h);
+    if (!px)
+        _exit(1);
+    const uint8_t *caret = pixel(px, w, AT(3000) - 1, cy - 1.5f * bar.h); /* a pixel wide */
+    for (int i = 0; i <= 2; i++) {
+        const uint8_t *p = pixel(px, w, AT(3000) - 1 + (float)i, cy - 1.5f * bar.h);
+        caret = p[0] > caret[0] ? p : caret;
+    }
+    const uint8_t *ahead = pixel(px, w, AT(1500), cy); /* not played yet */
+    if (caret[0] < 180 || caret[2] < 180 || ahead[0] > ahead[1] + 60) {
+        fprintf(stderr, "caret %d %d %d, ahead %d %d %d\n", caret[0], caret[1], caret[2], ahead[0],
+                ahead[1], ahead[2]);
+        _exit(5);
+    }
+    free(px);
+#undef AT
+    _exit(0);
+}
+
+TEST(replay_watching_seeks_once_at_the_end_of_a_drag) {
+    BEGIN_TEST();
+    CHECK(record_marked());
+    char out[16384];
+    int status = test_run_child(child_drag, NULL, out, sizeof out);
+    if (status)
+        fprintf(stderr, "%s", out);
+    CHECK_EQ(status, 0);
+    const char *to = strstr(out, "watch: going to 0:50");
+    CHECK(to);
+    CHECK(to && !strstr(to + 1, "watch: going to"));
+    CHECK(!strstr(out, "watch: going to 0:10"));
+    CHECK(!strstr(out, "watch: going to 0:25"));
+    CHECK_CONTAINS(out, "watch: going on at");
 }
 
 /* The date is the recording's start plus the game's clock (Loony Labyrinth

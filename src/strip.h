@@ -20,8 +20,15 @@
    yet ended (I) a bracket, with the span from it to now tinted lighter. The
    pointer over the bar says the time under it at once, or a mark's number
    and time, or a clip's number and span when it's on the mark or the
-   clip's start; a click goes there (watch_go_to): to a mark or a clip's
-   start exactly, and elsewhere to the time under the pointer.
+   clip's start; a click goes there: to a mark or a clip's start exactly,
+   and elsewhere to the time under the pointer.
+
+   A press on the bar is a drag (watch_scrub_start and _end): it pauses,
+   and until the release only the caret and its tip move, along the bar
+   wherever the pointer goes, snapping to marks and clips' starts as a
+   click does. The release goes there, and goes on playing if the press
+   paused. While the replay is on its way to a time, the bar shows where
+   playback is, and a caret where it's going.
 
    The speed says the speed the replay reaches (watch_state's reached)
    when it falls short of the one asked, in amber, and at "max" once it's

@@ -332,7 +332,7 @@ TEST(display_lay_out_letterboxes_the_game_and_places_the_strip) {
     CHECK_EQ((int)l.game.w, 0);
 }
 
-static int strip_presses, strip_moves;
+static int strip_presses, strip_releases, strip_moves;
 static float strip_up = 1;
 static float press_x, press_y;
 static void ov_draw(void *r, const display_layout *l) {
@@ -351,6 +351,7 @@ static void ov_pointer(const display_layout *l, float x, float y, bool in) {
 static void ov_press(const display_layout *l, float x, float y, bool down) {
     (void)l;
     strip_presses += down;
+    strip_releases += !down;
     press_x = x;
     press_y = y;
 }
@@ -404,6 +405,56 @@ TEST(display_poll_gives_clicks_on_the_strip_to_the_overlay) {
     CHECK_EQ((int)press_x, 64);
     CHECK_EQ((int)press_y, 104);
     CHECK(strip_moves >= 1); /* SDL moves the pointer to each click too */
+    display_set_overlay(NULL);
+}
+
+static void push_motion(float x, float y) {
+    SDL_Event e;
+    memset(&e, 0, sizeof e);
+    e.type = SDL_EVENT_MOUSE_MOTION;
+    e.motion.x = x;
+    e.motion.y = y;
+    SDL_PushEvent(&e);
+}
+
+/* A press on the strip is a drag: its release is the strip's wherever it
+   comes, over the game too, and the window losing focus first releases it
+   where the pointer was. A release with no press on the strip before it
+   is the game's. */
+TEST(display_poll_gives_a_drag_on_the_strip_its_release) {
+    gm_init();
+    mm_init();
+    qd_init(64, 48, 16);
+    display_set_overlay(&test_overlay);
+    display_present(); /* a 128 x 96 game and the 16-point strip */
+    static const display_input in = {on_key, on_focus, on_quit, on_mouse, on_paste, on_mark};
+    display_set_input(&in);
+    clicks = strip_presses = strip_releases = 0;
+    mouse_x = -1;
+    push_click(64, 104, true, SDL_BUTTON_LEFT);
+    push_motion(30, 20);
+    push_click(30, 20, false, SDL_BUTTON_LEFT); /* over the game */
+    display_poll();
+    CHECK_EQ(strip_presses, 1);
+    CHECK_EQ(strip_releases, 1);
+    CHECK_EQ((int)press_y, 20);
+    CHECK_EQ(mouse_x, -1);
+    push_click(30, 20, false, SDL_BUTTON_LEFT); /* no press before it: the game's */
+    display_poll();
+    CHECK_EQ(strip_releases, 1);
+    CHECK_EQ(mouse_x, 15);
+    push_click(64, 104, true, SDL_BUTTON_LEFT);
+    push_motion(100, 10);
+    SDL_Event e;
+    memset(&e, 0, sizeof e);
+    e.type = SDL_EVENT_WINDOW_FOCUS_LOST;
+    SDL_PushEvent(&e);
+    display_poll();
+    CHECK_EQ(strip_presses, 2);
+    CHECK_EQ(strip_releases, 2);
+    CHECK_EQ((int)press_x, 100);
+    CHECK_EQ((int)press_y, 10);
+    CHECK_EQ(clicks, 0);
     display_set_overlay(NULL);
 }
 
