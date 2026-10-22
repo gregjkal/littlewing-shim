@@ -58,12 +58,13 @@
    list (watch_clip_at). Its selected edge is the one nearer that time, the
    end when they are as near (watch_edge_at). With a clip selected, I moves
    its start to the time and O its end, unless that would leave it no
-   longer than nothing; but O after an I made outside any clip saves the
-   new clip as before. Option-comma and Option-period move the selected
+   longer than nothing; but I at the clip's very end starts a new clip, and
+   O after an I made outside any clip saves the new clip as before. Option-comma and Option-period move the selected
    edge a frame (WATCH_FRAME_TICKS), and with Shift a second
    (WATCH_NUDGE_BIG_TICKS), keeping a frame between start and end and the
    end within the recording, and pause and go to the edge, so it stays
-   selected and its frame is on the screen; held, they go on. Backspace
+   selected and its frame is on the screen; held, they go on. An edge stops
+   short of where another clip would be selected instead. Backspace
    deletes the selected clip, at once. With nothing selected, I starts a
    new clip, O without an I only says so, and the rest do nothing. An edit
    reads the list afresh, changes or takes out the clip's line alone, and

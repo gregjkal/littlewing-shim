@@ -562,8 +562,9 @@ bool watch_edge_at(const clip_span *c, uint32_t tick) {
 /* An edit of the list (clip_list_edit): reads it afresh, so that the clip
    selected at tick is found in what's on disk now. Its index, with its
    span in *c and the list's text in *text (to free), or -1 when there is
-   no clip there or no list to read. */
-static int edit_start(uint32_t tick, clip_span *c, char **text) {
+   no clip there or no list to read, and -2, said, when the list isn't
+   one. With all, *all (to free) and *nall get the list's spans too. */
+static int edit_start(uint32_t tick, clip_span *c, char **text, clip_span **all, size_t *nall) {
     size_t len, n;
     clip_span *spans;
     char err[256];
@@ -575,12 +576,17 @@ static int edit_start(uint32_t tick, clip_span *c, char **text) {
         flash("can't edit the clips: %s", err);
         free(*text);
         *text = NULL;
-        return -1;
+        return -2;
     }
     int i = watch_clip_at(spans, n, tick);
     if (i >= 0)
         *c = spans[i];
-    free(spans);
+    if (i >= 0 && all) {
+        *all = spans;
+        *nall = n;
+    } else {
+        free(spans);
+    }
     if (i < 0) {
         free(*text);
         *text = NULL;
@@ -633,8 +639,8 @@ static bool move_edge(char *text, int i, clip_span c, bool end, uint32_t tick) {
     if (end ? tick <= c.start : tick >= c.end) {
         free(text);
         flash("clip %d would %s at %s, %s it %s at %s", i + 1, end ? "end" : "start",
-              clip_format_time(tick, a, sizeof a), end ? "before" : "after", end ? "starts" : "ends",
-              clip_format_time(end ? c.start : c.end, b, sizeof b));
+              clip_format_time(tick, a, sizeof a), end ? "no later than" : "no earlier than",
+              end ? "starts" : "ends", clip_format_time(end ? c.start : c.end, b, sizeof b));
         return false;
     }
     *edge = tick;
@@ -654,10 +660,10 @@ static void save_clip(void) {
     if (!W.have_in) {
         clip_span c;
         char *text;
-        int i = edit_start(out, &c, &text);
+        int i = edit_start(out, &c, &text, NULL, NULL);
         if (i >= 0)
             move_edge(text, i, c, true, out);
-        else
+        else if (i == -1)
             flash("I marks where a clip starts, then O where it ends");
         return;
     }
@@ -849,12 +855,15 @@ static void mark_in(void) {
     uint32_t now = shown_tick();
     clip_span c;
     char *text;
-    int i = edit_start(now, &c, &text);
-    if (i >= 0) {
-        W.have_in = false; /* I is the start: this clip's, not a new one's */
-        move_edge(text, i, c, false, now);
+    int i = edit_start(now, &c, &text, NULL, NULL);
+    if (i == -2)
+        return;
+    if (i >= 0 && now < c.end) { /* at its very end, I starts the next clip */
+        if (move_edge(text, i, c, false, now))
+            W.have_in = false; /* I was the start: this clip's, not a new one's */
         return;
     }
+    free(text);
     W.in = now;
     W.have_in = true;
     log_msg("watch: a clip starts at %s", clip_format_time(W.in, t, sizeof t));
@@ -866,7 +875,9 @@ static void mark_in(void) {
 static void nudge(int64_t ticks) {
     clip_span c;
     char *text;
-    int i = edit_start(shown_tick(), &c, &text);
+    clip_span *all;
+    size_t n;
+    int i = edit_start(shown_tick(), &c, &text, &all, &n);
     if (i < 0)
         return;
     bool end = watch_edge_at(&c, shown_tick());
@@ -879,8 +890,19 @@ static void nudge(int64_t ticks) {
     to = to < lo ? lo : to > hi ? hi : to;
     if (to == (end ? c.end : c.start)) {
         free(text);
+        free(all);
         flash("clip %d's %s can't go %s", i + 1, end ? "end" : "start",
               ticks < 0 ? "back further" : "further ahead");
+        return;
+    }
+    /* The edge stays selected where it goes, or a held key would go on
+       with whichever clip is shorter there. */
+    *(end ? &all[i].end : &all[i].start) = (uint32_t)to;
+    bool kept = watch_clip_at(all, n, (uint32_t)to) == i && watch_edge_at(&all[i], (uint32_t)to) == end;
+    free(all);
+    if (!kept) {
+        free(text);
+        flash("clip %d's %s stops here: another clip is selected there", i + 1, end ? "end" : "start");
         return;
     }
     if (!move_edge(text, i, c, end, (uint32_t)to))
@@ -893,7 +915,7 @@ static void nudge(int64_t ticks) {
 static void delete_clip(void) {
     clip_span c;
     char *text;
-    int i = edit_start(shown_tick(), &c, &text);
+    int i = edit_start(shown_tick(), &c, &text, NULL, NULL);
     if (i < 0 || !edit_end(text, i, NULL))
         return;
     char a[32], b[32];

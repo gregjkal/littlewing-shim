@@ -1298,7 +1298,8 @@ static bool list_is(const char *list, const char *want) {
    its nearer edge. Then I and O in a clip move its edges, Option-comma and
    -period (with Shift, a second) nudge the nearer edge, keeping a frame of
    clip, and Backspace deletes it. Away from every clip, Backspace, O and a
-   nudge do nothing, and I starts a clip. */
+   nudge do nothing, and I starts a clip; at a clip's very end too. A held
+   nudge stops short of a shorter clip, and a broken list stops I. */
 static void child_edit(void *unused) {
     (void)unused;
     char list[1300];
@@ -1396,6 +1397,17 @@ static void child_edit(void *unused) {
         fprintf(stderr, "I in no clip: in %d at %u\n", s.have_in, s.in);
         _exit(12);
     }
+    watch_scrub_start(); /* I at a clip's very end starts the next clip */
+    watch_scrub_end(2100);
+    watch_key(SDL_SCANCODE_I, true, false);
+    watch_scrub_start(); /* and I on its start already keeps that I */
+    watch_scrub_end(1800);
+    watch_key(SDL_SCANCODE_I, true, false);
+    watch_get_state(&s);
+    if (!list_is(list, "0:30-0:35\n0:20-0:32.50\n") || !s.have_in || s.in != 2100) {
+        fprintf(stderr, "I at a clip's edges: in %d at %u\n", s.have_in, s.in);
+        _exit(14);
+    }
     watch_scrub_start(); /* the last clips go, and so does the list */
     watch_scrub_end(1900);
     watch_key(SDL_SCANCODE_BACKSPACE, true, false);
@@ -1403,6 +1415,34 @@ static void child_edit(void *unused) {
     if (access(list, F_OK) == 0) {
         fprintf(stderr, "the list is still there\n");
         _exit(13);
+    }
+    /* A held nudge stops short of a shorter clip, which would be selected
+       there and go on moving in its place. */
+    FILE *f = fopen(list, "w");
+    fputs("0:00-0:10\n0:05-0:06\n", f);
+    fclose(f);
+    watch_scrub_start();
+    watch_scrub_end(30); /* nearer the long clip's start */
+    watch_key(SDL_SCANCODE_LALT, true, false);
+    watch_key(SDL_SCANCODE_LSHIFT, true, false);
+    watch_key(SDL_SCANCODE_PERIOD, true, false);
+    for (int k = 0; k < 6; k++)
+        watch_key(SDL_SCANCODE_PERIOD, true, true);
+    watch_key(SDL_SCANCODE_LSHIFT, false, false);
+    watch_key(SDL_SCANCODE_LALT, false, false);
+    watch_get_state(&s);
+    if (!list_is(list, "0:04-0:10\n0:05-0:06\n") || s.now != 240) {
+        fprintf(stderr, "the held nudge: now %u\n", s.now);
+        _exit(15);
+    }
+    f = fopen(list, "w"); /* a list that isn't one: I says so, and starts nothing */
+    fputs("junk\n", f);
+    fclose(f);
+    watch_key(SDL_SCANCODE_I, true, false);
+    watch_get_state(&s);
+    if (!s.have_in || s.in != 2100) {
+        fprintf(stderr, "I with a broken list: in %d at %u\n", s.have_in, s.in);
+        _exit(16);
     }
     _exit(0);
 }
@@ -1418,6 +1458,9 @@ TEST(replay_watching_moves_nudges_and_deletes_the_selected_clip) {
     CHECK_CONTAINS(out, "watch: clip 3, 0:20-0:32.50, saved");
     CHECK_CONTAINS(out, "watch: clip 1 is now 0:07-0:10");
     CHECK_CONTAINS(out, "watch: clip 1, 0:07.98-0:08, deleted");
+    CHECK_CONTAINS(out, "watch: clip 1 is now 0:04-0:10");
+    CHECK(!strstr(out, "watch: clip 2 is now"));
+    CHECK_CONTAINS(out, "watch: line 1: junk");
 }
 
 /* The date is the recording's start plus the game's clock (Loony Labyrinth

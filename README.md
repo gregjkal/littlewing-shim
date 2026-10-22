@@ -569,11 +569,13 @@ To fix a clip after saving it, put the playhead in it: that clip is the
 selected one, outlined on the timeline, with a taller bar on the edge
 nearer the playhead (its start and end count as in it). Where clips
 overlap, the shortest under the playhead is selected. I or O there moves
-its start or end to the playhead rather than starting a new clip, but O
-after an I pressed outside every clip still saves the new one. Option-comma
+its start or end to the playhead rather than starting a new clip, but I
+at a clip's very end starts the next one, and O after an I pressed
+outside every clip still saves the new one. Option-comma
 and Option-period move the edge with the bar a frame, Shift-Option-comma and
 Shift-Option-period a second, and the viewer pauses and goes with it so
-that the edge's frame is on screen; a clip keeps at least a frame. (Shift-comma
+that the edge's frame is on screen; a clip keeps at least a frame, and
+an edge stops where another, shorter clip would be selected instead. (Shift-comma
 and Shift-period are the speed, so the edge takes Option.) Backspace deletes
 the selected clip at once; its exported video, if any, stays. With the
 playhead in no clip, I starts a new one, O says how to make one, and
