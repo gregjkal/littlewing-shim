@@ -519,7 +519,10 @@ pointer on a button says its key. The bar is the recording's timeline:
 marks are diamonds on it, saved clips yellow spans, and a clip started
 with I a bracket. The pointer over the bar says the time under it (or a
 mark's or clip's number), and a click goes there; a click on a mark or a
-clip's start goes to it exactly. The strip comes up when the pointer moves
+clip's start goes to it exactly. Drag along the bar to find a time: the
+replay pauses while the button is down (unless it is at its end), only the
+caret moves, and letting go goes there and plays on if it was playing and
+neither Space nor a frame step was pressed in the meantime. The strip comes up when the pointer moves
 or a key is pressed and fades a couple of seconds later, unless the pointer
 is on it; a thin line along the bottom still shows the progress, and the
 pointer hides with the strip. In full screen the strip goes over the
