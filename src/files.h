@@ -13,8 +13,9 @@
 
    There is one fake volume (FILES_VREFNUM). Directory IDs are handed out per
    folder: FILES_ROOT_DIRID is the game folder, which is also the default
-   directory (vRefNum 0, dirID 0). Mac paths use ':' separators and Mac Roman
-   names; host paths use '/' and UTF-8. */
+   directory (vRefNum 0, dirID 0) unless files_set_default_dir moves it. Mac
+   paths use ':' separators and Mac Roman names; host paths use '/' and
+   UTF-8. */
 
 #define FILES_VREFNUM    (-1)
 #define FILES_ROOT_DIRID 2
@@ -51,6 +52,12 @@ bool files_data_dir(const char *game_id, char *out, size_t cap);
    one that is, contains or is inside the game folder is refused (logged),
    since writing there could change the game's files. */
 bool files_init(const char *game_dir, const char *data_dir);
+
+/* Makes the default directory (vRefNum 0 and dirID 0 in FSMakeFSSpec) the
+   folder rel, relative to the game folder: a bundle's is the folder its
+   program is in, Contents/MacOS. It is the game folder itself until then,
+   and again after files_init. */
+void files_set_default_dir(const char *rel);
 
 /* Converts a Mac Roman name to UTF-8, with '/' (legal in Mac names) becoming ':'. */
 void files_mac_to_utf8(const char *mac, char *out, size_t cap);

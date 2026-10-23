@@ -698,3 +698,18 @@ TEST(files_finder_info_and_aliases) {
     CHECK(memcmp(gm_ptr(gm_r32(h) + 6, FSSPEC_SIZE), gm_ptr(spec, FSSPEC_SIZE), FSSPEC_SIZE) == 0);
     teardown();
 }
+
+TEST(files_the_default_directory_can_be_the_programs_folder) {
+    setup();
+    uint32_t spec = scratch(FSSPEC_SIZE);
+    CHECK_EQ(make_spec(":effect.bin", spec), FILES_FNF_ERR);
+    files_set_default_dir("LL Data");
+    CHECK_EQ(make_spec(":effect.bin", spec), 0);
+    uint32_t ref = scratch(2);
+    CHECK_EQ(call_import("FSpOpenDF", 3, spec, 1u, ref), 0);
+    CHECK_EQ(make_spec("::Caf\x8e", spec), 0); /* up to the game folder */
+    CHECK_EQ(gm_r32(spec + 2), FILES_ROOT_DIRID);
+    files_init(dir, data);
+    CHECK_EQ(make_spec("Caf\x8e", spec), 0); /* the game folder again */
+    teardown();
+}

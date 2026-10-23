@@ -55,6 +55,7 @@ static struct {
     int ndirs;
     open_file files[MAX_FILES];
     char refs[MAX_REFS][REL_CAP]; /* what each FSRef names, relative to the game folder */
+    char default_dir[REL_CAP];    /* the default directory (dirID 0), relative to the game folder */
     int nrefs;
     bool warned_no_data;
 } F;
@@ -258,6 +259,7 @@ static void snap_walk(snapshot_walker *w) {
         snapshot_check(w, safe_rel(F.dirs[i], sizeof F.dirs[i]), "folder %d", i);
     for (int i = 0; i < F.nrefs; i++)
         snapshot_check(w, safe_rel(F.refs[i], sizeof F.refs[i]), "reference %d", i);
+    snapshot_check(w, safe_rel(F.default_dir, sizeof F.default_dir), "the default directory");
     for (int i = 0; i < MAX_FILES; i++) {
         open_file *o = &F.files[i];
         int64_t mark = !snapshot_loading(w) && o->f ? (int64_t)ftell(o->f) : -1;
@@ -276,6 +278,12 @@ static void snap_walk(snapshot_walker *w) {
     }
 }
 SNAPSHOT_STATE_WALK(F, snap_walk)
+
+void files_set_default_dir(const char *rel) {
+    if (!safe_rel(rel, strlen(rel) + 1) || strlen(rel) >= sizeof F.default_dir)
+        fatal("the default directory %s isn't a folder inside the game's", rel);
+    snprintf(F.default_dir, sizeof F.default_dir, "%s", rel);
+}
 
 /* Where rel is on the host: in the data folder if it's there (returns
    true), otherwise in the game folder, whether or not it exists. */
@@ -310,7 +318,7 @@ static void h_fs_make_fsspec(void) {
     if (vref != 0 && vref != FILES_VREFNUM)
         trap_crash("FSMakeFSSpec: unknown volume %d", vref);
     if (dir == 0)
-        dir = FILES_ROOT_DIRID;
+        dir = dir_id(F.default_dir);
     const char *base = dir_path(dir);
     if (!base)
         trap_crash("FSMakeFSSpec: unknown directory ID %u", dir);
