@@ -1142,18 +1142,20 @@ static void h_still_down(void) {
     trap_return(E.mouse_down && !waiting);
 }
 
-/* GetKeys(KeyMap): 16 bytes, key code k in byte k / 8, bit k % 8. */
+/* GetKeys(KeyMap): four big-endian 32-bit words, key code k in bit k % 32
+   of word k / 32, as a PowerPC Mac has it (Golden Logres tests a key with
+   a mask built that way). */
 static void h_get_keys(void) {
     poll_input();
-    uint32_t out = trap_arg(0);
-    for (uint32_t i = 0; i < 16; i++)
-        gm_w8(out + i, 0);
+    uint32_t out = trap_arg(0), words[4] = {0};
     for (int i = 0; i < E.ngame_down + E.nheld; i++) {
         int sc = i < E.ngame_down ? E.game_down[i] : E.held[i - E.ngame_down].scancode;
         int vk = keymap_lookup(sc).vkey;
         if (vk >= 0 && vk < 128)
-            gm_w8(out + (uint32_t)vk / 8, gm_r8(out + (uint32_t)vk / 8) | (uint8_t)(1u << (vk % 8)));
+            words[vk / 32] |= 1u << (vk % 32);
     }
+    for (uint32_t i = 0; i < 4; i++)
+        gm_w32(out + 4 * i, words[i]);
 }
 
 static void h_get_current_key_modifiers(void) {

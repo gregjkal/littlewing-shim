@@ -140,21 +140,23 @@ TEST(classic_events_follow_the_mouse_once_the_game_asks) {
     CHECK(e.modifiers & 0x0080);
 }
 
+/* Key code k is bit k % 32 of big-endian word k / 32. */
 TEST(classic_events_get_keys_maps_key_codes_to_bits) {
     setup();
-    events_post_key(SDL_SCANCODE_Z, true, false);      /* key code 0x06 */
-    events_post_key(SDL_SCANCODE_LSHIFT, true, false); /* 0x38 */
+    events_post_key(SDL_SCANCODE_Z, true, false);        /* key code 0x06 */
+    events_post_key(SDL_SCANCODE_LSHIFT, true, false);   /* 0x38 */
+    events_post_key(SDL_SCANCODE_KP_ENTER, true, false); /* 0x4C */
     uint32_t km = scratch(16);
     call_import("GetKeys", 1, km);
-    CHECK_EQ(gm_r8(km), 1u << 6);
-    CHECK_EQ(gm_r8(km + 7), 1u << 0);
-    for (uint32_t i = 1; i < 16; i++)
-        if (i != 7)
-            CHECK_EQ(gm_r8(km + i), 0);
+    CHECK_EQ(gm_r32(km), 1u << 6);
+    CHECK_EQ(gm_r32(km + 4), 1u << (0x38 - 32));
+    CHECK_EQ(gm_r32(km + 8), 1u << (0x4C - 64));
+    CHECK_EQ(gm_r32(km + 12), 0);
+    CHECK_EQ(gm_r8(km + 3), 1u << 6); /* the low byte of word 0 */
     CHECK_EQ(call_import("GetCurrentKeyModifiers", 0), KM_SHIFT);
     events_post_key(SDL_SCANCODE_Z, false, false);
     call_import("GetKeys", 1, km);
-    CHECK_EQ(gm_r8(km), 0);
+    CHECK_EQ(gm_r32(km), 0);
 }
 
 /* A timer proc that adds 1 to COUNTER. */
