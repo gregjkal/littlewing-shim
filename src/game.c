@@ -23,6 +23,8 @@ static const game_info games[] = {
     /* Its table is drawn for 768 lines, and it plays at the display's size. */
     {"mad-daedalus", "Mad Daedalus", "Mad Daedalus.app", "Contents/MacOS/Mad Daedalus",
      GAME_MACHO_BUNDLE, 1024, 768},
+    {"angel-egg", "Angel Egg", "Angel Egg.app", "Contents/MacOS/Angel Egg", GAME_MACHO_BUNDLE, 800,
+     600},
 };
 #define NGAMES (sizeof games / sizeof games[0])
 
