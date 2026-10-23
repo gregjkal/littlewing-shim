@@ -40,6 +40,7 @@ typedef struct {
     bool linked_exit;     /* _start ends bl main; bl helper, a linked-in exit (MSL),
                              and the next function (mflr r0) follows it, not a trap */
     bool trap_ends_start; /* with linked_exit, _start still ends in a trap */
+    bool start_runs_on;   /* with linked_exit, neither a trap nor mflr r0 ends _start */
     bool no_exit_import;  /* the exit import is __exit (CodeWarrior's runtime) */
 } mb_opts;
 
@@ -166,7 +167,10 @@ static inline void mb_build_slice(uint8_t *s, const mb_opts *o) {
     wr_be32(t + 0x1C, o->no_exit_call  ? 0x60000000
                      : o->linked_exit ? mb_bl(MB_START + 12, 0x1830)
                                       : mb_bl(MB_START + 12, MB_STUBS + 16));
-    wr_be32(t + 0x20, o->linked_exit && !o->trap_ends_start ? 0x7C0802A6 : 0x7FE00008);
+    wr_be32(t + 0x20, !o->linked_exit      ? 0x7FE00008
+                     : o->start_runs_on   ? 0x60000000
+                     : o->trap_ends_start ? 0x7FE00008
+                                          : 0x7C0802A6);
     wr_be32(t + 0x24, mb_bl(MB_START + 20, MB_INIT));
     wr_be32(t + 0x30, 0x4E800020); /* blr */
     wr_be32(t + 0x40, 0x3860002A); /* li r3,42 */

@@ -220,6 +220,11 @@ TEST(macho_load_refuses_a_start_it_cant_read) {
                       sizeof err, &buf));
     CHECK_CONTAINS(err, "_start makes fewer than two calls");
     free(buf);
+
+    CHECK(!load_built(&(mb_opts){.linked_exit = true, .start_runs_on = true, .no_exit_import = true},
+                      &img, err, sizeof err, &buf));
+    CHECK_CONTAINS(err, "can't find the end of _start");
+    free(buf);
 }
 
 TEST(macho_load_lists_static_initializers) {
