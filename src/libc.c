@@ -777,7 +777,9 @@ static void h_mutex(void) {
     trap_return(0);
 }
 
-#define GUEST_THREAD_SELF 0x0A000000u /* the one thread's pthread_t, never dereferenced */
+/* The one thread's pthread_t: a tag no other kind of object uses, never
+   dereferenced. */
+#define GUEST_THREAD_SELF 0x0F000001u
 
 static void h_pthread_self(void) { trap_return(GUEST_THREAD_SELF); }
 static void h_pthread_equal(void) { trap_return(trap_arg(0) == trap_arg(1)); }

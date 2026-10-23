@@ -28,6 +28,7 @@
 #include "measure.h"
 #include "memmgr.h"
 #include "menu.h"
+#include "menumgr.h"
 #include "misc.h"
 #include "patch.h"
 #include "picker.h"
@@ -432,6 +433,7 @@ int main(int argc, char **argv) {
     }
     qd_init(game->screen_width, game->screen_height, macho ? 32 : 8);
     dialogs_init();
+    menumgr_init();
     cgimage_init();
     cgdisplay_init();
     events_init();
@@ -482,6 +484,7 @@ int main(int argc, char **argv) {
     cf_register();
     qd_register();
     region_register();
+    menumgr_register();
     dialogs_register();
     cgimage_register();
     cgdisplay_register();
