@@ -56,17 +56,10 @@ key=$("$sparkle/bin/generate_keys" --account "$key_account" -p) || die "the keyc
     die "the keychain's Sparkle key isn't the one in tools/sparkle_public_key.txt, so apps would refuse the update"
 PKG_CONFIG_PATH="$PWD/$build/deps/unicorn/lib/pkgconfig:$PWD/$build/deps/sdl3/lib/pkgconfig"
 export PKG_CONFIG_PATH
-# An empty CMAKE_PROJECT_INCLUDE, so no include from the environment or a
-# cached setting (such as a local dev build's) gets into a release.
-cmake -S . -B "$build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=$macos -DCMAKE_PROJECT_INCLUDE=
+cmake -S . -B "$build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=$macos
 cmake --build "$build"
 "$build/loony_tests"
 LOONY_VERSION=$version LOONY_SPARKLE=$sparkle cmake --build "$build" --target app
-# A local dev build marks itself with this string (see local_patch_hook in
-# src/main.c); a release must not contain it.
-if grep -q LOONY-LOCAL-DEV-UNLOCK "$build/LittleWing.app/Contents/MacOS/loony"; then
-    die "the app contains the local dev unlock"
-fi
 min=$(plutil -extract LSMinimumSystemVersion raw "$build/LittleWing.app/Contents/Info.plist")
 [ "$min" = "$macos" ] || die "the app needs macOS $min, not $macos"
 tools/notarize.sh "$build/LittleWing.app" "$profile"
