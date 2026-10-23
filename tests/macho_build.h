@@ -6,7 +6,8 @@
      __PAGEZERO 0x0-0x1000
      __TEXT     0x1000-0x2000   file 0x0
        __text           0x1800  entry: bl _start; trap
-                        0x1810  _start: bl helper; bl main; bl exit stub; trap
+                        0x1810  _start: mflr r0; bl helper; bl main; bl exit stub;
+                                trap; then a call (bl 0x1850) _start never makes
                         0x1830  helper: blr
                         0x1840  main: li r3,42; blr
                         0x1850  a static initializer: blr
@@ -36,7 +37,9 @@ typedef struct {
     bool section_outside; /* __text's file offset is past the end */
     bool bad_indirect;    /* an indirect entry names symbol 99 */
     bool no_exit_call;    /* _start calls only helper: no main, no exit */
-    bool linked_exit;     /* _start ends bl main; bl helper, a linked-in exit (MSL) */
+    bool linked_exit;     /* _start ends bl main; bl helper, a linked-in exit (MSL),
+                             and the next function (mflr r0) follows it, not a trap */
+    bool trap_ends_start; /* with linked_exit, _start still ends in a trap */
     bool no_exit_import;  /* the exit import is __exit (CodeWarrior's runtime) */
 } mb_opts;
 
@@ -157,12 +160,14 @@ static inline void mb_build_slice(uint8_t *s, const mb_opts *o) {
     uint8_t *t = s + MB_ENTRY - 0x1000;
     wr_be32(t + 0x00, mb_bl(MB_ENTRY, MB_START));
     wr_be32(t + 0x04, 0x7FE00008); /* trap */
-    wr_be32(t + 0x10, mb_bl(MB_START, 0x1830));
-    wr_be32(t + 0x14, o->no_exit_call ? 0x60000000 : mb_bl(MB_START + 4, MB_MAIN));
-    wr_be32(t + 0x18, o->no_exit_call  ? 0x60000000
-                     : o->linked_exit ? mb_bl(MB_START + 8, 0x1830)
-                                      : mb_bl(MB_START + 8, MB_STUBS + 16));
-    wr_be32(t + 0x1C, 0x7FE00008);
+    wr_be32(t + 0x10, 0x7C0802A6); /* mflr r0 */
+    wr_be32(t + 0x14, mb_bl(MB_START + 4, 0x1830));
+    wr_be32(t + 0x18, o->no_exit_call ? 0x60000000 : mb_bl(MB_START + 8, MB_MAIN));
+    wr_be32(t + 0x1C, o->no_exit_call  ? 0x60000000
+                     : o->linked_exit ? mb_bl(MB_START + 12, 0x1830)
+                                      : mb_bl(MB_START + 12, MB_STUBS + 16));
+    wr_be32(t + 0x20, o->linked_exit && !o->trap_ends_start ? 0x7C0802A6 : 0x7FE00008);
+    wr_be32(t + 0x24, mb_bl(MB_START + 20, MB_INIT));
     wr_be32(t + 0x30, 0x4E800020); /* blr */
     wr_be32(t + 0x40, 0x3860002A); /* li r3,42 */
     wr_be32(t + 0x44, 0x4E800020);
@@ -187,7 +192,7 @@ static inline void mb_build_slice(uint8_t *s, const mb_opts *o) {
 
     /* Strings and symbols. */
     const char *const names[] = {"_main", "_CFRelease", o->no_exit_import ? "__exit" : "_exit",
-                                        "_kCFPreferencesCurrentApplication", "_malloc"};
+                                 "_kCFPreferencesCurrentApplication", "_malloc"};
     uint32_t strx = 1; /* offset 0 is the empty name */
     for (uint32_t i = 0; i < nsyms; i++) {
         uint8_t *e = s + symoff + 12 * i;
