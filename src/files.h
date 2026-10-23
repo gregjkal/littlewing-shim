@@ -58,6 +58,21 @@ void files_mac_to_utf8(const char *mac, char *out, size_t cap);
 /* The Mac Roman byte for a Unicode code point, or -1 if Mac Roman has none. */
 int files_unicode_to_mac(uint32_t c);
 
+/* Resource forks, for rsrc.c. spec's file as a path relative to the game
+   folder (crashes on a bad FSSpec, as the File Manager calls do). */
+void files_spec_rel(uint32_t spec, char *out, size_t cap);
+
+/* rel's resource fork, from the data folder's copy if there is one, else
+   the game folder's: malloc'd into *out, *len bytes (NULL and 0 for an
+   empty fork). Returns 0, or fnfErr if there is no such file. */
+int16_t files_read_rsrc_fork(const char *rel, uint8_t **out, size_t *len);
+
+/* Replaces rel's resource fork with len bytes of data, in the data folder:
+   a file there only in the game folder is copied first, both forks, and a
+   file that is nowhere is created with an empty data fork. Returns an
+   OSErr. */
+int16_t files_write_rsrc_fork(const char *rel, const uint8_t *data, size_t len);
+
 /* Registers FSMakeFSSpec, FSpCreate, FSpOpenDF, PBReadSync, FSWrite, GetEOF,
    SetEOF, SetFPos, GetFPos, PBFlushFileSync and FSClose, and for a Mach-O
    game the FSRef and fork calls: FSPathMakeRef (host paths inside the game
