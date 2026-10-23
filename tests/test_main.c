@@ -15,17 +15,19 @@
 static struct {
     const char *name;
     test_fn fn;
+    bool slow;
 } tests[MAX_TESTS];
 static int ntests;
 static bool cur_failed, cur_skipped;
 
-void test_register(const char *name, test_fn fn) {
+void test_register(const char *name, test_fn fn, bool slow) {
     if (ntests == MAX_TESTS) {
         fprintf(stderr, "too many tests\n");
         exit(1);
     }
     tests[ntests].name = name;
     tests[ntests].fn = fn;
+    tests[ntests].slow = slow;
     ntests++;
 }
 
@@ -278,12 +280,26 @@ bool test_rerun_unforked(const char *name) {
     return true;
 }
 
-/* Whether a test is picked: a filter is a part of its name, or with a
-   leading '=', the whole name. */
-static bool selected(const char *name, const char *filter) {
-    if (!filter)
+/* What the command line picks: with --slow, the slow tests alone; with
+   filters, the tests any one of them matches, each once. A filter is a part
+   of a test's name, or with a leading '=', the whole name. */
+#define MAX_FILTERS 64
+static const char *filters[MAX_FILTERS];
+static int nfilters;
+static bool slow_only;
+
+static bool selected(int i) {
+    if (slow_only && !tests[i].slow)
+        return false;
+    if (nfilters == 0)
         return true;
-    return filter[0] == '=' ? strcmp(name, filter + 1) == 0 : strstr(name, filter) != NULL;
+    for (int f = 0; f < nfilters; f++) {
+        const char *filter = filters[f];
+        if (filter[0] == '=' ? strcmp(tests[i].name, filter + 1) == 0
+                             : strstr(tests[i].name, filter) != NULL)
+            return true;
+    }
+    return false;
 }
 
 /* A test's exit status when it runs in a child of its own. */
@@ -333,24 +349,45 @@ int main(int argc, char **argv) {
     setenv("SDL_VIDEO_DRIVER", "dummy", 1);
     setenv("SDL_AUDIO_DRIVER", "dummy", 1);
     /* -j N runs N tests at a time, each in a child of its own (the default is
-       one per CPU); -j 1 runs them one after another in this process. */
+       one per CPU); -j 1 runs them one after another in this process. --slow
+       picks the slow tests alone and runs them; --list prints the names of
+       the tests picked, and runs none. */
+    static const char usage[] = "usage: loony_tests [-j N] [--slow] [--list] [substring | =name]...\n";
     long jobs = sysconf(_SC_NPROCESSORS_ONLN);
-    const char *filter = NULL;
+    bool list = false;
     for (int a = 1; a < argc; a++) {
         if (strncmp(argv[a], "-j", 2) == 0) {
             const char *n = argv[a][2] ? argv[a] + 2 : a + 1 < argc ? argv[++a] : "";
             char *end;
             jobs = strtol(n, &end, 10);
             if (!*n || *end || jobs < 1) {
-                fprintf(stderr, "usage: loony_tests [-j N] [substring | =name]\n");
+                fputs(usage, stderr);
                 return 2;
             }
+        } else if (strcmp(argv[a], "--slow") == 0) {
+            slow_only = true;
+        } else if (strcmp(argv[a], "--list") == 0) {
+            list = true;
+        } else if (argv[a][0] == '-') {
+            fputs(usage, stderr);
+            return 2;
+        } else if (nfilters == MAX_FILTERS) {
+            fprintf(stderr, "loony_tests: at most %d filters\n", MAX_FILTERS);
+            return 2;
         } else {
-            filter = argv[a];
+            filters[nfilters++] = argv[a];
         }
     }
     if (jobs < 1)
         jobs = 1;
+    if (list) {
+        for (int i = 0; i < ntests; i++)
+            if (selected(i))
+                printf("%s\n", tests[i].name);
+        return 0;
+    }
+    if (slow_only)
+        setenv("LOONY_SLOW_TESTS", "1", 1);
     /* Nor touch the real preferences in ~/Library/Application Support. */
     char data_dir[1024];
     test_tmp_dir(data_dir, sizeof data_dir);
@@ -359,7 +396,7 @@ int main(int argc, char **argv) {
     const char *failures[MAX_TESTS];
     if (jobs == 1) {
         for (int i = 0; i < ntests; i++) {
-            if (!selected(tests[i].name, filter))
+            if (!selected(i))
                 continue;
             cur_failed = cur_skipped = false;
             forget_kept();
@@ -381,7 +418,7 @@ int main(int argc, char **argv) {
         for (;;) {
             while (running < jobs && next < ntests) {
                 int i = next++;
-                if (!selected(tests[i].name, filter))
+                if (!selected(i))
                     continue;
                 char out_path[1100];
                 snprintf(out_path, sizeof out_path, "%s/%d.out", data_dir, i);
@@ -430,4 +467,93 @@ int main(int argc, char **argv) {
     for (int f = 0; f < failed; f++)
         fprintf(stderr, "  failed: %s\n", failures[f]);
     return failed ? 1 : 0;
+}
+
+/* The runner's choice of tests, from the names `--list` prints in a
+   loony_tests of its own, its stdout sent to the stderr test_run_child
+   reads: args ends in NULL. */
+static void exec_list(void *args) {
+    char self[PATH_MAX];
+    uint32_t size = sizeof self;
+    char *argv[MAX_FILTERS + 4] = {"loony_tests", "--list"};
+    int n = 2;
+    for (char *const *a = args; *a && n < MAX_FILTERS + 3; a++)
+        argv[n++] = *a;
+    argv[n] = NULL;
+    dup2(STDERR_FILENO, STDOUT_FILENO);
+    if (_NSGetExecutablePath(self, &size) == 0)
+        execv(self, argv);
+    _exit(127);
+}
+
+/* How many lines of out are name, exactly. */
+static int lines_named(const char *out, const char *name) {
+    int n = 0;
+    size_t len = strlen(name);
+    for (const char *p = out; *p; p = strchr(p, '\n') ? strchr(p, '\n') + 1 : p + strlen(p))
+        n += strncmp(p, name, len) == 0 && (p[len] == '\n' || p[len] == '\0');
+    return n;
+}
+
+/* Whether out lists exactly the tests want picks, each once. */
+static bool lists_exactly(const char *out, bool (*want)(int)) {
+    int lines = 0;
+    for (const char *p = out; (p = strchr(p, '\n')); p++)
+        lines++;
+    int wanted = 0;
+    for (int i = 0; i < ntests; i++) {
+        int n = lines_named(out, tests[i].name);
+        if (n != (want(i) ? 1 : 0))
+            return false;
+        wanted += n;
+    }
+    return lines == wanted;
+}
+
+static bool is_slow(int i) { return tests[i].slow; }
+
+static bool is_slow_three_minutes_or_monster_fair(int i) {
+    return tests[i].slow && (strstr(tests[i].name, "three_minutes") || strstr(tests[i].name, "monster_fair"));
+}
+
+static bool is_three_minutes_or_recorded(int i) {
+    return strstr(tests[i].name, "three_minutes") || strstr(tests[i].name, "recorded");
+}
+
+TEST(tests_slow_picks_the_slow_tests_and_filters_add_up) {
+    static char out[65536];
+    CHECK_EQ(test_run_child(exec_list, (char *[]){"--slow", NULL}, out, sizeof out), 0);
+    CHECK(lists_exactly(out, is_slow));
+    CHECK_EQ(lines_named(out, "run_three_minutes_of_play_match_the_recording"), 1);
+    CHECK_EQ(lines_named(out, "run_monster_fair_starts_a_game"), 0);
+    /* A test two filters match runs once. */
+    CHECK_EQ(test_run_child(exec_list, (char *[]){"--slow", "three_minutes", "monster_fair", NULL}, out,
+                            sizeof out), 0);
+    CHECK(lists_exactly(out, is_slow_three_minutes_or_monster_fair));
+    CHECK_EQ(lines_named(out, "run_three_minutes_of_monster_fair_match_the_recording"), 1);
+    CHECK_EQ(lines_named(out, "run_monster_fair_keeps_a_license_with_the_recheck_skipped"), 1);
+    /* Without --slow, every test any filter matches, not the last filter's. */
+    CHECK_EQ(test_run_child(exec_list, (char *[]){"three_minutes", "recorded", NULL}, out, sizeof out), 0);
+    CHECK(lists_exactly(out, is_three_minutes_or_recorded));
+    CHECK_EQ(test_run_child(exec_list, (char *[]){"--bogus", NULL}, out, sizeof out), 2);
+    static char *many[MAX_FILTERS + 2];
+    for (int f = 0; f <= MAX_FILTERS; f++)
+        many[f] = "x";
+    CHECK_EQ(test_run_child(exec_list, many, out, sizeof out), 2);
+    CHECK_CONTAINS(out, "at most 64 filters");
+}
+
+/* A slow test the runner is asked for by name still skips without
+   LOONY_SLOW_TESTS. */
+static void exec_one_fast(void *name) {
+    unsetenv("LOONY_SLOW_TESTS");
+    exec_self(name);
+}
+
+TEST(tests_a_slow_test_skips_unless_slow_tests_are_on) {
+    static char out[65536];
+    CHECK_EQ(test_run_child(exec_one_fast, "=run_three_minutes_of_play_match_the_recording", out, sizeof out),
+             0);
+    CHECK_CONTAINS(out, "skipped: slow; set LOONY_SLOW_TESTS=1 or pass --slow to run");
+    CHECK_CONTAINS(out, "0 passed, 0 failed, 1 skipped");
 }

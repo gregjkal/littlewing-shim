@@ -13,6 +13,8 @@ cmake -S . -B build && cmake --build build -j8     # Debug: ASan + UBSan, -Wall 
 ./build/loony_tests =misc_gestalt_reports_10_4_11_to_a_macho_game   # exactly one
 ./build/loony_tests -j 1                           # one process, in order (for lldb)
 LOONY_SLOW_TESTS=1 ./build/loony_tests             # also the minutes-long play-throughs
+./build/loony_tests --slow three_minutes recorded  # only slow tests, any filter matching
+./build/loony_tests --list --slow                  # what a command picks, run none
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release && cmake --build build-release --target app
 ```
 
@@ -20,18 +22,18 @@ Every warning is an error, and the Debug build has sanitizers, so a change that 
 
 Tests that need a game skip when it isn't installed (`SKIP_UNLESS_GAME`, `SKIP_UNLESS_CC`, `SKIP_UNLESS_MF`, `SKIP_UNLESS_JZ`, `SKIP_UNLESS_MD`), and the ones that register a game skip without `LOONY_TEST_EMAIL` / `LOONY_TEST_KEY` (Loony Labyrinth) and `LOONY_TEST_MF_EMAIL` / `LOONY_TEST_MF_KEY` (MONSTER FAIR); the values are in `docs/test_key.txt`. A clean run here is `N passed, 0 failed, 0 skipped` with those set and `LOONY_SLOW_TESTS=1`.
 
-The slow tests (`SKIP_UNLESS_SLOW`) are the only end-to-end check of whole games replayed, seeking and snapshots, and together they take many minutes. Before merging, run the ones for what the change touches, with `LOONY_SLOW_TESTS=1 ./build/loony_tests <filter>`:
+The slow tests (`SLOW_TEST`) are the only end-to-end check of whole games replayed, seeking and snapshots, and together they take many minutes. Before merging, run the ones for what the change touches: put the filters of every row that applies in one `./build/loony_tests --slow <filters>`. `--slow` picks slow tests alone, and a test that several filters match runs once.
 
-| The change touches | Filter |
+| The change touches | Filters |
 | --- | --- |
 | Emulation, drawing or sound (anything that can move a frame or a sample) | `three_minutes` |
-| Recording or replaying, or a new source of host input | `recorded` |
-| Seeking, snapshots, the viewer going back, or a `SNAPSHOT_STATE` block | `watched_game`, then `with_snapshots` |
-| The game-start snapshot or Share | `starts_at_the_game` |
+| Recording or replaying, or a new source of host input | `recorded quit_stops_a_take` |
+| Seeking, snapshots, the viewer going back, or a `SNAPSHOT_STATE` block | `watched_game with_snapshots` |
+| The game-start snapshot or Share | `starts_at_the_game take_keeps_the_snapshot` |
 | MONSTER FAIR's startup or `patch.c` | `monster_fair` |
-| Mad Daedalus, or `coreaudio.c` | `daedalus` |
+| Mad Daedalus, or `coreaudio.c` | `mad_daedalus` |
 
-Before a release, run the whole set. Run slow tests on an idle Mac: they record on the real clock, so under load (another session's tests or build) they fail on timing alone. Rerun a failure on its own before chasing it.
+Before a release, run the whole slow set (`--slow` with no filter). Run slow tests on an idle Mac: they record on the real clock, so under load (another session's tests or build) they fail on timing alone. Rerun a failure on its own before chasing it.
 
 Headless run of a game (never let it open a window or play sound from a session):
 
@@ -60,7 +62,7 @@ Each header opens with a prose comment that is the module's specification; read 
 
 ## Tests
 
-`tests/test.h` is the framework: `TEST(name)` registers through a constructor, `CHECK`, `CHECK_EQ`, `CHECK_STR`, `CHECK_CONTAINS` return from the test on failure. Each test runs in a forked child with its own `LOONY_DATA_DIR`, so tests never share preferences and a crash is reported, not fatal. A test that starts a video encoder needs a real exec'd process: open it with `RUN_UNFORKED()`.
+`tests/test.h` is the framework: `TEST(name)` registers through a constructor (`SLOW_TEST(name)` for one of minutes, which skips unless slow tests are on), `CHECK`, `CHECK_EQ`, `CHECK_STR`, `CHECK_CONTAINS` return from the test on failure. Each test runs in a forked child with its own `LOONY_DATA_DIR`, so tests never share preferences and a crash is reported, not fatal. A test that starts a video encoder needs a real exec'd process: open it with `RUN_UNFORKED()`.
 
 Unit tests for OS calls use `tests/harness.h`: `harness_init(names, n)` builds a fresh machine whose imports trap directly, `call_import("Name", nargs, ...)` makes the call through the real dispatch, and `scratch(n)` hands out guest memory for argument structs. `harness_init_direct` is the Mach-O flavour. `tests/asm.h` and `tests/macho_build.h` assemble small PowerPC programs and Mach-O files for tests that need guest code. The integration tests (`test_game.c`, `test_run.c`, `test_replay.c`) run the real game headless with `LOONY_SCRIPT`.
 
