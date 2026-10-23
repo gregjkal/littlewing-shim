@@ -426,6 +426,19 @@ static void h_get_named_resource(void) {
     trap_return(get(rsrc_find_named(trap_arg(0), name)));
 }
 
+static void h_get1_named_resource(void) {
+    char name[256];
+    gm_read_pstr(trap_arg(1), name);
+    rsrc_entry *e = NULL;
+    if (R.cur >= 0)
+        for (uint32_t i = 0; i < files[R.cur].n && !e; i++) {
+            rsrc_entry *x = &files[R.cur].entries[i];
+            if (x->type == trap_arg(0) && x->name && strcasecmp(x->name, name) == 0)
+                e = x;
+        }
+    trap_return(get(e));
+}
+
 static void h_load_resource(void) { entry_of(trap_arg(0)); }
 
 /* A changed resource stays: its bytes are still to be written. */
@@ -627,6 +640,28 @@ static void h_count_resources(void) {
     trap_return(rsrc_count(trap_arg(0)) & 0xFFFF);
 }
 
+static void h_count1_resources(void) {
+    uint32_t c = 0;
+    if (R.cur >= 0)
+        for (uint32_t i = 0; i < files[R.cur].n; i++)
+            c += files[R.cur].entries[i].type == trap_arg(0);
+    R.error = 0;
+    trap_return(c & 0xFFFF);
+}
+
+/* Get1IndResource(ResType, short index): index from 1, in the current file. */
+static void h_get1_ind_resource(void) {
+    int32_t index = (int16_t)trap_arg(1);
+    if (R.cur >= 0)
+        for (uint32_t i = 0; i < files[R.cur].n && index > 0; i++)
+            if (files[R.cur].entries[i].type == trap_arg(0) && --index == 0) {
+                trap_return(load(&files[R.cur].entries[i]));
+                return;
+            }
+    R.error = RSRC_NOT_FOUND_ERR;
+    trap_return(0);
+}
+
 /* GetIndResource(ResType, short index): index from 1, over every open
    file from the top of the chain down. */
 static void h_get_ind_resource(void) {
@@ -717,6 +752,7 @@ void rsrc_register(void) {
     trap_register("GetResource", h_get_resource);
     trap_register("Get1Resource", h_get1_resource);
     trap_register("GetNamedResource", h_get_named_resource);
+    trap_register("Get1NamedResource", h_get1_named_resource);
     trap_register("LoadResource", h_load_resource);
     trap_register("ReleaseResource", h_release_resource);
     trap_register("DetachResource", h_detach_resource);
@@ -732,6 +768,8 @@ void rsrc_register(void) {
     trap_register("AddResource", h_add_resource);
     trap_register("CountResources", h_count_resources);
     trap_register("GetIndResource", h_get_ind_resource);
+    trap_register("Count1Resources", h_count1_resources);
+    trap_register("Get1IndResource", h_get1_ind_resource);
     trap_register("GetResAttrs", h_get_res_attrs);
     trap_register("SetResAttrs", h_set_res_attrs);
     trap_register("GetResInfo", h_get_res_info);

@@ -14,7 +14,8 @@ static const char *const names[] = {
     "DetachResource",  "ResError",         "CurResFile",    "UseResFile",       "FSpOpenResFile",
     "FSpCreateResFile", "CloseResFile",    "UpdateResFile", "WriteResource",    "ChangedResource",
     "AddResource",     "CountResources",   "GetIndResource", "GetResAttrs",     "SetResAttrs",
-    "GetResInfo",      "SetResInfo",       "GetIndString",
+    "GetResInfo",      "SetResInfo",       "GetIndString",  "Get1NamedResource", "Count1Resources",
+    "Get1IndResource",
 };
 
 #define TEXT FOURCC('T', 'E', 'X', 'T')
@@ -378,5 +379,21 @@ TEST(rsrcfile_changes_are_saved_at_exit) {
     CHECK(host_has(data, "Machine", true, "new"));
     call_import("UpdateResFile", 1, (uint32_t)ref);
     CHECK_EQ(res_error(), 0);
+    teardown();
+}
+
+TEST(rsrcfile_the_current_file_alone) {
+    setup();
+    open_res("Machine", 1);
+    CHECK(call_import("Get1NamedResource", 2, TEXT, pstr("Two")) != 0);
+    CHECK_EQ(call_import("Count1Resources", 1, TEXT), 2);
+    CHECK_STR(text_of(call_import("Get1IndResource", 2, TEXT, 2u)), "from file");
+    CHECK_EQ(call_import("Get1IndResource", 2, TEXT, 3u), 0);
+    CHECK_EQ(res_error(), RSRC_NOT_FOUND_ERR);
+    call_import("UseResFile", 1, (uint32_t)RSRC_APP_REFNUM);
+    CHECK_EQ(call_import("Get1NamedResource", 2, TEXT, pstr("two")), 0);
+    CHECK_EQ(res_error(), RSRC_NOT_FOUND_ERR);
+    CHECK_EQ(call_import("Count1Resources", 1, TEXT), 1);
+    CHECK_STR(text_of(call_import("Get1IndResource", 2, TEXT, 1u)), "from app");
     teardown();
 }
