@@ -374,9 +374,41 @@ static void h_get_ctable(void) {
 
 static void h_get_main_device(void) { trap_return(Q.main_device); }
 
-/* SetDepth(gd, depth, whichFlags, flags) -> OSErr */
-static void h_set_depth(void) {
+/* The device list is the main screen alone. */
+static void h_get_device_list(void) { trap_return(Q.main_device); }
+static void h_get_next_device(void) { trap_return(0); }
+static void h_get_max_device(void) { trap_return(Q.main_device); }
+
+/* TestDeviceAttribute(GDHandle, short attribute) -> Boolean. The main
+   screen is a color screen device, active, and the main screen, whatever
+   its gdFlags say; anything else is its gdFlags bit. */
+#define GD_ATTR_DEV_TYPE 0
+#define GD_ATTR_MAIN_SCREEN 11
+#define GD_ATTR_SCREEN_DEVICE 13
+#define GD_ATTR_SCREEN_ACTIVE 15
+
+static void h_test_device_attribute(void) {
     uint32_t gd = trap_arg(0);
+    int attr = (int16_t)trap_arg(1);
+    if (!mm_is_handle(gd))
+        trap_crash("TestDeviceAttribute: 0x%08x is not a device", gd);
+    if (attr < 0 || attr > 15) {
+        trap_return(0);
+        return;
+    }
+    if (gd == Q.main_device && (attr == GD_ATTR_DEV_TYPE || attr == GD_ATTR_MAIN_SCREEN ||
+                                attr == GD_ATTR_SCREEN_DEVICE || attr == GD_ATTR_SCREEN_ACTIVE)) {
+        trap_return(1);
+        return;
+    }
+    trap_return((gm_r16(gm_r32(gd) + GD_FLAGS) >> attr) & 1);
+}
+
+/* SetDepth(gd, depth, whichFlags, flags) -> OSErr */
+/* SetDepth(GDHandle, depth, whichFlags, flags). Golden Logres passes NULL
+   for the main device. */
+static void h_set_depth(void) {
+    uint32_t gd = trap_arg(0) ? trap_arg(0) : Q.main_device;
     int depth = (int16_t)trap_arg(1);
     if (gd != Q.main_device)
         trap_crash("SetDepth: 0x%08x is not the main device", gd);
@@ -795,6 +827,10 @@ void qd_register(void) {
     trap_register("OffsetRect", h_offset_rect);
     trap_register("GetCTable", h_get_ctable);
     trap_register("GetMainDevice", h_get_main_device);
+    trap_register("GetDeviceList", h_get_device_list);
+    trap_register("GetNextDevice", h_get_next_device);
+    trap_register("GetMaxDevice", h_get_max_device);
+    trap_register("TestDeviceAttribute", h_test_device_attribute);
     trap_register("SetDepth", h_set_depth);
     trap_register("NewGWorld", h_new_gworld);
     trap_register("UpdateGWorld", h_update_gworld);
