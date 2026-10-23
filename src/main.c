@@ -34,6 +34,7 @@
 #include "play.h"
 #include "qd.h"
 #include "recordings.h"
+#include "pen.h"
 #include "region.h"
 #include "replay.h"
 #include "rsrc.h"
@@ -482,6 +483,7 @@ int main(int argc, char **argv) {
     cf_register();
     qd_register();
     region_register();
+    pen_register();
     dialogs_register();
     cgimage_register();
     cgdisplay_register();
