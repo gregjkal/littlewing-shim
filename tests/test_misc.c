@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <time.h>
 
+#include "cf.h"
 #include "cpu.h"
 #include "harness.h"
 #include "misc.h"
@@ -13,6 +14,8 @@ static const char *const names[] = {
     "NumToString", "p2cstrcpy", "c2pstrcpy", "BlockMoveData", "InitCursor", "HideCursor",
     "SetThemeCursor", "KeyScript", "GetMBarHeight", "NewAEEventHandlerUPP",
     "AEInstallEventHandler", "ICStart", "ICStop", "ExitToShell", "ICLaunchURL", "num2dec",
+    "LSOpenCFURLRef", "SetTextServiceLanguage", "TISCopyCurrentASCIICapableKeyboardInputSource",
+    "TISSelectInputSource",
 };
 
 static void setup(void) {
@@ -405,4 +408,27 @@ TEST(misc_num2dec_writes_the_decimal_record) {
     CHECK_EQ((int16_t)gm_r16(d + 2), -3);
     CHECK_EQ(gm_r8(d + 4), 4);
     CHECK(memcmp(gm_ptr(d + 5, 4), "2500", 4) == 0);
+}
+
+TEST(misc_ls_open_cfurl_ref_opens_the_web_only) {
+    misc_set_url_opener(fake_open);
+    setup();
+    cf_init();
+    opened[0] = '\0';
+    uint32_t out = scratch(4);
+    gm_w32(out, 0xAAAAAAAAu);
+    const char *u = "http://www.littlewingpinball.com/buynow/mad_daedalus_mac.html";
+    CHECK_EQ(call_import("LSOpenCFURLRef", 2, cf_url(u), out), 0);
+    CHECK_STR(opened, u);
+    CHECK_EQ(gm_r32(out), 0);
+    opened[0] = '\0';
+    CHECK_EQ(call_import("LSOpenCFURLRef", 2, cf_url("/Applications/Calculator.app"), 0), (uint32_t)-50);
+    CHECK_STR(opened, "");
+}
+
+TEST(misc_text_input_sources_stay_the_hosts) {
+    setup();
+    CHECK_EQ(call_import("SetTextServiceLanguage", 1, scratch(4)), 0);
+    CHECK_EQ(call_import("TISCopyCurrentASCIICapableKeyboardInputSource", 0), 0);
+    CHECK_EQ(call_import("TISSelectInputSource", 1, 0), (uint32_t)-50);
 }

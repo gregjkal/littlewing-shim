@@ -3,8 +3,11 @@
 #include <stdint.h>
 
 /* The part of libSystem a Mach-O game imports: the C library on the shim's
-   heap and clock, dlsym for the one symbol the game looks up, and the dyld
-   and keymgr calls crt1 would make. */
+   heap and clock, dlsym for the symbols the games look up (sprintf and
+   snprintf), reading files (open, fstat and mmap, which copies a file onto
+   the heap; nothing is ever written), a few math calls, mutexes that are
+   always free (there is one thread), and the dyld and keymgr calls crt1
+   would make. */
 
 /* Resets the state and allocates the data objects in the guest heap.
    Requires mm_init(). exe_path is the program's path, for argv. */

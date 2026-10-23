@@ -26,6 +26,10 @@ void trap_register(const char *name, trap_handler fn);
    direct calls on, tvector is the function's code address instead. */
 uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args);
 
+/* The guest's r4 when the last guest_call (or guest_resume) returned: the
+   low word of a 64-bit result, whose high word guest_call returns. */
+uint32_t guest_last_r4(void);
+
 /* On: guest_call's first argument is a code address, as a Mach-O program's
    function pointers are. Off (the default, for PEF): a transition vector.
    trap_init() turns it off. */

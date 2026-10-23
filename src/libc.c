@@ -1,11 +1,16 @@
 #include "libc.h"
 
+#include <errno.h>
+#include <fcntl.h>
+#include <math.h>
 #include <runetype.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <xlocale.h>
 
 #include "guest_mem.h"
@@ -25,22 +30,49 @@
 #define TM_SIZE          44u
 #define DL_HANDLE        0x0FFF0101u /* what dlopen returns */
 #define KEYMGR_KEYS      16
+/* A 32-bit PowerPC struct stat (Darwin 8): st_mode at 8, st_size, an
+   off_t, at 48. */
+#define STAT_SIZE        96u
+#define STAT_MODE_OFF    8u
+#define STAT_SIZE_OFF    48u
+#define PAGE_SIZE_GUEST  4096u
+#define STRERROR_SIZE    128u
+#define MAX_FILES        8  /* open at once */
+#define MAX_MAPS         8  /* mapped at once */
+#define FD_BASE          3  /* the first descriptor open returns */
+/* Darwin's errno values, the same on PowerPC. */
+#define GUEST_EACCES     13
+#define GUEST_EBADF      9
+#define GUEST_EINVAL     22
+#define GUEST_EMFILE     24
+#define GUEST_ENOMEM     12
+#define GUEST_ENOENT     2
 
 static struct {
     char exe_path[1024];
     uint32_t errno_addr, rune, keymgr_global, mach_init_routine, cthread_init_routine;
     uint32_t tm, tm_zone;
     uint32_t rand_next;
+    uint32_t strerror_buf;
     struct {
         uint32_t key, ptr;
     } keymgr[KEYMGR_KEYS];
     int nkeymgr;
+    /* The files open: host descriptors, -1 when free. Descriptor
+       FD_BASE + i is files[i]. */
+    int files[MAX_FILES];
+    /* The mappings: blocks on the heap holding a copy of a file. */
+    struct {
+        uint32_t addr, len;
+    } maps[MAX_MAPS];
 } L;
 
-/* A snapshot's walk (snapshot.h): the program's path is the host's. */
+/* A snapshot's walk (snapshot.h): the program's path and the open files
+   are the host's. */
 static void snap_walk(snapshot_walker *w) {
     snapshot_bytes(w, &L, sizeof L);
     SNAPSHOT_HOST(w, L.exe_path);
+    SNAPSHOT_HOST(w, L.files);
     snapshot_check(w, L.nkeymgr >= 0 && L.nkeymgr <= KEYMGR_KEYS, "%d keymgr keys", L.nkeymgr);
 }
 SNAPSHOT_STATE_WALK(L, snap_walk)
@@ -53,7 +85,12 @@ static uint32_t new_object(uint32_t size) {
 }
 
 void libc_init(const char *exe_path) {
+    for (int i = 0; i < MAX_FILES; i++)
+        if (L.files[i] > 0)
+            close(L.files[i]);
     memset(&L, 0, sizeof L);
+    for (int i = 0; i < MAX_FILES; i++)
+        L.files[i] = -1;
     snprintf(L.exe_path, sizeof L.exe_path, "%s", exe_path);
     L.rand_next = 1;
     L.errno_addr = new_object(4);
@@ -62,6 +99,7 @@ void libc_init(const char *exe_path) {
     L.cthread_init_routine = new_object(4);
     L.tm = new_object(TM_SIZE);
     L.tm_zone = new_object(16);
+    L.strerror_buf = new_object(STRERROR_SIZE);
 
     /* The C locale's character tables, from the host's. */
     L.rune = new_object(RUNE_SIZE);
@@ -122,6 +160,29 @@ static void h_free(void) {
         trap_crash("free(0x%08x): not a block malloc returned", p);
 }
 
+/* realloc: in place when the block can grow there, else a new block. */
+static void h_realloc(void) {
+    uint32_t p = trap_arg(0), size = trap_arg(1);
+    if (!p) {
+        trap_return(mm_new_ptr(size, false));
+        return;
+    }
+    if (!mm_is_ptr(p))
+        trap_crash("realloc(0x%08x): not a block malloc returned", p);
+    if (mm_set_ptr_size(p, size) == MM_NO_ERR) {
+        trap_return(p);
+        return;
+    }
+    uint32_t q = mm_new_ptr(size, false), old = mm_ptr_size(p);
+    if (q) {
+        uint32_t n = old < size ? old : size;
+        if (n)
+            memmove(gm_ptr(q, n), gm_ptr(p, n), n);
+        mm_dispose_ptr(p);
+    }
+    trap_return(q);
+}
+
 /* ---- strings and bytes ---- */
 
 static uint32_t guest_strlen(uint32_t s) {
@@ -129,6 +190,13 @@ static uint32_t guest_strlen(uint32_t s) {
     while (gm_r8(s + n))
         n++;
     return n;
+}
+
+static void h_strdup(void) {
+    uint32_t src = trap_arg(0), n = guest_strlen(src) + 1, dst = mm_new_ptr(n, false);
+    if (dst)
+        memmove(gm_ptr(dst, n), gm_ptr(src, n), n);
+    trap_return(dst);
 }
 
 static void h_memmove(void) {
@@ -346,13 +414,18 @@ static void h_toupper(void) {
     trap_return(c >= 0 && c < 256 ? (uint32_t)_DefaultRuneLocale.__mapupper[c] : (uint32_t)c);
 }
 
-/* ---- dynamic lookup: the game looks up sprintf$LDBL128 ---- */
+/* ---- dynamic lookup: MONSTER FAIR looks up sprintf$LDBL128, Mad
+   Daedalus snprintf$LDBL128 ---- */
 
 static uint32_t lookup(const char *name) {
-    if (strcmp(name, "sprintf$LDBL128") == 0 || strcmp(name, "sprintf") == 0) {
-        int32_t i = trap_find("sprintf");
-        if (i >= 0)
-            return GUEST_TRAP_ADDR(i);
+    static const char *const provided[] = {"sprintf", "snprintf"};
+    for (size_t k = 0; k < sizeof provided / sizeof provided[0]; k++) {
+        size_t n = strlen(provided[k]);
+        if (strncmp(name, provided[k], n) == 0 && (!name[n] || strcmp(name + n, "$LDBL128") == 0)) {
+            int32_t i = trap_find(provided[k]);
+            if (i >= 0)
+                return GUEST_TRAP_ADDR(i);
+        }
     }
     log_msg("dynamic lookup of %s: not provided", name);
     return 0;
@@ -484,6 +557,226 @@ static void h_sprintf(void) {
     trap_return((uint32_t)n);
 }
 
+/* snprintf(buf, size, fmt, ...): returns the length the whole string has. */
+static void h_snprintf(void) {
+    char fmt[1024];
+    if (!gm_read_cstr(trap_arg(2), fmt, sizeof fmt))
+        trap_crash("snprintf: the format is longer than %zu bytes", sizeof fmt - 1);
+    static char out[65536];
+    size_t n = libc_format(fmt, trap_arg, 3, out, sizeof out);
+    if (n + 1 == sizeof out)
+        trap_crash("snprintf: more than %zu bytes from \"%s\"", sizeof out - 2, fmt);
+    uint32_t dst = trap_arg(0), cap = trap_arg(1);
+    if (cap) {
+        uint32_t k = n < cap - 1 ? (uint32_t)n : cap - 1;
+        memcpy(gm_ptr(dst, k + 1), out, k);
+        gm_w8(dst + k, 0);
+    }
+    trap_return((uint32_t)n);
+}
+
+/* ---- errors ---- */
+
+static void set_errno(uint32_t e) { gm_w32(L.errno_addr, e); }
+
+static void h_error(void) {
+    trap_return(L.errno_addr);
+}
+
+static void h_strerror(void) {
+    char msg[STRERROR_SIZE];
+    snprintf(msg, sizeof msg, "%s", strerror((int)trap_arg(0)));
+    gm_write_cstr(L.strerror_buf, msg);
+    trap_return(L.strerror_buf);
+}
+
+/* ---- files: reading only. A mapping is a copy of the file on the heap,
+   which the game may write to as MAP_PRIVATE allows. ---- */
+
+static int host_fd(uint32_t fd) {
+    uint32_t i = fd - FD_BASE;
+    return fd >= FD_BASE && i < MAX_FILES ? L.files[i] : -1;
+}
+
+/* open(path, flags, mode): O_RDONLY (0) alone; anything that would write
+   is refused, since the game's files are only ever read. */
+static void h_open(void) {
+    char path[1024];
+    if (!gm_read_cstr(trap_arg(0), path, sizeof path))
+        trap_crash("open: the path is longer than %zu bytes", sizeof path - 1);
+    uint32_t flags = trap_arg(1);
+    if ((flags & 3) != 0) {
+        log_msg("open(%s, 0x%x): refused, the game's files are only read", path, flags);
+        set_errno(GUEST_EACCES);
+        trap_return(0xFFFFFFFFu);
+        return;
+    }
+    int i = 0;
+    while (i < MAX_FILES && L.files[i] >= 0)
+        i++;
+    if (i == MAX_FILES) {
+        set_errno(GUEST_EMFILE);
+        trap_return(0xFFFFFFFFu);
+        return;
+    }
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        log_msg("open(%s): %s", path, strerror(errno));
+        set_errno(errno == ENOENT ? GUEST_ENOENT : GUEST_EACCES);
+        trap_return(0xFFFFFFFFu);
+        return;
+    }
+    L.files[i] = fd;
+    trap_return(FD_BASE + (uint32_t)i);
+}
+
+static void h_close(void) {
+    uint32_t fd = trap_arg(0);
+    int h = host_fd(fd);
+    if (h < 0) {
+        set_errno(GUEST_EBADF);
+        trap_return(0xFFFFFFFFu);
+        return;
+    }
+    close(h);
+    L.files[fd - FD_BASE] = -1;
+    trap_return(0);
+}
+
+/* fstat: the mode and size, the rest zero. */
+static void h_fstat(void) {
+    uint32_t out = trap_arg(1);
+    struct stat st;
+    int h = host_fd(trap_arg(0));
+    if (h < 0 || fstat(h, &st) != 0) {
+        set_errno(GUEST_EBADF);
+        trap_return(0xFFFFFFFFu);
+        return;
+    }
+    memset(gm_ptr(out, STAT_SIZE), 0, STAT_SIZE);
+    gm_w16(out + STAT_MODE_OFF, (uint16_t)st.st_mode);
+    gm_w32(out + STAT_SIZE_OFF, (uint32_t)((uint64_t)st.st_size >> 32));
+    gm_w32(out + STAT_SIZE_OFF + 4, (uint32_t)st.st_size);
+    trap_return(0);
+}
+
+static void h_getpagesize(void) {
+    trap_return(PAGE_SIZE_GUEST);
+}
+
+/* mmap(addr, len, prot, flags, fd, off_t offset): a file's bytes from
+   offset (the high word in r8, the low in r9), zero past its end, in a new
+   heap block. Only a file mapping anywhere: no fixed address, no anonymous
+   memory. */
+static void h_mmap(void) {
+    uint32_t len = trap_arg(1), flags = trap_arg(3), fd = trap_arg(4);
+    uint64_t off = (uint64_t)trap_arg(5) << 32 | trap_arg(6);
+    int h = host_fd(fd);
+    if (trap_arg(0) || (flags & 0x1010) || h < 0 || len == 0 || off % PAGE_SIZE_GUEST) {
+        log_msg("mmap(0x%x, %u, %u, 0x%x, %u, %llu): not a file mapping the shim makes",
+                trap_arg(0), len, trap_arg(2), flags, fd, (unsigned long long)off);
+        set_errno(h < 0 ? GUEST_EBADF : GUEST_EINVAL);
+        trap_return(0xFFFFFFFFu);
+        return;
+    }
+    int m = 0;
+    while (m < MAX_MAPS && L.maps[m].addr)
+        m++;
+    uint32_t p = m < MAX_MAPS ? mm_new_ptr(len, true) : 0;
+    if (!p) {
+        set_errno(GUEST_ENOMEM);
+        trap_return(0xFFFFFFFFu);
+        return;
+    }
+    uint8_t *dst = gm_ptr(p, len);
+    for (uint32_t done = 0; done < len;) {
+        ssize_t n = pread(h, dst + done, len - done, (off_t)(off + done));
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0)
+            break;
+        done += (uint32_t)n;
+    }
+    L.maps[m].addr = p, L.maps[m].len = len;
+    trap_return(p);
+}
+
+static void h_munmap(void) {
+    uint32_t addr = trap_arg(0);
+    for (int m = 0; m < MAX_MAPS; m++)
+        if (L.maps[m].addr == addr && addr) {
+            mm_dispose_ptr(addr);
+            L.maps[m].addr = L.maps[m].len = 0;
+            trap_return(0);
+            return;
+        }
+    set_errno(GUEST_EINVAL);
+    trap_return(0xFFFFFFFFu);
+}
+
+/* sysctlbyname: the game asks for hw.optional.altivec and
+   hw.optional.sse3, to pick its vector code. Neither is there: the
+   emulated G4's AltiVec isn't one the game is tested on. */
+static void h_sysctlbyname(void) {
+    char name[128];
+    gm_read_cstr(trap_arg(0), name, sizeof name);
+    uint32_t old = trap_arg(1), oldlen = trap_arg(2);
+    if (strncmp(name, "hw.optional.", 12) == 0 && old && oldlen && gm_r32(oldlen) >= 4) {
+        gm_w32(old, 0);
+        gm_w32(oldlen, 4);
+        trap_return(0);
+        return;
+    }
+    log_msg("sysctlbyname(%s): not provided", name);
+    set_errno(GUEST_ENOENT);
+    trap_return(0xFFFFFFFFu);
+}
+
+/* ---- output: the game's lines go to the log ---- */
+
+static void h_puts(void) {
+    char s[1024];
+    gm_read_cstr(trap_arg(0), s, sizeof s);
+    log_msg("game: %s", s);
+    trap_return(1);
+}
+
+/* ---- threads: there is one, so a mutex is always free ---- */
+
+static void h_mutex(void) {
+    trap_return(0);
+}
+
+/* ---- math: a double in f1, a float as a double in f1 ---- */
+
+static void h_cos(void) { cpu_set_fpr(1, cos(cpu_fpr(1))); }
+static void h_cosf(void) { cpu_set_fpr(1, (double)cosf((float)cpu_fpr(1))); }
+static void h_sinf(void) { cpu_set_fpr(1, (double)sinf((float)cpu_fpr(1))); }
+static void h_sqrtf(void) { cpu_set_fpr(1, (double)sqrtf((float)cpu_fpr(1))); }
+
+/* libgcc's 64-bit division: each operand in two words (high first), the
+   result in r3 (high) and r4. */
+static uint64_t arg64(int n) { return (uint64_t)trap_arg(n) << 32 | trap_arg(n + 1); }
+
+static void return64(uint64_t v) {
+    trap_return((uint32_t)(v >> 32));
+    cpu_set_gpr(4, (uint32_t)v);
+}
+
+static void h_divdi3(void) {
+    int64_t a = (int64_t)arg64(0), b = (int64_t)arg64(2);
+    if (b == 0)
+        trap_crash("__divdi3: division by zero");
+    return64(a == INT64_MIN && b == -1 ? (uint64_t)a : (uint64_t)(a / b));
+}
+
+static void h_umoddi3(void) {
+    uint64_t a = arg64(0), b = arg64(2);
+    if (b == 0)
+        trap_crash("__umoddi3: division by zero");
+    return64(a % b);
+}
+
 /* ---- keymgr and dyld: what crt1 and libgcc's startup would call ---- */
 
 static void h_keymgr_get_and_lock(void) {
@@ -523,6 +816,8 @@ void libc_register(void) {
     trap_register("malloc", h_malloc);
     trap_register("calloc", h_calloc);
     trap_register("free", h_free);
+    trap_register("realloc", h_realloc);
+    trap_register("strdup", h_strdup);
     trap_register("memcpy", h_memmove);
     trap_register("memmove", h_memmove);
     trap_register("memset", h_memset);
@@ -548,6 +843,28 @@ void libc_register(void) {
     trap_register("NSLookupAndBindSymbolWithHint", h_ns_lookup_and_bind_symbol);
     trap_register("NSAddressOfSymbol", h_ns_address_of_symbol);
     trap_register("sprintf", h_sprintf);
+    trap_register("snprintf", h_snprintf);
+    trap_register("__error", h_error);
+    trap_register("strerror", h_strerror);
+    trap_register("open", h_open);
+    trap_register("close", h_close);
+    trap_register("fstat", h_fstat);
+    trap_register("getpagesize", h_getpagesize);
+    trap_register("mmap", h_mmap);
+    trap_register("munmap", h_munmap);
+    trap_register("sysctlbyname", h_sysctlbyname);
+    trap_register("puts", h_puts);
+    trap_register("openlog", h_nothing);
+    trap_register("pthread_mutex_init", h_mutex);
+    trap_register("pthread_mutex_destroy", h_mutex);
+    trap_register("pthread_mutex_lock", h_mutex);
+    trap_register("pthread_mutex_unlock", h_mutex);
+    trap_register("cos", h_cos);
+    trap_register("cosf", h_cosf);
+    trap_register("sinf", h_sinf);
+    trap_register("sqrtf", h_sqrtf);
+    trap_register("__divdi3", h_divdi3);
+    trap_register("__umoddi3", h_umoddi3);
     trap_register("_keymgr_get_and_lock_processwide_ptr", h_keymgr_get_and_lock);
     trap_register("_keymgr_set_and_unlock_processwide_ptr", h_keymgr_set_and_unlock);
     trap_register("_init_keymgr", h_nothing);

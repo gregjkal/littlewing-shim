@@ -210,3 +210,38 @@ TEST(sound_volume_is_clamped_and_cubed) {
     CHECK(sound_gain(50) == 0.125f);
     CHECK(sound_gain(80) > 0.511f && sound_gain(80) < 0.513f);
 }
+
+static uint32_t source_frames, source_calls;
+
+static void source(int16_t *out, uint32_t frames) {
+    source_calls++;
+    source_frames += frames;
+    for (uint32_t k = 0; k < 2 * frames; k++)
+        out[k] = (int16_t)(out[k] + 100);
+}
+
+/* A source renders on the clock, from sound_pump alone: a Sound Manager
+   call catches the mixer up without it. */
+TEST(sound_source_renders_from_the_pump_on_the_clock) {
+    setenv("LOONY_FIXED_CLOCK", "1", 1);
+    setup();
+    sound_start_output(); /* the fixed clock: no device */
+    source_frames = source_calls = 0;
+    sound_set_source(source);
+    misc_sleep_us(100000);
+    uint32_t chan = new_channel();
+    CHECK(!busy(chan)); /* SndChannelStatus catches up */
+    CHECK_EQ(source_calls, 0);
+    misc_sleep_us(100000);
+    sound_pump();
+    CHECK(source_calls > 0);
+    CHECK(source_frames >= MIX_RATE / 10 && source_frames <= MIX_RATE / 5 + 1);
+    uint32_t before = source_frames;
+    sound_pump(); /* no time passed */
+    CHECK_EQ(source_frames, before);
+    sound_set_source(NULL);
+    misc_sleep_us(100000);
+    sound_pump();
+    CHECK_EQ(source_frames, before);
+    unsetenv("LOONY_FIXED_CLOCK");
+}

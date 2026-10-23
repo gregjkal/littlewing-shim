@@ -184,7 +184,7 @@ bool events_script_rest(void);
    InstallStandardEventHandler, NewEventLoopTimerUPP, GetMainEventLoop,
    InstallEventLoopTimer, RemoveEventLoopTimer, RunApplicationEventLoop,
    QuitApplicationEventLoop, ReceiveNextEvent, SendEventToEventTarget,
-   GetEventKind, GetEventParameter and ReleaseEvent.
+   GetEventKind, GetEventClass, GetEventParameter and ReleaseEvent.
 
    If LOONY_EXIT_AFTER is set to a tick count (1/60 s), the process exits with
    status 0 once that many ticks have passed. */

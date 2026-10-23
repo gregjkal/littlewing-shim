@@ -1,9 +1,13 @@
 #include "test.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <runetype.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
+#include "asm.h"
 #include "harness.h"
 #include "libc.h"
 #include "memmgr.h"
@@ -15,7 +19,9 @@ static const char *const names[] = {
     "exit", "abort", "__maskrune", "__toupper", "dlopen", "dlsym",
     "NSIsSymbolNameDefinedWithHint", "NSLookupAndBindSymbolWithHint", "NSAddressOfSymbol",
     "_keymgr_get_and_lock_processwide_ptr", "_keymgr_set_and_unlock_processwide_ptr",
-    "_init_keymgr", "dyld_stub_binding_helper", "sprintf",
+    "_init_keymgr", "dyld_stub_binding_helper", "realloc", "strdup", "__error", "strerror", "open",
+    "close", "fstat", "getpagesize", "mmap", "munmap", "sysctlbyname", "puts", "pthread_mutex_lock",
+    "cos", "cosf", "sinf", "sqrtf", "__divdi3", "__umoddi3", "snprintf", "sprintf",
 };
 #define NNAMES (uint32_t)(sizeof names / sizeof names[0])
 
@@ -313,4 +319,132 @@ TEST(libc_abort_and_the_binding_helper_crash) {
     CHECK_CONTAINS(out, "the game called abort()");
     CHECK_EQ(test_run_child(child_unbound, NULL, out, sizeof out), 2);
     CHECK_CONTAINS(out, "a lazy pointer was not bound");
+}
+
+TEST(libc_realloc_keeps_the_bytes_and_strdup_copies) {
+    setup();
+    uint32_t p = call_import("malloc", 1, 8);
+    gm_write_cstr(p, "abcdefg");
+    uint32_t q = call_import("realloc", 2, p, 4096);
+    CHECK(mm_is_ptr(q));
+    CHECK_EQ(mm_ptr_size(q), 4096);
+    CHECK_STR(read_str(q), "abcdefg");
+    uint32_t r = call_import("realloc", 2, 0, 16); /* realloc(NULL) is malloc */
+    CHECK_EQ(mm_ptr_size(r), 16);
+    uint32_t d = call_import("strdup", 1, q);
+    CHECK(d != q);
+    CHECK_STR(read_str(d), "abcdefg");
+}
+
+TEST(libc_snprintf_truncates_and_counts_the_whole_string) {
+    setup();
+    uint32_t buf = scratch(16);
+    memset(gm_ptr(buf, 16), 'x', 16);
+    CHECK_EQ(call_import("snprintf", 4, buf, 6, cstr("%s!"), cstr("pinball")), 8);
+    CHECK_STR(read_str(buf), "pinba");
+    CHECK_EQ(gm_r8(buf + 6), 'x');
+    CHECK_EQ(call_import("snprintf", 3, buf, 0, cstr("abc")), 3);
+    CHECK_EQ(gm_r8(buf), 'p');
+    uint32_t h = call_import("dlopen", 2, cstr("/usr/lib/libSystem.B.dylib"), 1);
+    CHECK_EQ(call_import("dlsym", 2, h, cstr("snprintf$LDBL128")), GUEST_TRAP_ADDR(trap_find("snprintf")));
+}
+
+static uint32_t guest_errno(void) { return gm_r32(call_import("__error", 0)); }
+
+TEST(libc_maps_a_file_to_read_it) {
+    setup();
+    char path[256];
+    snprintf(path, sizeof path, "%s/data.bin", getenv("LOONY_DATA_DIR"));
+    FILE *f = fopen(path, "wb");
+    CHECK(f != NULL);
+    for (int i = 0; i < 5000; i++)
+        fputc(i & 0xFF, f);
+    fclose(f);
+    uint32_t fd = call_import("open", 2, cstr(path), 0);
+    CHECK_EQ(fd, 3);
+    uint32_t st = scratch(96);
+    CHECK_EQ(call_import("fstat", 2, fd, st), 0);
+    CHECK_EQ(gm_r32(st + 48), 0);
+    CHECK_EQ(gm_r32(st + 52), 5000);
+    CHECK_EQ(gm_r16(st + 8) & 0xF000, 0x8000); /* a regular file */
+    uint32_t page = call_import("getpagesize", 0);
+    CHECK_EQ(page, 4096);
+    /* mmap(0, 8192, PROT_READ, MAP_PRIVATE, fd, 0): zeros past the end. */
+    uint32_t m = call_import("mmap", 7, 0, 8192, 1, 2, fd, 0, 0);
+    CHECK(mm_is_ptr(m));
+    CHECK_EQ(gm_r8(m + 4999), 4999 & 0xFF);
+    CHECK_EQ(gm_r8(m + 5000), 0);
+    CHECK_EQ(call_import("close", 1, fd), 0);
+    CHECK_EQ(gm_r8(m + 300), 300 & 0xFF); /* the mapping outlives the descriptor */
+    CHECK_EQ(call_import("munmap", 2, m, 8192), 0);
+    CHECK(!mm_is_ptr(m));
+    CHECK_EQ(call_import("munmap", 2, m, 8192), 0xFFFFFFFFu);
+    CHECK_EQ(guest_errno(), 22); /* EINVAL */
+    CHECK_EQ(call_import("close", 1, fd), 0xFFFFFFFFu);
+    CHECK_EQ(guest_errno(), 9); /* EBADF */
+}
+
+TEST(libc_open_refuses_to_write_and_reports_a_missing_file) {
+    setup();
+    char path[256];
+    snprintf(path, sizeof path, "%s/new.bin", getenv("LOONY_DATA_DIR"));
+    CHECK_EQ(call_import("open", 3, cstr(path), 0x201, 0644), 0xFFFFFFFFu); /* O_WRONLY | O_CREAT */
+    CHECK_EQ(guest_errno(), 13);
+    CHECK(access(path, F_OK) != 0);
+    CHECK_EQ(call_import("open", 2, cstr(path), 0), 0xFFFFFFFFu);
+    CHECK_EQ(guest_errno(), 2);
+    CHECK_STR(read_str(call_import("strerror", 1, 2)), "No such file or directory");
+    CHECK_EQ(call_import("mmap", 7, 0, 4096, 1, 2, 7, 0, 0), 0xFFFFFFFFu); /* no such descriptor */
+    CHECK_EQ(guest_errno(), 9);
+}
+
+TEST(libc_sysctl_reports_no_vector_unit) {
+    setup();
+    uint32_t v = scratch(4), len = scratch(4);
+    gm_w32(v, 7);
+    gm_w32(len, 4);
+    CHECK_EQ(call_import("sysctlbyname", 5, cstr("hw.optional.altivec"), v, len, 0, 0), 0);
+    CHECK_EQ(gm_r32(v), 0);
+    CHECK_EQ(gm_r32(len), 4);
+    CHECK_EQ(call_import("sysctlbyname", 5, cstr("kern.osrelease"), v, len, 0, 0), 0xFFFFFFFFu);
+    CHECK_EQ(guest_errno(), 2);
+}
+
+/* Calls the math import name with x in f1, from guest code that stores
+   the f1 it returns (guest_call puts the caller's registers back). */
+static double call_fp(const char *name, double x) {
+    uint32_t t = GUEST_TRAP_ADDR(trap_find(name)), out = scratch(8), code = scratch(64);
+    const uint32_t words[] = {
+        PPC_MFLR_R0, PPC_SAVE_LR, PPC_PUSH64, ppc_lis(12, t >> 16), ppc_ori(12, 12, t & 0xFFFF),
+        0x7D8903A6, /* mtctr r12 */
+        PPC_BCTRL, ppc_lis(4, out >> 16), ppc_ori(4, 4, out & 0xFFFF),
+        0xD8240000, /* stfd f1,0(r4) */
+        PPC_POP64, PPC_LOAD_LR, PPC_MTLR_R0, PPC_BLR,
+    };
+    put_words(code, words, sizeof words / sizeof words[0]);
+    cpu_set_fpr(1, x);
+    guest_call(code, 0, NULL);
+    uint64_t bits = (uint64_t)gm_r32(out) << 32 | gm_r32(out + 4);
+    double d;
+    memcpy(&d, &bits, 8);
+    return d;
+}
+
+TEST(libc_math_takes_and_gives_floating_point_registers) {
+    setup();
+    CHECK(call_fp("cos", 0.5) == cos(0.5));
+    CHECK(call_fp("sqrtf", 2.0) == (double)sqrtf(2.0f));
+    CHECK(call_fp("sinf", 1.0) == (double)sinf(1.0f));
+    CHECK(call_fp("cosf", 1.0) == (double)cosf(1.0f));
+    CHECK_EQ(call_import("pthread_mutex_lock", 1, scratch(44)), 0);
+}
+
+TEST(libc_divides_64_bit_words) {
+    setup();
+    /* -10000000000 / 3 = -3333333333, 0xFFFFFFFF_39515EAB */
+    CHECK_EQ(call_import("__divdi3", 4, 0xFFFFFFFDu, 0xABF41C00u, 0, 3), 0xFFFFFFFFu);
+    CHECK_EQ(guest_last_r4(), 0x39515EABu);
+    /* 10000000001 % 7 = 5 */
+    CHECK_EQ(call_import("__umoddi3", 4, 2, 0x540BE401u, 0, 7), 0);
+    CHECK_EQ(guest_last_r4(), 5);
 }
