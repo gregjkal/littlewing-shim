@@ -34,6 +34,7 @@
 #define HICOMMAND_SIZE 14 /* attributes, commandID, menu.menuRef, menu.menuItemIndex (Carbon packs to 2) */
 #define AE_CLASS_CORE 0x61657674u /* 'aevt' */
 #define AE_ID_QUIT    0x71756974u /* 'quit' */
+#define AE_ID_OPEN_APP 0x6F617070u /* 'oapp' */
 
 /* Tag-space sub-ranges. */
 #define TAG_HANDLER_REF (EV_TAG_BASE + 0x1000u)
@@ -49,7 +50,7 @@ typedef struct {
     uint32_t cls, kind;
     uint32_t key_code, modifiers;
     uint8_t chr;
-    uint32_t command; /* kEventClassCommand: the HICommand's commandID */
+    uint32_t command; /* kEventClassCommand: the HICommand's commandID; an Apple Event: its ID */
     int16_t h, v;     /* where the mouse was when it was posted */
     bool button;      /* and whether its button was down */
 } ev_event;
@@ -299,7 +300,9 @@ void events_post_activation(bool active) {
 
 void events_request_quit(void) {
     if (E.quit_deadline == 0) {
-        post(EV_CLASS_APPLE_EVENT, EV_APPLE_EVENT);
+        ev_event *e = post(EV_CLASS_APPLE_EVENT, EV_APPLE_EVENT);
+        if (e)
+            e->command = AE_ID_QUIT;
         E.quit_deadline = wall_seconds() + QUIT_GRACE_SECONDS;
     }
 }
@@ -423,11 +426,14 @@ static uint32_t call_out(uint32_t tvector, int nargs, const uint32_t *args) {
     return r;
 }
 
-/* The quit Apple Event goes to the handler AEInstallEventHandler recorded;
-   with none, the application just exits. */
-static void handle_apple_event(void) {
+/* An Apple Event the shim sends (quit, or a classic game's open
+   application) goes to the handler AEInstallEventHandler recorded. With
+   none, a quit just exits, and an open application does nothing. */
+static void handle_apple_event(uint32_t id) {
     uint32_t handler, refcon;
-    if (!misc_ae_handler(AE_CLASS_CORE, AE_ID_QUIT, &handler, &refcon)) {
+    if (!misc_ae_handler(AE_CLASS_CORE, id, &handler, &refcon)) {
+        if (id != AE_ID_QUIT)
+            return;
         log_msg("quit requested; the game has no quit handler");
         exit(0);
     }
@@ -438,7 +444,7 @@ static void handle_apple_event(void) {
         gm_w32(E.ae_descs, AE_CLASS_CORE);
         gm_w32(E.ae_descs + 8, 0x6E756C6Cu); /* 'null' */
     }
-    log_msg("sending the quit Apple Event");
+    log_msg(id == AE_ID_QUIT ? "sending the quit Apple Event" : "sending the open application Apple Event");
     uint32_t args[3] = {E.ae_descs, E.ae_descs + 8, refcon};
     call_out(handler, 3, args);
 }
@@ -522,7 +528,7 @@ static int32_t dispatch_framed(int idx, uint32_t target, ev_frame *f, bool resum
         r = run_handlers(chain[i], idx, f, resuming && i == from);
     }
     if (r == EV_NOT_HANDLED_ERR && E.events[idx].cls == EV_CLASS_APPLE_EVENT) {
-        handle_apple_event(); /* the standard application handler's job */
+        handle_apple_event(E.events[idx].command); /* the standard application handler's job */
         r = 0;
     }
     release(&E.events[idx]);
@@ -995,6 +1001,18 @@ static void h_quit_application_event_loop(void) { E.quit = true; }
 #define CARET_TICKS 32
 #define DOUBLE_CLICK_TICKS 30
 
+/* The first classic call: from now on the mouse is queued, and, as a Mac
+   sends every application at launch, the open application Apple Event
+   comes after the resume. */
+static void become_classic(void) {
+    if (E.classic)
+        return;
+    E.classic = true;
+    ev_event *e = post(EV_CLASS_APPLE_EVENT, EV_APPLE_EVENT);
+    if (e)
+        e->command = AE_ID_OPEN_APP;
+}
+
 /* The EventRecord's what for e, writing its message, or -1 for an event
    that has none. */
 static int classic_what(const ev_event *e, uint32_t *message) {
@@ -1043,7 +1061,7 @@ static bool classic_next(uint32_t mask, uint32_t rec, bool take) {
                 k++;
             continue;
         }
-        uint32_t where = what == CL_HIGH_LEVEL ? AE_ID_QUIT : 0;
+        uint32_t where = what == CL_HIGH_LEVEL ? e->command : 0;
         write_record(rec, what, message, (int16_t)(where & 0xFFFF), (int16_t)(where >> 16),
                      e->modifiers, what == CL_HIGH_LEVEL ? E.mouse_down : e->button);
         if (what != CL_HIGH_LEVEL)
@@ -1062,7 +1080,7 @@ static bool classic_next(uint32_t mask, uint32_t rec, bool take) {
 static void h_wait_next_event(void) {
     uint32_t mask = trap_arg(0) & 0xFFFF, rec = trap_arg(1);
     double deadline = now_seconds() + trap_arg(2) / 60.0;
-    E.classic = true;
+    become_classic();
     E.loop_depth++;
     bool got;
     for (;;) {
@@ -1081,7 +1099,7 @@ static void h_wait_next_event(void) {
 
 /* GetNextEvent(EventMask, EventRecord *) -> Boolean: one pump, no wait. */
 static void h_get_next_event(void) {
-    E.classic = true;
+    become_classic();
     E.loop_depth++;
     events_pump();
     E.loop_depth--;
@@ -1092,7 +1110,7 @@ static void h_get_next_event(void) {
 /* EventAvail(EventMask, EventRecord *) -> Boolean: as GetNextEvent, but the
    event stays queued. */
 static void h_event_avail(void) {
-    E.classic = true;
+    become_classic();
     events_pump();
     misc_poll();
     trap_return(classic_next(trap_arg(0) & 0xFFFF, trap_arg(1), false));
@@ -1101,7 +1119,7 @@ static void h_event_avail(void) {
 /* A poll of the mouse or the keys: a time poll, which pumps once a tick, so
    a game that waits on the button in its own loop still sees it change. */
 static void poll_input(void) {
-    E.classic = true;
+    become_classic();
     misc_poll();
     uint32_t t = misc_ticks();
     if (t != E.input_tick) {
@@ -1154,14 +1172,16 @@ static void h_get_caret_time(void) { trap_return(CARET_TICKS); }
 static void h_get_dbl_time(void) { trap_return(DOUBLE_CLICK_TICKS); }
 static void h_get_current_event_loop(void) { trap_return(EV_MAIN_LOOP); }
 
-/* AEProcessAppleEvent(const EventRecord *) -> OSErr: the kHighLevelEvent
-   WaitNextEvent made of the quit Apple Event. */
+/* AEProcessAppleEvent(const EventRecord *) -> OSErr: a kHighLevelEvent
+   WaitNextEvent made of an Apple Event the shim sent (quit or open
+   application), whose ID is in where. */
 static void h_ae_process_apple_event(void) {
     uint32_t rec = trap_arg(0);
     uint32_t where = (uint32_t)gm_r16(rec + 12) | (uint32_t)gm_r16(rec + 10) << 16;
-    if (gm_r16(rec) != CL_HIGH_LEVEL || gm_r32(rec + 2) != AE_CLASS_CORE || where != AE_ID_QUIT)
+    if (gm_r16(rec) != CL_HIGH_LEVEL || gm_r32(rec + 2) != AE_CLASS_CORE ||
+        (where != AE_ID_QUIT && where != AE_ID_OPEN_APP))
         trap_crash("AEProcessAppleEvent: an event the shim didn't make (what %u)", gm_r16(rec));
-    handle_apple_event();
+    handle_apple_event(where);
     trap_return(0);
 }
 

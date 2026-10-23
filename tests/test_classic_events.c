@@ -58,12 +58,24 @@ static bool wne(uint32_t mask, record *out) {
     return got;
 }
 
+/* What a Mac gives an application first: a resume, then the open
+   application Apple Event. */
+static void take_launch_events(void) {
+    record e;
+    wne(EVERY, &e);
+    wne(EVERY, &e);
+}
+
 TEST(classic_events_start_with_a_resume_then_give_key_downs) {
     setup();
     record e;
     CHECK(wne(EVERY, &e));
     CHECK_EQ(e.what, 15);             /* osEvt */
     CHECK_EQ(e.message, 0x01000001u); /* suspendResumeMessage, resumeFlag */
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 23); /* kHighLevelEvent */
+    CHECK_EQ(e.message, 0x61657674u); /* 'aevt' */
+    CHECK_EQ((uint32_t)(uint16_t)e.v << 16 | (uint16_t)e.h, 0x6F617070u); /* 'oapp' */
     CHECK(!wne(EVERY, &e));
     CHECK_EQ(e.what, 0);
 
@@ -85,7 +97,7 @@ TEST(classic_events_start_with_a_resume_then_give_key_downs) {
 TEST(classic_events_outside_the_mask_wait_and_event_avail_peeks) {
     setup();
     record e;
-    wne(EVERY, &e); /* the resume */
+    take_launch_events();
     events_post_key(SDL_SCANCODE_A, true, false);
     CHECK(!wne((uint32_t)~KEY_DOWN_MASK & EVERY, &e));
     CHECK_EQ(events_queued(), 1);
@@ -104,7 +116,7 @@ TEST(classic_events_follow_the_mouse_once_the_game_asks) {
     events_post_mouse(10, 20, false);
     CHECK_EQ(events_queued(), 1); /* only the resume */
     record e;
-    wne(EVERY, &e);
+    take_launch_events();
 
     events_post_mouse(100, 50, true);
     CHECK_EQ(call_import("Button", 0), 1);
@@ -160,8 +172,7 @@ static void emit_counter(void) {
 TEST(classic_events_wait_next_event_fires_timers_while_it_sleeps) {
     setup();
     emit_counter();
-    record e;
-    wne(EVERY, &e);
+    take_launch_events();
     cpu_set_fpr(1, 0.0);
     cpu_set_fpr(2, 1.0 / 60);
     uint32_t out = scratch(4);
@@ -178,8 +189,7 @@ TEST(classic_events_wait_next_event_fires_timers_while_it_sleeps) {
 static void child_quit(void *unused) {
     (void)unused;
     setup();
-    record e;
-    wne(EVERY, &e);
+    take_launch_events();
     events_request_quit();
     uint32_t r = scratch(16);
     if (!call_import("WaitNextEvent", 4, EVERY, r, 0u, 0u) || gm_r16(r) != 23 ||
