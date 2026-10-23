@@ -1,0 +1,47 @@
+# Builds and tests on Apple Silicon, on every push to main and every pull
+# request. The runner has none of the games, so the tests that need them
+# (SKIP_UNLESS_GAME and friends in tests/test.h) skip, and so do the slow ones.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+
+jobs:
+  test:
+    name: Tests (Debug, sanitizers)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: brew install unicorn sdl3 pkg-config
+      - name: Build
+        run: |
+          cmake -S . -B build
+          cmake --build build -j "$(sysctl -n hw.ncpu)"
+      - name: Test
+        run: ./build/loony_tests
+
+  app:
+    name: App (Release)
+    # The icon (tools/AppIcon.icon) needs Xcode 26 or later.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: brew install unicorn sdl3 pkg-config
+      - name: Build
+        run: |
+          cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+          # make_app.sh fails unless the bundle is self-contained and its signature verifies.
+          cmake --build build-release -j "$(sysctl -n hw.ncpu)" --target app

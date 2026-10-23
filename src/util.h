@@ -18,7 +18,8 @@ bool util_failed(void);
 /* Prints "loony: <msg>" to stderr. */
 void log_msg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
-/* Reads a whole file into a malloc'd buffer. Returns NULL (errno set) on failure. */
+/* Reads a whole file into a malloc'd buffer, followed by a NUL byte (not
+   counted), so a text file is a string. Returns NULL (errno set) on failure. */
 uint8_t *read_file(const char *path, size_t *len_out);
 
 /* Creates a folder and any missing parents, like mkdir -p. False (errno set)
@@ -26,6 +27,12 @@ uint8_t *read_file(const char *path, size_t *len_out);
 bool make_dirs(const char *path);
 
 uint32_t fnv1a32(const void *data, size_t len);
+
+/* The wall clock in seconds from an arbitrary start (CLOCK_MONOTONIC). */
+double wall_seconds(void);
+
+/* Whether a and b name the same file: false if either can't be found. */
+bool same_file(const char *a, const char *b);
 
 /* A Mac four-character code, e.g. FOURCC('P','I','C','T'). */
 #define FOURCC(a, b, c, d) \

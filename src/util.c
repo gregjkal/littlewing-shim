@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 
 static util_failure_fn failure_hook;
 static bool failed;
@@ -70,6 +71,7 @@ uint8_t *read_file(const char *path, size_t *len_out) {
         free(buf);
         return NULL;
     }
+    buf[len] = 0; /* the last read returned nothing, so len < cap */
     *len_out = len;
     return buf;
 }
@@ -109,4 +111,15 @@ uint32_t fnv1a32(const void *data, size_t len) {
         h *= 0x01000193u;
     }
     return h;
+}
+
+double wall_seconds(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+bool same_file(const char *a, const char *b) {
+    struct stat sa, sb;
+    return stat(a, &sa) == 0 && stat(b, &sb) == 0 && sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino;
 }

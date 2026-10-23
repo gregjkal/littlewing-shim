@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "snapshot.h"
+#include "util.h"
+
 #define CHUNK 512 /* frames mixed per pass */
 
 typedef struct {
@@ -219,6 +222,52 @@ void mix_render(int16_t *out, uint32_t frames) {
         frames -= n;
     }
 }
+
+/* A snapshot's walk of the mixer (snapshot.h): the channels with every
+   sound they own, since a sound that ends is freed. A queue's slots
+   outside its ring hold nothing. */
+static void walk_sound(snapshot_walker *w, mix_sound **s) {
+    SNAPSHOT_OWNED(w, *s, 1);
+    if (!*s)
+        return;
+    snapshot_check(w, ((*s)->nch == 1 || (*s)->nch == 2) && (*s)->frames >= 1 && (*s)->frames <= (1u << 28),
+                   "a sound of %u frames in %d channels", (*s)->frames, (*s)->nch);
+    /* mix_sound_new's one more sample */
+    SNAPSHOT_OWNED(w, (*s)->samples, (size_t)(*s)->frames * (size_t)(*s)->nch + 1);
+    snapshot_check(w, (*s)->samples != NULL, "a sound with no samples");
+}
+
+static void snap_walk(snapshot_walker *w) {
+    if (snapshot_loading(w))
+        for (int i = 0; i < MIX_CHANNELS; i++) {
+            free_queue(&X.ch[i]);
+            stop(&X.ch[i]);
+        }
+    snapshot_bytes(w, &X, sizeof X);
+    snapshot_check(w, X.cb_head >= 0 && X.cb_head < MIX_CALLBACKS && X.cb_count >= 0 &&
+                          X.cb_count <= MIX_CALLBACKS,
+                   "callbacks at %d, %d of them", X.cb_head, X.cb_count);
+    for (int k = 0; k < X.cb_count; k++) {
+        int ch = X.cb[(X.cb_head + k) % MIX_CALLBACKS].channel;
+        snapshot_check(w, ch >= 0 && ch < MIX_CHANNELS, "a callback for channel %d", ch);
+    }
+    for (int i = 0; i < MIX_CHANNELS; i++) {
+        channel *c = &X.ch[i];
+        snapshot_check(w, c->head >= 0 && c->head < MIX_QUEUE_LEN && c->count >= 0 && c->count <= MIX_QUEUE_LEN &&
+                              c->vol_l >= 0 && c->vol_l <= 0xFFFF && c->vol_r >= 0 && c->vol_r <= 0xFFFF,
+                       "channel %d's queue or volume", i);
+        walk_sound(w, &c->voice);
+        snapshot_check(w, !c->voice || (c->pos >> 32) < c->voice->frames, "channel %d's place", i);
+        for (int k = 0; k < MIX_QUEUE_LEN; k++) {
+            mix_cmd *m = &c->queue[(c->head + k) % MIX_QUEUE_LEN];
+            if (k < c->count)
+                walk_sound(w, &m->sound);
+            else
+                SNAPSHOT_REBUILT(w, m->sound);
+        }
+    }
+}
+SNAPSHOT_STATE_WALK(X, snap_walk)
 
 bool mix_take_callback(mix_callback *cb) {
     if (X.cb_count == 0)

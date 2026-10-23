@@ -1,0 +1,172 @@
+Backported from unicorn-engine/unicorn dev, for 2.1.4, without its tests.
+Remove when Unicorn is updated to a release that has it (2.2.0).
+
+From 156156eda36dd6a3c7e02c43a5802f71d5dcb5b7 Mon Sep 17 00:00:00 2001
+From: Davidson Francis <davidsondfgl@gmail.com>
+Date: Fri, 16 Oct 2026 11:17:27 -0300
+Subject: [PATCH] Flush TLB for newly EXEC'ed memory (#2414)
+
+* Flush TLB for newly EXEC'ed memory
+
+Commit 56d010b (PR #2337) added a conditional check so that
+the 'TLB_NOTDIRTY' flag was set only for executable pages,
+since it was used solely to identify the first write to
+pages with an associated TB.
+
+However, that commit introduced a bug: for pages where
+execute permission was set at runtime and which already
+had a TLB entry, the 'TLB_NOTDIRTY' flag was not updated;
+consequently, Unicorn executed code using the old TB
+instead of the updated one.
+
+This commit fixes the issue by adding a TLB flush in
+uc_mem_protect() whenever the 'UC_PROT_EXEC' flag
+is added.
+
+Fixes: 56d010b ("cputlb: set TLB_NOTDIRTY flag only for executable pages")
+Reported-by: Viktor Babrian <viktor.babrian@gmail.com>
+Signed-off-by: Davidson Francis <davidsondfgl@gmail.com>
+Co-authored-by: Viktor Babrian <viktor.babrian@gmail.com>
+Co-authored-by: PhilippTakacs <philipp.takacs@iosb.fraunhofer.de>
+
+* Re-arm TLB_NOTDIRTY for new TBs instead of flushing the TLB
+
+Since 6a790682 ("cputlb: set TLB_NOTDIRTY flag only for executable
+pages (#2337)"), a write TLB entry filled while its page was not yet
+executable lacks TLB_NOTDIRTY.  tb_gen_code() re-arms it through
+tlb_reset_dirty_by_vaddr(), but skipped that whenever a memory hook was
+installed, because notdirty_write() keeps TLB_NOTDIRTY set in that case.
+With a memory hook, writes to such a page thus never invalidated the
+TBs translated from it (#2367).
+
+Always re-arm TLB_NOTDIRTY in tb_gen_code() instead of flushing the
+whole TLB in uc_mem_protect() when EXEC is added.  The flush broke
+uc_mem_protect() calls from memory hooks: the load/store helpers keep
+using the TLB entry they looked up before running the hooks, which the
+flush resets to -1 or frees when it resizes the TLB, so the access went
+to host address guest_addr - 1 or read freed memory.
+
+Add tests that make a page executable from a UC_HOOK_MEM_FETCH_PROT
+and a UC_HOOK_MEM_WRITE hook, check uc_mem_protect() in test_smc2 and
+drop its unused register initializations.
+
+Fixes: 6a790682 ("cputlb: set TLB_NOTDIRTY flag only for executable pages (#2337)")
+
+* Re-arm TLB_NOTDIRTY in uc_mem_protect instead of in tb_gen_code
+
+The previous commit made tb_gen_code() always call
+tlb_reset_dirty_by_vaddr(), which scans the whole TLB.  That scan used
+to be skipped while a memory hook covers the code, so it noticeably
+slowed down translation for such users (2.4x on aarch64 when translating
+many small blocks with a global UC_HOOK_MEM_UNMAPPED hook).
+
+Restore tb_gen_code() and instead set TLB_NOTDIRTY again in
+uc_mem_protect() when a RAM range gains UC_PROT_EXEC, using QEMU's
+existing tlb_reset_dirty().  It matches the TLB entries by host address,
+so it also covers any virtual address the range is mapped at, and it
+only sets a flag on them.  Unlike the TLB flush of the original fix,
+that keeps the entries valid, so it is safe to call from memory hooks,
+and the translation and execution paths are not touched.
+
+---------
+
+Signed-off-by: Davidson Francis <davidsondfgl@gmail.com>
+Co-authored-by: Viktor Babrian <viktor.babrian@gmail.com>
+Co-authored-by: PhilippTakacs <philipp.takacs@iosb.fraunhofer.de>
+Co-authored-by: lazymio <mio@lazym.io>
+diff --git a/include/uc_priv.h b/include/uc_priv.h
+index bd72b7950c..7d5162ee36 100644
+--- a/include/uc_priv.h
++++ b/include/uc_priv.h
+@@ -145,6 +145,12 @@ typedef void (*uc_softfloat_initialize)(void);
+ // tcg flush softmmu tlb
+ typedef void (*uc_tcg_flush_tlb)(struct uc_struct *uc);
+ 
++// Set TLB_NOTDIRTY again on the softmmu tlb entries writing to
++// [start, start + len) of the RAM region mr
++typedef void (*uc_tcg_reset_dirty_tlb_t)(struct uc_struct *uc,
++                                         MemoryRegion *mr, uint64_t start,
++                                         uint64_t len);
++
+ // Invalidate the TB at given address
+ typedef void (*uc_invalidate_tb_t)(struct uc_struct *uc, uint64_t start,
+                                    size_t len);
+@@ -314,6 +320,7 @@ struct uc_struct {
+     uc_target_page_init target_page;
+     uc_softfloat_initialize softfloat_initialize;
+     uc_tcg_flush_tlb tcg_flush_tlb;
++    uc_tcg_reset_dirty_tlb_t tcg_reset_dirty_tlb;
+     uc_invalidate_tb_t uc_invalidate_tb;
+     uc_gen_tb_t uc_gen_tb;
+     uc_tb_flush_t tb_flush;
+diff --git a/qemu/unicorn_common.h b/qemu/unicorn_common.h
+index 6bcfd32ea6..920b0f0c2e 100644
+--- a/qemu/unicorn_common.h
++++ b/qemu/unicorn_common.h
+@@ -12,6 +12,7 @@
+ 
+ void vm_start(struct uc_struct*);
+ void tcg_exec_init(struct uc_struct *uc, uint32_t tb_size);
++void tlb_reset_dirty(CPUState *cpu, ram_addr_t start1, ram_addr_t length);
+ bool unicorn_fill_tlb(CPUState *cs, vaddr address, int size,
+                       MMUAccessType rw, int mmu_idx,
+                       bool probe, uintptr_t retaddr);
+@@ -184,6 +185,17 @@ MemoryRegion *find_memory_mapping(struct uc_struct *uc, hwaddr address)
+     return mr;
+ }
+ 
++static void tcg_reset_dirty_tlb(struct uc_struct *uc, MemoryRegion *mr,
++                                uint64_t start, uint64_t len)
++{
++    // The TLB entries are matched by their host address, so this also covers
++    // any virtual address the range is mapped at.
++    uintptr_t host = (uintptr_t)memory_region_get_ram_ptr(mr) +
++                     (start - mr->addr);
++
++    tlb_reset_dirty(uc->cpu, host, len);
++}
++
+ void softfloat_init(void);
+ static inline void uc_common_init(struct uc_struct* uc)
+ {
+@@ -203,6 +215,7 @@ static inline void uc_common_init(struct uc_struct* uc)
+     uc->target_page = target_page_init;
+     uc->softfloat_initialize = softfloat_init;
+     uc->tcg_flush_tlb = tcg_flush_softmmu_tlb;
++    uc->tcg_reset_dirty_tlb = tcg_reset_dirty_tlb;
+     uc->memory_map_io = memory_map_io;
+     uc->set_tlb = uc_set_tlb;
+     uc->memory_mapping = find_memory_mapping;
+diff --git a/uc.c b/uc.c
+index e0faa91dcd..031426385e 100644
+--- a/uc.c
++++ b/uc.c
+@@ -1732,6 +1732,7 @@ uc_err uc_mem_protect(struct uc_struct *uc, uint64_t address, uint64_t size,
+     uint64_t pc;
+     uint64_t count, len;
+     bool remove_exec = false;
++    bool add_exec;
+ 
+     UC_INIT(uc);
+ 
+@@ -1792,9 +1793,20 @@ uc_err uc_mem_protect(struct uc_struct *uc, uint64_t address, uint64_t size,
+                 ((perms & UC_PROT_EXEC) == 0)) {
+                 remove_exec = true;
+             }
++            add_exec = ((mr->perms & UC_PROT_EXEC) == 0) &&
++                       ((perms & UC_PROT_EXEC) != 0);
+             mr->perms = perms;
+             uc->readonly_mem(mr, (perms & UC_PROT_WRITE) == 0);
+ 
++            // TLB_NOTDIRTY is only set on write entries of executable pages
++            // when the TLB is filled, so set it on the entries filled before.
++            // Otherwise writes through them would not invalidate the TBs
++            // translated from this range.  Unlike a TLB flush, this keeps the
++            // entries valid, so it is safe to do from within memory hooks.
++            if (add_exec) {
++                uc->tcg_reset_dirty_tlb(uc, mr, addr, len);
++            }
++
+         } else {
+             if (!split_mmio_region(uc, mr, addr, len, false)) {
+                 restore_jit_state(uc);

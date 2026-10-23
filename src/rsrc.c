@@ -7,6 +7,7 @@
 #include <strings.h>
 
 #include "guest_mem.h"
+#include "snapshot.h"
 #include "memmgr.h"
 #include "trap.h"
 #include "util.h"
@@ -18,6 +19,27 @@ static struct {
     uint32_t ntypes;
     int16_t error; /* ResError */
 } R;
+
+/* A snapshot's walk (snapshot.h): ResError and the guest handle each
+   loaded resource is in. The fork is parsed once, so what was parsed out
+   of it is the host's and stays where it is; the count of entries is
+   walked to check that. */
+static void snap_walk(snapshot_walker *w) {
+    snapshot_bytes(w, &R, sizeof R);
+    SNAPSHOT_HOST(w, R.fork);
+    SNAPSHOT_HOST(w, R.entries);
+    uint32_t n = R.n, ntypes = R.ntypes;
+    SNAPSHOT_HOST(w, R.n);
+    SNAPSHOT_HOST(w, R.ntypes);
+    snapshot_bytes(w, &n, sizeof n);
+    snapshot_bytes(w, &ntypes, sizeof ntypes);
+    if (n != R.n || ntypes != R.ntypes)
+        fatal("snapshot: the resource fork has %u entries of %u types, and the snapshot %u of %u",
+              R.n, R.ntypes, n, ntypes);
+    for (uint32_t i = 0; i < R.n; i++)
+        snapshot_bytes(w, &R.entries[i].handle, sizeof R.entries[i].handle);
+}
+SNAPSHOT_STATE_WALK(R, snap_walk)
 
 static bool fail(char *err, size_t errlen, const char *fmt, ...)
     __attribute__((format(printf, 3, 4)));
@@ -132,6 +154,8 @@ rsrc_entry *rsrc_find_named(uint32_t type, const char *name) {
             return &R.entries[i];
     return NULL;
 }
+
+rsrc_entry *rsrc_at(uint32_t i) { return i < R.n ? &R.entries[i] : NULL; }
 
 rsrc_entry *rsrc_find_handle(uint32_t h) {
     if (!h)

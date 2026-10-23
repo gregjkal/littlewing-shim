@@ -2,22 +2,33 @@
 # Builds LittleWing.app around a loony binary: it plays the LittleWing games
 # installed in /Applications, with a picker when there are two or three. The Unicorn
 # and SDL3 libraries are copied into the bundle (so a Homebrew upgrade can't break
-# it), the icon is made from tools/AppIcon.png, and the bundle is signed with
+# it), the icon is compiled from tools/AppIcon.icon (an Icon Composer file,
+# which needs Xcode 26 or later), and the bundle is signed with
 # the hardened runtime and the allow-jit entitlement: ad hoc, or with the
 # identity in LOONY_SIGN_ID (a "Developer ID Application: ..." certificate in
 # the keychain) for an app that can be notarized and given to others. Its
 # version is LOONY_VERSION (x.y.z), or 0.0.0 for a build that isn't a release,
 # and the oldest macOS it claims to run on is the newest any of its binaries
-# needs (a release builds them all for macOS 26; see tools/release.sh).
+# needs (a release builds them all for macOS 14; see tools/release.sh).
 # Resources/Licenses holds this project's license and the bundled libraries',
 # and Resources/hd-art the HD art (src/hd.h).
-#   [LOONY_SIGN_ID=<identity>] [LOONY_VERSION=<x.y.z>] tools/make_app.sh <loony binary> <output folder>
+# With LOONY_SPARKLE (a folder from tools/sparkle.sh), as a release has, the
+# app updates itself: it bundles Sparkle.framework, and its Info.plist names
+# the update feed (the latest release's appcast.xml), the public key that
+# checks the updates' signatures (tools/sparkle_public_key.txt), and turns on
+# the daily check (src/menu.h).
+#   [LOONY_SIGN_ID=<identity>] [LOONY_VERSION=<x.y.z>] [LOONY_SPARKLE=<dir>] tools/make_app.sh <loony binary> <output folder>
 set -eu
 bin=$1
 out=$2
 version=${LOONY_VERSION:-0.0.0}
+sparkle=${LOONY_SPARKLE:-}
 here=$(cd "$(dirname "$0")" && pwd)
 app="$out/LittleWing.app"
+if [ -n "$sparkle" ]; then
+    [ -d "$sparkle/Sparkle.framework" ] || { echo "make_app.sh: $sparkle has no Sparkle.framework (see tools/sparkle.sh)" >&2; exit 1; }
+    [ -s "$here/sparkle_public_key.txt" ] || { echo "make_app.sh: tools/sparkle_public_key.txt is missing (README: Releases)" >&2; exit 1; }
+fi
 # A sanitizer build (Debug) needs the compiler's runtime, which is found
 # through a search path like the other libraries but isn't for bundling.
 if otool -L "$bin" | grep -q libclang_rt; then
@@ -27,15 +38,6 @@ fi
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources"
 cp "$bin" "$app/Contents/MacOS/loony"
-# The icon: tools/AppIcon.png (1024x1024, original art) at every iconset size.
-iconset=$(mktemp -d)/AppIcon.iconset
-mkdir "$iconset"
-for s in 16 32 128 256 512; do
-    sips -z $s $s "$here/AppIcon.png" --out "$iconset/icon_${s}x${s}.png" >/dev/null
-    sips -z $((s * 2)) $((s * 2)) "$here/AppIcon.png" --out "$iconset/icon_${s}x${s}@2x.png" >/dev/null
-done
-iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
-rm -rf "$(dirname "$iconset")"
 # The HD art (hd-art/<game id>): the app plays a game in HD when it has art for it.
 cp -R "$here/../hd-art" "$app/Contents/Resources/hd-art"
 cat > "$app/Contents/Info.plist" <<PLIST
@@ -45,6 +47,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <dict>
 	<key>CFBundleExecutable</key><string>loony</string>
 	<key>CFBundleIconFile</key><string>AppIcon</string>
+	<key>CFBundleIconName</key><string>AppIcon</string>
 	<key>CFBundleIdentifier</key><string>com.gregkaleka.littlewing-shim</string>
 	<key>CFBundleName</key><string>LittleWing</string>
 	<key>CFBundleDisplayName</key><string>LittleWing</string>
@@ -54,15 +57,47 @@ cat > "$app/Contents/Info.plist" <<PLIST
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
 	<key>LSApplicationCategoryType</key><string>public.app-category.arcade-games</string>
 	<key>NSHighResolutionCapable</key><true/>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key><string>LittleWing Replay</string>
+			<key>CFBundleTypeRole</key><string>Viewer</string>
+			<key>LSHandlerRank</key><string>Owner</string>
+			<key>LSItemContentTypes</key><array><string>com.gregkaleka.littlewing-shim.replay</string></array>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key><string>com.gregkaleka.littlewing-shim.replay</string>
+			<key>UTTypeDescription</key><string>LittleWing Replay</string>
+			<key>UTTypeConformsTo</key><array><string>public.data</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict><key>public.filename-extension</key><array><string>lwreplay</string></array></dict>
+		</dict>
+	</array>
 </dict>
 </plist>
 PLIST
+# The updater: Sparkle's helpers that a sandboxed app needs (XPCServices)
+# are left out, as this one isn't.
+if [ -n "$sparkle" ]; then
+    fw="$app/Contents/Frameworks/Sparkle.framework"
+    ditto "$sparkle/Sparkle.framework" "$fw"
+    rm -rf "$fw/XPCServices" "$fw"/Versions/*/XPCServices
+    plutil -insert SUFeedURL -string "https://github.com/gregjkal/littlewing-shim/releases/latest/download/appcast.xml" "$app/Contents/Info.plist"
+    plutil -insert SUPublicEDKey -string "$(tr -d ' \n' <"$here/sparkle_public_key.txt")" "$app/Contents/Info.plist"
+    plutil -insert SUEnableAutomaticChecks -bool YES "$app/Contents/Info.plist"
+fi
 # Copy each library the binary links from outside the system (Homebrew's, or
 # tools/build_deps.sh's, found through the binary's search paths) and point
 # the binary at the copy, with the license files of the package it came from.
 licenses="$app/Contents/Resources/Licenses"
 mkdir -p "$licenses"
 cp "$here/../LICENSE" "$licenses/littlewing-shim-LICENSE"
+if [ -n "$sparkle" ]; then
+    cp "$sparkle/LICENSE" "$licenses/Sparkle-LICENSE"
+fi
 rpaths=$(otool -l "$bin" | awk '/cmd LC_RPATH/ {getline; getline; print $2}')
 for dep in $(otool -L "$bin" | tail -n +2 | awk '{print $1}'); do  # paths without spaces
     case "$dep" in
@@ -122,12 +157,31 @@ min=$(for f in "$app/Contents/MacOS/loony" "$app"/Contents/Frameworks/*.dylib; d
     vtool -show-build "$f" | awk '/minos/ {print $2}'
 done | sort -t . -k 1,1n -k 2,2n -k 3,3n | tail -1)
 plutil -insert LSMinimumSystemVersion -string "$min" "$app/Contents/Info.plist"
+# The icon: tools/AppIcon.icon (original art) as an asset catalog, which
+# macOS 26 draws in the light, dark, clear and tinted styles, and an .icns for
+# older systems. actool comes with Xcode, not the Command Line Tools.
+partial=$(mktemp -d)
+if ! log=$(xcrun actool "$here/AppIcon.icon" --compile "$app/Contents/Resources" \
+    --app-icon AppIcon --platform macosx --target-device mac \
+    --minimum-deployment-target "$min" --output-format human-readable-text \
+    --output-partial-info-plist "$partial/icon.plist" 2>&1); then
+    echo "$log" >&2
+    echo "make_app.sh: actool couldn't compile tools/AppIcon.icon (it needs Xcode 26 or later)" >&2
+    exit 1
+fi
+rm -rf "$partial"
 # A Developer ID signature needs a secure timestamp (fetched from Apple) to be notarized.
 sign=${LOONY_SIGN_ID:--}
 if [ "$sign" = - ]; then set -- ; else set -- --timestamp; fi
 for lib in "$app"/Contents/Frameworks/*.dylib; do
     codesign --force --sign "$sign" "$@" --options runtime "$lib"
 done
+# Sparkle's helpers inside out, then the framework (Sparkle's documented order).
+if [ -n "$sparkle" ]; then
+    codesign --force --sign "$sign" "$@" --options runtime "$fw/Versions/B/Autoupdate"
+    codesign --force --sign "$sign" "$@" --options runtime "$fw/Versions/B/Updater.app"
+    codesign --force --sign "$sign" "$@" --options runtime "$fw"
+fi
 codesign --force --sign "$sign" "$@" --options runtime --entitlements "$here/loony.entitlements" "$app"
 codesign --verify --deep --strict "$app"
 echo "built $app (for macOS $min and later)"

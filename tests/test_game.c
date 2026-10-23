@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include "game.h"
+#include "plist.h"
 #include "util.h"
 
 static void touch(const char *dir, const char *name) {
@@ -207,4 +208,83 @@ TEST(game_legacy_data_never_overwrites) {
 
 TEST(game_legacy_data_with_no_root_is_a_no_op) {
     CHECK_EQ(game_move_legacy_data("/nonexistent/littlewing-shim"), 0);
+}
+
+static time_t local_time(int y, int mo, int d, int h, int mi, int sec) {
+    struct tm tm = {.tm_year = y - 1900, .tm_mon = mo - 1, .tm_mday = d, .tm_hour = h,
+                    .tm_min = mi, .tm_sec = sec, .tm_isdst = -1};
+    return mktime(&tm);
+}
+
+/* The times of Loony Labyrinth's high scores, as its preferences hold them;
+   the score the game starts with has none. */
+TEST(game_high_score_times_come_from_the_preferences) {
+    char dir[1024], prefs[1100], err[256];
+    test_tmp_dir(dir, sizeof dir);
+    snprintf(prefs, sizeof prefs, "%s/prefs.plist", dir);
+    plist_entry e[] = {
+        {"highscore 1", true, 43074596, NULL},
+        {"highscore timestamp 1", false, 0, "2026-10-14 15:20:00"},
+        {"highscore timestamp 2", false, 0, ""},
+        {"highscore timestamp 3", false, 0, "2026-10-07 10:47:40"},
+        {"highscore name 1", false, 0, "GREG"},
+    };
+    CHECK(plist_write(prefs, e, 5, err, sizeof err));
+    time_t t[8];
+    size_t n = game_high_score_times(prefs, t, 8);
+    CHECK_EQ(n, 2);
+    time_t a = local_time(2026, 10, 14, 15, 20, 0), b = local_time(2026, 10, 7, 10, 47, 40);
+    CHECK((t[0] == a && t[1] == b) || (t[0] == b && t[1] == a)); /* in no set order */
+    CHECK_EQ(game_high_score_times(prefs, t, 1), 1);
+    snprintf(prefs, sizeof prefs, "%s/missing.plist", dir);
+    CHECK_EQ(game_high_score_times(prefs, t, 8), 0);
+    test_remove_tree(dir);
+}
+
+/* A table for game_high_scores: entry 3 has no score, entry 4 is one the
+   game starts with (no stamp), and entry 2 has no name. */
+static const char *table_str(const char *key) {
+    static const char *const s[][2] = {
+        {"highscore name 1", "GREG"},
+        {"highscore timestamp 1", "2026-10-14 15:20:00"},
+        {"highscore timestamp 2", "2026-10-07 10:47:40"},
+        {"highscore name 4", "MIO"},
+        {"highscore timestamp 4", ""},
+    };
+    for (size_t i = 0; i < sizeof s / sizeof s[0]; i++)
+        if (strcmp(key, s[i][0]) == 0)
+            return s[i][1];
+    return NULL;
+}
+
+static bool table_int(const char *key, int64_t *out) {
+    if (strcmp(key, "highscore 1") == 0)
+        *out = 43074596;
+    else if (strcmp(key, "highscore 2") == 0)
+        *out = 23757430;
+    else if (strcmp(key, "highscore 4") == 0)
+        *out = 4000;
+    else
+        return false;
+    return true;
+}
+
+/* The High Scores menu's table: the entries with a score, best first, with
+   their names and stamps. */
+TEST(game_high_scores_read_the_table) {
+    game_high_score hs[GAME_HIGH_SCORES];
+    CHECK_EQ(game_high_scores(table_str, table_int, hs), 3);
+    CHECK_EQ(hs[0].score, 430745960); /* the game saves scores over 10 */
+    CHECK_STR(hs[0].name, "GREG");
+    CHECK_EQ(hs[0].when, local_time(2026, 10, 14, 15, 20, 0));
+    CHECK_EQ(hs[1].score, 237574300);
+    CHECK_STR(hs[1].name, "");
+    CHECK_EQ(hs[1].when, local_time(2026, 10, 7, 10, 47, 40));
+    CHECK_EQ(hs[2].score, 40000);
+    CHECK_STR(hs[2].name, "MIO");
+    CHECK_EQ(hs[2].when, 0);
+    time_t t;
+    CHECK(!game_parse_score_time("", &t));
+    CHECK(!game_parse_score_time(NULL, &t));
+    CHECK(!game_parse_score_time("2026-10-14 15:20:00 extra", &t));
 }

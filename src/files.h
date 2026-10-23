@@ -55,6 +55,9 @@ bool files_init(const char *game_dir, const char *data_dir);
 /* Converts a Mac Roman name to UTF-8, with '/' (legal in Mac names) becoming ':'. */
 void files_mac_to_utf8(const char *mac, char *out, size_t cap);
 
+/* The Mac Roman byte for a Unicode code point, or -1 if Mac Roman has none. */
+int files_unicode_to_mac(uint32_t c);
+
 /* Registers FSMakeFSSpec, FSpCreate, FSpOpenDF, PBReadSync, FSWrite, GetEOF,
    SetEOF, SetFPos, GetFPos, PBFlushFileSync and FSClose, and for a Mach-O
    game the FSRef and fork calls: FSPathMakeRef (host paths inside the game

@@ -37,6 +37,25 @@ void test_remove_tree(const char *path);
    status, or -1 if it was killed by a signal. The child exits 0 if fn returns. */
 int test_run_child(void (*fn)(void *), void *arg, char *out, size_t outlen);
 
+/* test_run_child for n children side by side, fn(args[i]) in each, which
+   returns once all have exited: child i's stderr in outs[i] (outlen bytes
+   each) and its status in codes[i]. Each child is forked before fn runs, so
+   it can set a global of its own for what it runs. */
+void test_run_children(size_t n, void (*fn)(void *), void *const *args, char *const *outs,
+                       size_t outlen, int *codes);
+
+/* In a test's forked child, Apple's video encoders fail to start (they need
+   a process that was exec'd). Runs the test named name again in a new
+   loony_tests process and takes its result, returning true; returns false at
+   once when this process can run it itself. RUN_UNFORKED() does that for the
+   test it is in. */
+bool test_rerun_unforked(const char *name);
+#define RUN_UNFORKED()                                                          \
+    do {                                                                        \
+        if (test_rerun_unforked(__func__))                                      \
+            return;                                                             \
+    } while (0)
+
 #define TEST(name)                                                              \
     static void name(void);                                                     \
     __attribute__((constructor)) static void name##_register(void) {            \

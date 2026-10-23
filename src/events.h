@@ -122,6 +122,17 @@ void events_request_quit(void);
    script's quit): the quit Apple Event has been sent. */
 bool events_quit_requested(void);
 
+/* Input from the host (the window, a script): logged on a recording,
+   dropped on a replay, whose input comes from its file (a quit stops the
+   replay), then passed to events_post_key and the others. On a replay,
+   keys go to the events_set_replay_key function instead, if there is one. */
+void events_set_replay_key(void (*fn)(int scancode, bool down, bool repeat));
+void events_host_key(int scancode, bool down, bool repeat);
+void events_host_mouse(int x, int y, bool down);
+void events_host_text(const char *utf8);
+void events_host_activation(bool active);
+void events_host_quit(void);
+
 /* Events waiting in the queue. */
 int events_queued(void);
 
@@ -134,6 +145,39 @@ void events_pump(void);
 
 /* Number of timers installed and not removed. */
 int events_active_timers(void);
+
+/* For snapshots (snapshot.h): the host frames above a guest call the run
+   loop (RunApplicationEventLoop) made, a handler it dispatched an event to
+   or a timer its own pump fired, which a snapshot taken inside the call
+   needs in order to check it is in the same place, or to rebuild them. */
+typedef struct {
+    int timer;         /* the timer whose callback runs, or -1: a dispatch */
+    int slot;          /* a dispatch: the event's slot */
+    uint32_t chain[2]; /* the targets dispatch tries, in order */
+    int nchain, link;  /* how many, and which one it is on */
+    int handler;       /* the handler's index among those installed */
+    int loop_depth;    /* the loop depth call_out hides while it runs */
+} ev_frame;
+
+/* True, filling *f, while the run loop has a handler or a timer's callback
+   running: the guest call one deeper than the run loop. */
+bool events_loop_frame(ev_frame *f);
+
+/* The next RunApplicationEventLoop call goes back into what f describes
+   instead of starting: the dispatch, or the pump firing timer f->timer. It
+   runs call, which stands for the guest call to handler f->handler or to
+   the timer's callback and returns what that returned, then finishes the
+   dispatch or the pump and runs on as if it had never left. */
+void events_resume_loop(const ev_frame *f, uint32_t (*call)(void));
+
+/* After a longjmp out of the run loop: forgets the frame in progress and a
+   resume not taken up yet. */
+void events_unwind(void);
+
+/* The script's next action (script.h), whatever its tick, for when the
+   clock has stopped (the end of a replay, headless): false once there is
+   none. */
+bool events_script_rest(void);
 
 /* Registers NewEventHandlerUPP, GetApplicationEventTarget,
    GetEventDispatcherTarget, GetWindowEventTarget, InstallEventHandler,

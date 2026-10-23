@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include "guest_mem.h"
+#include "snapshot.h"
 #include "trap.h"
 #include "util.h"
 
@@ -89,6 +90,15 @@ void files_mac_to_utf8(const char *mac, char *out, size_t cap) {
         }
     }
     out[o] = '\0';
+}
+
+int files_unicode_to_mac(uint32_t c) {
+    if (c < 0x80)
+        return (int)c;
+    for (int i = 0; i < 128; i++)
+        if (mac_roman[i] == c)
+            return 0x80 + i;
+    return -1;
 }
 
 bool files_data_root(char *out, size_t cap) {
@@ -206,6 +216,64 @@ static bool exists(const char *path, bool want_dir) {
     struct stat st;
     return stat(path, &st) == 0 && (want_dir ? S_ISDIR(st.st_mode) : S_ISREG(st.st_mode));
 }
+
+/* A snapshot's walk (snapshot.h): an open file is its name, the folder it
+   is open in and its mark, and loading reopens it there, since closing a
+   file, or the first write that copies it to the data folder, replaces
+   its FILE. What a file holds isn't in a snapshot: a write stays. The two
+   folders are the host's (a snapshot kept in a recording is put back in
+   another process, with its own save folder, on another Mac), and the
+   files are reopened in this process's. */
+/* Whether rel, in a field of cap bytes, is a path the shim could have made
+   inside one of its folders: ended, relative, and with no "." or ".."
+   step, so a snapshot from a file (gamestart.h) names no other file. */
+static bool safe_rel(const char *rel, size_t cap) {
+    if (!memchr(rel, 0, cap) || rel[0] == '/')
+        return false;
+    for (const char *p = rel; *p;) {
+        size_t n = strcspn(p, "/");
+        if ((n == 1 && p[0] == '.') || (n == 2 && p[0] == '.' && p[1] == '.'))
+            return false;
+        p += n;
+        if (*p)
+            p++;
+    }
+    return true;
+}
+
+static void snap_walk(snapshot_walker *w) {
+    if (snapshot_loading(w))
+        for (int i = 0; i < MAX_FILES; i++)
+            if (F.files[i].f)
+                fclose(F.files[i].f);
+    snapshot_bytes(w, &F, sizeof F);
+    SNAPSHOT_HOST(w, F.game_dir);
+    SNAPSHOT_HOST(w, F.data_dir);
+    snapshot_check(w, F.ndirs >= 1 && F.ndirs <= MAX_DIRS && !F.dirs[0][0] && F.nrefs >= 0 &&
+                          F.nrefs <= MAX_REFS,
+                   "%d folders and %d references", F.ndirs, F.nrefs);
+    for (int i = 0; i < F.ndirs; i++)
+        snapshot_check(w, safe_rel(F.dirs[i], sizeof F.dirs[i]), "folder %d", i);
+    for (int i = 0; i < F.nrefs; i++)
+        snapshot_check(w, safe_rel(F.refs[i], sizeof F.refs[i]), "reference %d", i);
+    for (int i = 0; i < MAX_FILES; i++) {
+        open_file *o = &F.files[i];
+        int64_t mark = !snapshot_loading(w) && o->f ? (int64_t)ftell(o->f) : -1;
+        SNAPSHOT_REBUILT(w, o->f);
+        snapshot_bytes(w, &mark, sizeof mark);
+        if (!snapshot_loading(w) || mark < 0)
+            continue;
+        snapshot_check(w, safe_rel(o->rel, sizeof o->rel) && o->eof >= 0 && (!o->in_data || F.data_dir[0]),
+                       "open file %d", i);
+        char path[PATH_CAP];
+        under(o->in_data ? F.data_dir : F.game_dir, o->rel, path, sizeof path);
+        o->f = fopen(path, o->in_data && o->writable ? "r+b" : "rb");
+        if (!o->f || fseek(o->f, (long)mark, SEEK_SET) != 0)
+            fatal("snapshot: can't open %s again at %lld: %s", path, (long long)mark,
+                  strerror(errno));
+    }
+}
+SNAPSHOT_STATE_WALK(F, snap_walk)
 
 /* Where rel is on the host: in the data folder if it's there (returns
    true), otherwise in the game folder, whether or not it exists. */

@@ -6,7 +6,10 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "cgimage.h"
+#include "files.h"
 #include "guest_mem.h"
+#include "snapshot.h"
 #include "memmgr.h"
 #include "plist.h"
 #include "trap.h"
@@ -38,16 +41,141 @@ static struct {
     uint32_t app_var;   /* Mach-O: the kCFPreferencesCurrentApplication variable */
     uint32_t class_ref; /* Mach-O: __CFConstantStringClassReference */
     struct {
-        uint32_t addr;
         char *text;
+        uint32_t addr;
     } *consts; /* constant strings read so far */
     uint32_t nconsts, consts_cap;
     uint32_t main_bundle;
 } C;
 
+/* A snapshot's walk (snapshot.h): C with its arrays and every string in
+   them, since releasing an object frees its string and a new one can move
+   an array. An array's slots past its count are zeros in a snapshot. The
+   preferences file's path is the host's (another process, putting back a
+   snapshot kept in a recording, saves into its own folder), and so are the
+   kept-out values below: a string holding one is walked as which it is. */
+static void free_owned(void) {
+    for (uint32_t i = 0; i < C.nobjs; i++)
+        free(C.objs[i].str);
+    for (uint32_t i = 0; i < C.nprefs; i++)
+        free(C.prefs[i].key);
+    for (uint32_t i = 0; i < C.nconsts; i++)
+        free(C.consts[i].text);
+    free(C.objs);
+    free(C.prefs);
+    free(C.consts);
+}
+
+/* The preferences whose values a snapshot leaves out
+   (cf_keep_out_of_snapshots), and their values as cf_load_prefs read
+   them: the host's, kept across cf_init. */
+#define MAX_KEPT_OUT 4
+#define MAX_KEPT_FIELDS 8
+#define MAX_KEPT_FIELD 4096
+static struct {
+    char *keys[MAX_KEPT_OUT];
+    char *values[MAX_KEPT_OUT]; /* NULL: no such string preference */
+    size_t n;
+    cf_field fields[MAX_KEPT_FIELDS]; /* cf_kept_out_field */
+    size_t nfields;
+} kept_out;
+
+/* Whether s is one of the values kept out. */
+static bool is_kept_out(const char *s) {
+    for (size_t k = 0; k < kept_out.n; k++)
+        if (kept_out.values[k] && kept_out.values[k][0] && strcmp(s, kept_out.values[k]) == 0)
+            return true;
+    return false;
+}
+
+/* A string the block owns, walked as which kept-out value it is (1 for
+   the first, 0 for none) and, if it is none, as itself. Loading one that
+   was kept out gives it this process's value. */
+static void walk_text(snapshot_walker *w, char **field) {
+    uint8_t which = 0;
+    if (!snapshot_loading(w) && *field)
+        for (size_t k = 0; k < kept_out.n; k++)
+            if (kept_out.values[k] && kept_out.values[k][0] && strcmp(*field, kept_out.values[k]) == 0)
+                which = (uint8_t)(k + 1);
+    snapshot_bytes(w, &which, sizeof which);
+    if (!snapshot_loading(w) && which) {
+        char *text = *field;
+        *field = NULL; /* written as no string */
+        snapshot_string(w, field);
+        *field = text;
+        return;
+    }
+    snapshot_string(w, field);
+    if (snapshot_loading(w) && which) {
+        const char *v = which <= kept_out.n && kept_out.values[which - 1] ? kept_out.values[which - 1] : "";
+        free(*field);
+        if (!(*field = strdup(v)))
+            fatal("out of memory");
+    }
+}
+
 static char *bundle_path; /* cf_set_bundle's; survives cf_init */
 
 static uint32_t ref_of(uint32_t index) { return CF_TAG_BASE + 16u * index; }
+
+bool cf_in_bundle(const char *path) {
+    size_t n = bundle_path ? strlen(bundle_path) : 0;
+    return path && n && strncmp(path, bundle_path, n) == 0 && (!path[n] || path[n] == '/') &&
+           !strstr(path + n, "/../") && !(strlen(path) >= 3 && strcmp(path + strlen(path) - 3, "/..") == 0);
+}
+
+static void snap_walk(snapshot_walker *w) {
+    if (snapshot_loading(w))
+        free_owned();
+    snapshot_bytes(w, &C, sizeof C);
+    snapshot_check(w, C.nobjs <= C.cap && C.nprefs <= C.prefs_cap && C.nconsts <= C.consts_cap &&
+                          ref_of(C.nobjs) <= CF_TAG_LIMIT,
+                   "%u objects, %u preferences and %u constants", C.nobjs, C.nprefs, C.nconsts);
+    SNAPSHOT_OWNED(w, C.objs, C.cap);
+    snapshot_check(w, !C.cap || C.objs, "no objects");
+    for (uint32_t i = 0; i < C.cap; i++) {
+        if (i < C.nobjs)
+            walk_text(w, &C.objs[i].str);
+        else
+            SNAPSHOT_REBUILT(w, C.objs[i]);
+    }
+    for (uint32_t i = 0; i < C.nobjs; i++) {
+        uint32_t t = C.objs[i].type_id;
+        if (t == CF_URL_TYPE_ID || t == CF_BUNDLE_TYPE_ID)
+            snapshot_check(w, cf_in_bundle(C.objs[i].str), "object %u's path", i);
+        else if (t == CF_STRING_TYPE_ID)
+            snapshot_check(w, C.objs[i].str != NULL, "string %u", i);
+    }
+    SNAPSHOT_OWNED(w, C.prefs, C.prefs_cap);
+    snapshot_check(w, !C.prefs_cap || C.prefs, "no preferences");
+    for (uint32_t i = 0; i < C.prefs_cap; i++) {
+        if (i < C.nprefs) {
+            snapshot_string(w, &C.prefs[i].key);
+            SNAPSHOT_PADDING(w, C.prefs[i], value);
+        } else {
+            SNAPSHOT_REBUILT(w, C.prefs[i]);
+        }
+    }
+    for (uint32_t i = 0; i < C.nprefs; i++) {
+        uint32_t v = C.prefs[i].value;
+        snapshot_check(w, C.prefs[i].key && v >= CF_TAG_BASE && !(v & 15u) && (v - CF_TAG_BASE) / 16u < C.nobjs,
+                       "preference %u", i);
+    }
+    SNAPSHOT_HOST(w, C.prefs_path);
+    SNAPSHOT_OWNED(w, C.consts, C.consts_cap);
+    snapshot_check(w, !C.consts_cap || C.consts, "no constants");
+    for (uint32_t i = 0; i < C.consts_cap; i++) {
+        if (i < C.nconsts) {
+            snapshot_string(w, &C.consts[i].text);
+            SNAPSHOT_PADDING(w, C.consts[i], addr);
+            snapshot_check(w, C.consts[i].text != NULL, "constant %u", i);
+        } else {
+            SNAPSHOT_REBUILT(w, C.consts[i]);
+        }
+    }
+}
+SNAPSHOT_STATE_WALK(C, snap_walk)
+
 
 static cf_obj *lookup(uint32_t ref) {
     if (ref < CF_TAG_BASE || ref >= CF_TAG_LIMIT || (ref & 15u) != 0)
@@ -144,16 +272,43 @@ static bool is_constant_string(uint32_t ref) {
     return C.class_ref && gm_is_backed(ref, 16) && gm_r32(ref) == C.class_ref;
 }
 
+/* The flags word's bit for text in UTF-16 (0x7D0, where 8-bit text is
+   0x7C8): the compiler's form for a CFSTR with a non-ASCII character, its
+   length in UniChars, big-endian like the rest of guest memory. */
+#define CONST_UNICODE 0x10u
+
+/* UTF-16 text as Mac Roman, the strings' encoding here, with '?' for a
+   character Mac Roman doesn't have. */
+static void utf16_to_mac(const uint8_t *src, uint32_t len, char *out) {
+    uint32_t o = 0;
+    for (uint32_t i = 0; i < len; i++) {
+        uint32_t c = rd_be16(src + 2 * i);
+        if (c >= 0xD800 && c < 0xDC00 && i + 1 < len && (rd_be16(src + 2 * i + 2) & 0xFC00) == 0xDC00)
+            i++; /* a surrogate pair: outside Mac Roman */
+        int m = c >= 0xD800 && c < 0xE000 ? -1 : files_unicode_to_mac(c);
+        out[o++] = m < 0 ? '?' : (char)m;
+    }
+    out[o] = '\0';
+}
+
 static const char *constant_text(uint32_t ref) {
     for (uint32_t i = 0; i < C.nconsts; i++)
         if (C.consts[i].addr == ref)
             return C.consts[i].text;
-    uint32_t bytes = gm_r32(ref + 8), len = gm_r32(ref + 12);
+    uint32_t flags = gm_r32(ref + 4), bytes = gm_r32(ref + 8), len = gm_r32(ref + 12);
+    bool unicode = flags & CONST_UNICODE;
+    if (unicode && len > UINT32_MAX / 2)
+        trap_crash("constant string at 0x%08x: %u UniChars", ref, len);
+    const uint8_t *src = gm_ptr(bytes, len ? (unicode ? 2 * len : len) : 1);
     char *text = malloc((size_t)len + 1);
     if (!text)
         fatal("out of memory");
-    memcpy(text, gm_ptr(bytes, len ? len : 1), len);
-    text[len] = '\0';
+    if (unicode) {
+        utf16_to_mac(src, len, text);
+    } else {
+        memcpy(text, src, len);
+        text[len] = '\0';
+    }
     if (C.nconsts == C.consts_cap) {
         C.consts_cap = C.consts_cap ? C.consts_cap * 2 : 16;
         C.consts = realloc(C.consts, C.consts_cap * sizeof *C.consts);
@@ -241,6 +396,14 @@ static void h_string_get_cstring(void) {
         return;
     }
     memcpy(gm_ptr(trap_arg(1), (uint32_t)n), s, n);
+    if (is_kept_out(s)) {
+        cf_field f = {trap_arg(1), (uint32_t)size < MAX_KEPT_FIELD ? (uint32_t)size : MAX_KEPT_FIELD};
+        size_t i = 0;
+        while (i < kept_out.nfields && (kept_out.fields[i].addr != f.addr || kept_out.fields[i].len != f.len))
+            i++;
+        if (i == kept_out.nfields && i < MAX_KEPT_FIELDS)
+            kept_out.fields[kept_out.nfields++] = f;
+    }
     trap_return(1);
 }
 
@@ -248,7 +411,8 @@ static void h_string_get_type_id(void) { trap_return(CF_STRING_TYPE_ID); }
 
 static void h_get_type_id(void) {
     uint32_t ref = trap_arg(0);
-    trap_return(is_constant_string(ref) ? CF_STRING_TYPE_ID : need("CFGetTypeID", ref)->type_id);
+    uint32_t cg = cgimage_type_id(ref);
+    trap_return(is_constant_string(ref) ? CF_STRING_TYPE_ID : cg ? cg : need("CFGetTypeID", ref)->type_id);
 }
 
 /* CFNumberCreate(alloc, theType, valuePtr): integer types only. */
@@ -274,10 +438,13 @@ static void h_number_create(void) {
     trap_return(new_obj(CF_NUMBER_TYPE_ID, NULL, v));
 }
 
-/* A constant string lives as long as the program: releasing it does nothing. */
+/* A constant string lives as long as the program: releasing it does
+   nothing. A CGImage or data provider is cgimage's to release. */
 static void h_release(void) {
     uint32_t ref = trap_arg(0);
-    if (!is_constant_string(ref))
+    if (cgimage_type_id(ref))
+        cgimage_release(ref);
+    else if (!is_constant_string(ref))
         release(need("CFRelease", ref));
 }
 
@@ -385,6 +552,21 @@ static pref *find_pref(const char *key) {
     return NULL;
 }
 
+const char *cf_pref_string(const char *key) {
+    pref *p = find_pref(key);
+    cf_obj *o = p ? lookup(p->value) : NULL;
+    return o && o->type_id == CF_STRING_TYPE_ID ? o->str : NULL;
+}
+
+bool cf_pref_int(const char *key, int64_t *out) {
+    pref *p = find_pref(key);
+    cf_obj *o = p ? lookup(p->value) : NULL;
+    if (!o || o->type_id != CF_NUMBER_TYPE_ID)
+        return false;
+    *out = o->num;
+    return true;
+}
+
 /* Sets key to value, which the preferences now hold a reference to (the
    caller's reference is unchanged). A value of 0 removes the key. */
 static void set_pref(const char *key, uint32_t value) {
@@ -415,11 +597,19 @@ static void set_pref(const char *key, uint32_t value) {
     C.prefs[C.nprefs++] = (pref){copy, value};
 }
 
-/* CFPreferencesSetAppValue(key, value, appID). A NULL value removes the key. */
+/* CFPreferencesSetAppValue(key, value, appID). A NULL value removes the
+   key. A constant string is stored as a copy, since the preferences hold
+   only objects. */
 static void h_prefs_set_app_value(void) {
     const char *key = key_string("CFPreferencesSetAppValue", trap_arg(0));
     uint32_t value = trap_arg(1);
     need_current_app("CFPreferencesSetAppValue", trap_arg(2));
+    if (value && is_constant_string(value)) {
+        uint32_t copy = cf_string(constant_text(value));
+        set_pref(key, copy);
+        release(lookup(copy));
+        return;
+    }
     if (value)
         need("CFPreferencesSetAppValue", value);
     set_pref(key, value);
@@ -503,8 +693,37 @@ void cf_load_prefs(const char *path) {
         uint32_t v = e[i].is_number ? new_obj(CF_NUMBER_TYPE_ID, NULL, e[i].num) : cf_string(e[i].str);
         set_pref(e[i].key, v);
         release(lookup(v));
+        for (size_t k = 0; k < kept_out.n; k++)
+            if (!e[i].is_number && strcmp(e[i].key, kept_out.keys[k]) == 0) {
+                free(kept_out.values[k]);
+                if (!(kept_out.values[k] = strdup(e[i].str)))
+                    fatal("out of memory");
+            }
     }
     plist_free(e, n);
+}
+
+void cf_keep_out_of_snapshots(const char *const *keys, size_t n) {
+    if (n > MAX_KEPT_OUT)
+        fatal("cf: more than %d preferences kept out of snapshots", MAX_KEPT_OUT);
+    for (size_t k = 0; k < kept_out.n; k++) {
+        free(kept_out.keys[k]);
+        free(kept_out.values[k]);
+    }
+    memset(&kept_out, 0, sizeof kept_out);
+    for (size_t k = 0; k < n; k++)
+        if (!(kept_out.keys[k] = strdup(keys[k])))
+            fatal("out of memory");
+    kept_out.n = n;
+}
+
+const char *cf_kept_out(size_t i) { return i < kept_out.n ? kept_out.values[i] : NULL; }
+
+size_t cf_kept_out_count(void) { return kept_out.n; }
+
+size_t cf_kept_out_fields(const cf_field **fields) {
+    *fields = kept_out.fields;
+    return kept_out.nfields;
 }
 
 bool cf_save_prefs(void) {

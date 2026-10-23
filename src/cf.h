@@ -1,5 +1,6 @@
 #pragma once
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /* Core Foundation subset: CFString and CFNumber objects and CFPreferences.
@@ -29,10 +30,38 @@ void cf_init(void);
    an I/O error) is left alone and the preferences aren't saved. */
 void cf_load_prefs(const char *path);
 
+/* For snapshots kept in a recording (snapshot.h, gamestart.h): the
+   preferences whose values must never be in one, the license (replay.h).
+   From the next cf_load_prefs, a string object equal to one of their
+   values as loaded is walked as which key it is, and putting back a
+   snapshot gives it that key's value as this process loaded it.
+   cf_kept_out(i) is key i's value as loaded, or NULL (none, or not a
+   string), for i below cf_kept_out_count(), the keys' number. Kept across
+   cf_init(). */
+void cf_keep_out_of_snapshots(const char *const *keys, size_t n);
+const char *cf_kept_out(size_t i);
+size_t cf_kept_out_count(void);
+
+/* Where the game keeps those values: each guest buffer CFStringGetCString
+   copied one into, at the size the game gave it (at most 4096 bytes), since
+   the game may go on to change the text there (Loony decrypts its key
+   code in place, so it is in no form cf_kept_out gives). A baseline's hash
+   leaves them out, so it is the same under any license (gamestart.h). Kept
+   across cf_init(), forgotten by cf_keep_out_of_snapshots. */
+typedef struct {
+    uint32_t addr, len;
+} cf_field;
+size_t cf_kept_out_fields(const cf_field **fields);
+
 /* Writes the preferences to the file named by cf_load_prefs. False (logged)
    if that fails. True, doing nothing, if there's no file. A key whose value
    is no longer a live object is left out (logged). */
 bool cf_save_prefs(void);
+
+/* The preferences as the game holds them now (saved or not): key's string
+   (Mac Roman), or NULL if it has none; key's integer, false if it has none. */
+const char *cf_pref_string(const char *key);
+bool cf_pref_int(const char *key, int64_t *out);
 
 /* The CFStringRef stored in the kCFPreferencesCurrentApplication data import. */
 uint32_t cf_current_app(void);
@@ -50,8 +79,11 @@ uint32_t cf_string(const char *s);
 /* The text of a CFString: a live CFString object, or one of the program's
    constant strings (a guest struct whose isa is
    __CFConstantStringClassReference, then flags, a pointer to the bytes and
-   a length). Crashes, naming call, for anything else. The text stays valid
-   until cf_init(). */
+   a length). A constant string whose flags say UTF-16 (non-ASCII text) is
+   converted to Mac Roman, '?' standing for a character it doesn't have,
+   and goes into a host path (a resource or nib name) as those bytes, so
+   names there are ASCII only. Crashes, naming call, for anything else. The text stays valid until
+   cf_init(). */
 const char *cf_string_text(const char *call, uint32_t ref);
 
 /* A Mach-O game's bundle: CFBundleGetMainBundle's, whose resources are in
@@ -60,6 +92,11 @@ void cf_set_bundle(const char *path);
 
 /* The path cf_set_bundle was given, or NULL. */
 const char *cf_bundle_path(void);
+
+/* Whether path is inside the bundle with no ".." in it: the one place a
+   URL, a bundle or an image provider's path can be, so a snapshot from a
+   file (gamestart.h) can't name another for the shim to open. */
+bool cf_in_bundle(const char *path);
 
 /* Creates a CFURL (retain count 1) for a host path. */
 uint32_t cf_url(const char *path);
@@ -74,5 +111,7 @@ int cf_retain_count(uint32_t ref);
 uint32_t cf_live_objects(void);
 
 /* Registers the CFString, CFNumber, CFRelease, CFGetTypeID, CFPreferences,
-   CFBundle and CFURL imports. */
+   CFBundle and CFURL imports. CFRelease and CFGetTypeID also take a CGImage
+   or data provider (cgimage.h), and CFPreferencesSetAppValue a constant
+   string as a value. */
 void cf_register(void);

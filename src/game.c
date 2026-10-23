@@ -9,6 +9,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "plist.h"
 #include "util.h"
 
 static const game_info games[] = {
@@ -30,6 +31,53 @@ const game_info *game_by_id(const char *id) {
         if (strcmp(games[i].id, id) == 0)
             return &games[i];
     return NULL;
+}
+
+bool game_parse_score_time(const char *s, time_t *out) {
+    struct tm tm = {.tm_isdst = -1};
+    const char *end = s ? strptime(s, "%Y-%m-%d %H:%M:%S", &tm) : NULL;
+    if (!end || *end)
+        return false;
+    *out = mktime(&tm);
+    return true;
+}
+
+size_t game_high_score_times(const char *prefs, time_t *out, size_t cap) {
+    plist_entry *e;
+    uint32_t n;
+    char err[256];
+    if (plist_read(prefs, &e, &n, err, sizeof err) != PLIST_OK)
+        return 0;
+    size_t k = 0;
+    for (uint32_t i = 0; i < n && k < cap; i++)
+        if (!e[i].is_number && strncmp(e[i].key, "highscore timestamp ", 20) == 0 &&
+            game_parse_score_time(e[i].str, &out[k]))
+            k++;
+    plist_free(e, n);
+    return k;
+}
+
+int game_high_scores(const char *(*get_str)(const char *key),
+                     bool (*get_int)(const char *key, int64_t *out),
+                     game_high_score out[GAME_HIGH_SCORES]) {
+    int n = 0;
+    for (int i = 0; i < GAME_HIGH_SCORES; i++) {
+        char key[64];
+        game_high_score *h = &out[n];
+        memset(h, 0, sizeof *h);
+        snprintf(key, sizeof key, "highscore %d", i + 1);
+        if (!get_int(key, &h->score))
+            continue;
+        h->score *= GAME_SCORE_SCALE;
+        snprintf(key, sizeof key, "highscore name %d", i + 1);
+        const char *name = get_str(key);
+        snprintf(h->name, sizeof h->name, "%s", name ? name : "");
+        snprintf(key, sizeof key, "highscore timestamp %d", i + 1);
+        if (!game_parse_score_time(get_str(key), &h->when))
+            h->when = 0;
+        n++;
+    }
+    return n;
 }
 
 const char *game_apps_dir(void) {

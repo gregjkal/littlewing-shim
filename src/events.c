@@ -1,15 +1,19 @@
 #include "events.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #include "cpu.h"
+#include "dialogs.h"
 #include "guest_mem.h"
 #include "keymap.h"
 #include "memmgr.h"
 #include "misc.h"
+#include "play.h"
+#include "replay.h"
 #include "script.h"
+#include "snapshot.h"
 #include "sound.h"
 #include "trap.h"
 #include "util.h"
@@ -80,14 +84,66 @@ static struct {
     long exit_after; /* ticks, or 0 */
     double quit_deadline; /* wall-clock seconds, or 0 */
     uint32_t ae_descs; /* guest memory for the quit AppleEvent and its reply */
+    void (*replay_key)(int scancode, bool down, bool repeat);
     bool warned_full;
 } E;
 
-static double wall_seconds(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec + ts.tv_nsec / 1e9;
+/* A snapshot's walk (snapshot.h): the shim's hooks and LOONY_EXIT_AFTER
+   are the host's. The modal sink is dialogs' or none, so it is walked as
+   whether there is one: a pointer into the shim's statics means nothing in
+   another process, which puts back a snapshot kept in a recording. */
+static void snap_walk(snapshot_walker *w) {
+    snapshot_bytes(w, &E, sizeof E);
+    snapshot_check(w, E.nhandlers >= 0 && E.nhandlers <= EV_MAX_HANDLERS, "%d handlers", E.nhandlers);
+    for (int i = 0; i < E.nhandlers; i++)
+        snapshot_check(w, E.handlers[i].ntypes <= 8, "handler %d has %u types", i, E.handlers[i].ntypes);
+    snapshot_check(w, E.nstandard >= 0 && E.nstandard <= MAX_STANDARD, "%d standard handlers",
+                   E.nstandard);
+    snapshot_check(w, E.qhead >= 0 && E.qhead < EV_MAX_EVENTS && E.qcount >= 0 && E.qcount <= EV_MAX_EVENTS,
+                   "the queue at %d, %d long", E.qhead, E.qcount);
+    for (int k = 0; k < E.qcount; k++) {
+        int idx = E.queue[(E.qhead + k) % EV_MAX_EVENTS];
+        snapshot_check(w, idx >= 0 && idx < EV_MAX_EVENTS, "event %d in the queue", idx);
+    }
+    snapshot_check(w, E.nheld >= 0 && E.nheld <= MAX_HELD && E.ngame_down >= 0 && E.ngame_down <= MAX_HELD,
+                   "%d modifiers and %d keys down", E.nheld, E.ngame_down);
+    for (int i = 0; i < EV_MAX_TIMERS; i++)
+        snapshot_check(w, isfinite(E.timers[i].next) && isfinite(E.timers[i].interval) &&
+                              E.timers[i].interval >= 0,
+                       "timer %d", i);
+    SNAPSHOT_HOST(w, E.exit_after);
+    SNAPSHOT_HOST(w, E.present);
+    SNAPSHOT_HOST(w, E.poll);
+    SNAPSHOT_HOST(w, E.screenshot);
+    SNAPSHOT_HOST(w, E.cursor);
+    SNAPSHOT_HOST(w, E.replay_key);
+    uint8_t modal = E.modal != NULL;
+    SNAPSHOT_REBUILT(w, E.modal);
+    snapshot_bytes(w, &modal, sizeof modal);
+    if (snapshot_loading(w))
+        E.modal = modal ? dialogs_modal_sink() : NULL;
+    /* The quit's deadline is on this process's wall clock, which a replay
+       that comes to the same place again, or another process, doesn't
+       share: what the game sees is whether a quit is pending. */
+    uint8_t quitting = E.quit_deadline > 0;
+    SNAPSHOT_REBUILT(w, E.quit_deadline);
+    snapshot_bytes(w, &quitting, sizeof quitting);
+    if (snapshot_loading(w))
+        E.quit_deadline = quitting ? wall_seconds() + QUIT_GRACE_SECONDS : 0;
 }
+SNAPSHOT_STATE_WALK(E, snap_walk)
+
+/* Outside E, which a snapshot copies back whole, since they describe the
+   host stack (events.h): the run loop's frame in progress (a dispatch, or
+   its own pump) and whether its guest call is running, and the frame the
+   next run loop resumes, with the call that stands for that guest call. */
+static ev_frame *loop_frame;
+static bool loop_in_call;
+static struct {
+    bool on;
+    ev_frame frame;
+    uint32_t (*call)(void);
+} resume_at;
 
 static double now_seconds(void) { return misc_seconds(); }
 
@@ -233,6 +289,69 @@ void events_request_quit(void) {
 
 bool events_quit_requested(void) { return E.quit_deadline > 0; }
 
+/* ---- host input, recorded and replayed ---- */
+
+void events_set_replay_key(void (*fn)(int scancode, bool down, bool repeat)) { E.replay_key = fn; }
+
+void events_host_key(int scancode, bool down, bool repeat) {
+    if (replay_playing()) {
+        if (E.replay_key)
+            E.replay_key(scancode, down, repeat);
+        return;
+    }
+    replay_log(REPLAY_KEY, (uint32_t[3]){(uint32_t)scancode, down, repeat});
+    events_post_key(scancode, down, repeat);
+}
+
+void events_host_mouse(int x, int y, bool down) {
+    if (replay_playing())
+        return;
+    replay_log(REPLAY_MOUSE, (uint32_t[3]){(uint32_t)x, (uint32_t)y, down});
+    events_post_mouse(x, y, down);
+}
+
+void events_host_text(const char *utf8) {
+    if (replay_playing())
+        return;
+    events_post_text(replay_log_text(utf8));
+}
+
+void events_host_activation(bool active) {
+    if (replay_playing())
+        return;
+    replay_log(REPLAY_FOCUS, (uint32_t[1]){active});
+    events_post_activation(active);
+}
+
+void events_host_quit(void) {
+    if (replay_playing()) {
+        log_msg("replay: stopped by the host");
+        exit(0);
+    }
+    replay_log(REPLAY_QUIT, NULL);
+    events_request_quit();
+}
+
+/* A replay's input, where the recording polled the host for it. */
+static void replay_input(void) {
+    uint32_t v[3];
+    char text[REPLAY_MAX_TEXT];
+    for (;;) {
+        if (replay_take(REPLAY_KEY, v))
+            events_post_key((int)v[0], v[1], v[2]);
+        else if (replay_take(REPLAY_MOUSE, v))
+            events_post_mouse((int)v[0], (int)v[1], v[2]);
+        else if (replay_take_text(text, sizeof text))
+            events_post_text(text);
+        else if (replay_take(REPLAY_FOCUS, v))
+            events_post_activation(v[0]);
+        else if (replay_take(REPLAY_QUIT, v))
+            events_request_quit();
+        else if (!replay_take_mark() && !replay_take_play()) /* only logged */
+            return;
+    }
+}
+
 /* ---- setup ---- */
 
 void events_init(void) {
@@ -314,39 +433,77 @@ static bool handles(const ev_handler *h, const ev_event *e) {
     return false;
 }
 
-/* Runs the handlers on target for event idx, newest first. */
-static int32_t run_handlers(uint32_t target, int idx) {
-    for (int i = E.nhandlers - 1; i >= 0; i--) {
+/* Runs the handlers on target for event idx, newest first. With f (the run
+   loop's dispatch), notes in it the handler running and the loop depth
+   call_out hides; resuming, goes straight back into handler f->handler,
+   through the resume call, and on from there. */
+static int32_t run_handlers(uint32_t target, int idx, ev_frame *f, bool resuming) {
+    for (int i = resuming ? f->handler : E.nhandlers - 1; i >= 0; i--) {
         const ev_handler *h = &E.handlers[i];
-        if (h->target != target || !handles(h, &E.events[idx]))
-            continue;
-        uint32_t args[3] = {TAG_NEXT_HANDLER, event_ref(idx), h->user_data};
-        int32_t r = (int32_t)call_out(h->handler, 3, args);
+        int32_t r;
+        if (resuming) {
+            resuming = false;
+            loop_in_call = true;
+            E.loop_depth = 0; /* as call_out has it */
+            r = (int32_t)resume_at.call();
+            E.loop_depth = f->loop_depth;
+            loop_in_call = false;
+        } else {
+            if (h->target != target || !handles(h, &E.events[idx]))
+                continue;
+            uint32_t args[3] = {TAG_NEXT_HANDLER, event_ref(idx), h->user_data};
+            if (!f) {
+                r = (int32_t)call_out(h->handler, 3, args);
+            } else {
+                f->handler = i;
+                f->loop_depth = E.loop_depth;
+                loop_in_call = true;
+                r = (int32_t)call_out(h->handler, 3, args);
+                loop_in_call = false;
+            }
+        }
         if (r != EV_NOT_HANDLED_ERR)
             return r;
     }
     return EV_NOT_HANDLED_ERR;
 }
 
-static int32_t dispatch(int idx, uint32_t target) {
+/* Sends event idx to target's chain. With f, the run loop's dispatch: notes
+   its frames in f for events_loop_frame, or resuming, rebuilds them from f
+   instead of starting. */
+static int32_t dispatch_framed(int idx, uint32_t target, ev_frame *f, bool resuming) {
     uint32_t chain[2];
-    int n = 0;
-    if (target == EV_DISPATCHER_TARGET) {
-        if (E.focus_window && E.events[idx].cls == EV_CLASS_KEYBOARD)
-            chain[n++] = E.focus_window;
-        chain[n++] = EV_APPLICATION_TARGET;
-    } else if (is_window_target(target)) {
-        chain[n++] = target;
-        chain[n++] = EV_APPLICATION_TARGET;
-    } else if (target == EV_APPLICATION_TARGET) {
-        chain[n++] = EV_APPLICATION_TARGET;
+    int n = 0, from = 0;
+    if (resuming) {
+        memcpy(chain, f->chain, sizeof chain);
+        n = f->nchain;
+        from = f->link;
     } else {
-        trap_crash("SendEventToEventTarget: 0x%08x is not an event target", target);
+        if (target == EV_DISPATCHER_TARGET) {
+            if (E.focus_window && E.events[idx].cls == EV_CLASS_KEYBOARD)
+                chain[n++] = E.focus_window;
+            chain[n++] = EV_APPLICATION_TARGET;
+        } else if (is_window_target(target)) {
+            chain[n++] = target;
+            chain[n++] = EV_APPLICATION_TARGET;
+        } else if (target == EV_APPLICATION_TARGET) {
+            chain[n++] = EV_APPLICATION_TARGET;
+        } else {
+            trap_crash("SendEventToEventTarget: 0x%08x is not an event target", target);
+        }
+        E.events[idx].refs++; /* handlers may release their own references */
+        if (f) {
+            f->slot = idx;
+            memcpy(f->chain, chain, sizeof chain);
+            f->nchain = n;
+        }
     }
-    E.events[idx].refs++; /* handlers may release their own references */
     int32_t r = EV_NOT_HANDLED_ERR;
-    for (int i = 0; i < n && r == EV_NOT_HANDLED_ERR; i++)
-        r = run_handlers(chain[i], idx);
+    for (int i = from; i < n && r == EV_NOT_HANDLED_ERR; i++) {
+        if (f)
+            f->link = i;
+        r = run_handlers(chain[i], idx, f, resuming && i == from);
+    }
     if (r == EV_NOT_HANDLED_ERR && E.events[idx].cls == EV_CLASS_APPLE_EVENT) {
         handle_apple_event(); /* the standard application handler's job */
         r = 0;
@@ -355,12 +512,62 @@ static int32_t dispatch(int idx, uint32_t target) {
     return r;
 }
 
+static int32_t dispatch(int idx, uint32_t target) { return dispatch_framed(idx, target, NULL, false); }
+
+bool events_loop_frame(ev_frame *f) {
+    if (!loop_frame || !loop_in_call)
+        return false;
+    *f = *loop_frame;
+    return true;
+}
+
+void events_resume_loop(const ev_frame *f, uint32_t (*call)(void)) {
+    /* The frame came with a snapshot, maybe from a file: it must be one
+       the run loop could be in, given the state that came with it. */
+    bool ok;
+    if (f->timer >= 0)
+        ok = f->timer < EV_MAX_TIMERS && E.timers[f->timer].active && E.timers[f->timer].running;
+    else
+        ok = f->timer == -1 && f->slot >= 0 && f->slot < EV_MAX_EVENTS && E.events[f->slot].refs >= 2 &&
+             f->nchain >= 1 && f->nchain <= 2 && f->link >= 0 && f->link < f->nchain &&
+             f->handler >= 0 && f->handler < E.nhandlers &&
+             E.handlers[f->handler].target == f->chain[f->link];
+    if (!ok || f->loop_depth < 1)
+        fatal("events: a snapshot's run loop frame (timer %d, slot %d, link %d of %d, handler %d) "
+              "isn't one it could be in",
+              f->timer, f->slot, f->link, f->nchain, f->handler);
+    resume_at.on = true;
+    resume_at.frame = *f;
+    resume_at.call = call;
+}
+
+void events_unwind(void) {
+    loop_frame = NULL;
+    loop_in_call = false;
+    resume_at.on = false;
+}
+
 /* ---- timers ---- */
 
 static uint32_t timer_ref(int i) { return TAG_TIMER + (uint32_t)i; }
 
-static void fire_due_timers(void) {
-    for (int i = 0; i < EV_MAX_TIMERS; i++) {
+/* Fires the timers that are due. With f (the run loop's own pump), notes in
+   it the timer whose callback runs and the loop depth call_out hides;
+   resuming, goes straight back into timer f->timer's callback, through the
+   resume call, and on from there. */
+static void fire_due_timers(ev_frame *f, bool resuming) {
+    for (int i = resuming ? f->timer : 0; i < EV_MAX_TIMERS; i++) {
+        if (resuming) { /* due, and running, as the snapshot has it */
+            resuming = false;
+            loop_in_call = true;
+            E.loop_depth = 0; /* as call_out has it */
+            resume_at.call();
+            E.loop_depth = f->loop_depth;
+            loop_in_call = false;
+            f->timer = -1;
+            E.timers[i].running = false;
+            continue;
+        }
         if (!E.timers[i].active || E.timers[i].running || now_seconds() < E.timers[i].next)
             continue;
         if (E.timers[i].interval > 0) {
@@ -372,7 +579,16 @@ static void fire_due_timers(void) {
         }
         uint32_t args[2] = {timer_ref(i), E.timers[i].data};
         E.timers[i].running = true;
+        if (f) {
+            f->timer = i;
+            f->loop_depth = E.loop_depth;
+            loop_in_call = true;
+        }
         call_out(E.timers[i].proc, 2, args);
+        if (f) {
+            loop_in_call = false;
+            f->timer = -1;
+        }
         E.timers[i].running = false;
     }
 }
@@ -387,48 +603,75 @@ static void wait_until_next_timer(void) {
 
 /* ---- the pump ---- */
 
-static void run_script(void) {
-    script_action a;
-    while (script_next(misc_ticks(), &a)) {
-        switch (a.kind) {
-        case SCRIPT_KEY_DOWN: events_post_key(a.scancode, true, false); break;
-        case SCRIPT_KEY_UP: events_post_key(a.scancode, false, false); break;
-        case SCRIPT_SCREENSHOT:
-            if (!E.screenshot || !E.screenshot(a.path))
-                log_msg("script: can't write the screenshot %s", a.path);
-            break;
-        case SCRIPT_QUIT: events_request_quit(); break;
-        case SCRIPT_CLICK:
-            events_post_mouse(a.x, a.y, true);
-            events_post_mouse(a.x, a.y, false);
-            break;
-        case SCRIPT_TYPE: events_post_text(a.path); break;
-        case SCRIPT_BLUR: events_post_activation(false); break;
-        case SCRIPT_FOCUS: events_post_activation(true); break;
-        }
+static void run_action(const script_action *a) {
+    switch (a->kind) {
+    case SCRIPT_KEY_DOWN: events_host_key(a->scancode, true, false); break;
+    case SCRIPT_KEY_UP: events_host_key(a->scancode, false, false); break;
+    case SCRIPT_SCREENSHOT:
+        if (!E.screenshot || !E.screenshot(a->path))
+            log_msg("script: can't write the screenshot %s", a->path);
+        break;
+    case SCRIPT_QUIT: events_host_quit(); break;
+    case SCRIPT_CLICK:
+        events_host_mouse(a->x, a->y, true);
+        events_host_mouse(a->x, a->y, false);
+        break;
+    case SCRIPT_TYPE: events_host_text(a->path); break;
+    case SCRIPT_BLUR: events_host_activation(false); break;
+    case SCRIPT_FOCUS: events_host_activation(true); break;
+    case SCRIPT_MARK: replay_mark(); break;
     }
 }
 
-void events_pump(void) {
-    if (E.poll)
-        E.poll();
-    run_script();
-    sound_pump();
-    if (E.loop_depth > 0)
-        fire_due_timers();
+static void run_script(uint32_t now) {
+    script_action a;
+    while (script_next(now, &a))
+        run_action(&a);
+}
+
+bool events_script_rest(void) {
+    script_action a;
+    if (!script_next(UINT32_MAX, &a))
+        return false;
+    run_action(&a);
+    return true;
+}
+
+/* What the pump does after the timers. */
+static void pump_rest(void) {
     if (E.cursor)
         E.cursor(misc_cursor_visible() || E.modal);
     if (E.present)
         E.present();
-    if (E.exit_after > 0 && misc_ticks() >= (uint32_t)E.exit_after) {
+    uint32_t now = misc_ticks(); /* sound callbacks and timers may have moved a fixed clock on */
+    if (E.exit_after > 0 && now >= (uint32_t)E.exit_after) {
         log_msg("exiting after %ld ticks (LOONY_EXIT_AFTER)", E.exit_after);
         exit(0);
     }
-    if (E.quit_deadline > 0 && wall_seconds() >= E.quit_deadline) {
+    if (E.quit_deadline > 0 && !replay_playing() && wall_seconds() >= E.quit_deadline) {
         log_msg("the game didn't quit within %.0f seconds; exiting", QUIT_GRACE_SECONDS);
         exit(0);
     }
 }
+
+/* The pump, with f for the run loop's own (fire_due_timers). */
+static void pump(ev_frame *f) {
+    /* The clock is read at the same places whatever the script and
+       LOONY_EXIT_AFTER, so a replay's steps don't depend on them. */
+    replay_step();
+    uint32_t now = misc_ticks();
+    if (E.poll)
+        E.poll();
+    replay_input();
+    play_pump(E.app_active);
+    run_script(now);
+    sound_pump();
+    if (E.loop_depth > 0)
+        fire_due_timers(f, false);
+    pump_rest();
+}
+
+void events_pump(void) { pump(NULL); }
 
 /* ---- guest calls: handlers ---- */
 
@@ -656,18 +899,49 @@ static void h_remove_event_loop_timer(void) {
     trap_return(0);
 }
 
+/* The run loop's own pump: notes its frame for events_loop_frame while a
+   timer's callback runs, or resuming, goes back into the callback f
+   describes and finishes the pump. */
+static void loop_pump(ev_frame *f, bool resuming) {
+    loop_frame = f;
+    if (resuming) {
+        fire_due_timers(f, true);
+        pump_rest();
+    } else {
+        pump(f);
+    }
+    loop_frame = NULL;
+}
+
+static void loop_dispatch(int idx, ev_frame *f, bool resuming) {
+    loop_frame = f;
+    dispatch_framed(idx, EV_DISPATCHER_TARGET, f, resuming);
+    loop_frame = NULL;
+    release(&E.events[idx]);
+}
+
 /* Fires timers and dispatches queued events to the dispatcher target until
    QuitApplicationEventLoop. */
 static void h_run_application_event_loop(void) {
-    E.quit = false;
-    E.loop_depth++;
+    ev_frame f = {.timer = -1};
+    bool resuming = resume_at.on; /* back into a frame, mid-loop (snapshot_reenter) */
+    resume_at.on = false;
+    if (resuming) {
+        f = resume_at.frame;
+        if (f.timer >= 0)
+            loop_pump(&f, true);
+        else
+            loop_dispatch(f.slot, &f, true);
+    } else {
+        E.quit = false;
+        E.loop_depth++;
+    }
     while (!E.quit) {
-        events_pump();
-        while (E.qcount > 0 && !E.quit) {
-            int idx = dequeue_at(0);
-            dispatch(idx, EV_DISPATCHER_TARGET);
-            release(&E.events[idx]);
-        }
+        if (!resuming)
+            loop_pump(&f, false);
+        resuming = false;
+        while (E.qcount > 0 && !E.quit)
+            loop_dispatch(dequeue_at(0), &f, false);
         if (!E.quit)
             wait_until_next_timer();
     }

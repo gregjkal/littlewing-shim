@@ -9,9 +9,11 @@
 #include "cf.h"
 #include "cgimage.h"
 #include "events.h"
+#include "files.h"
 #include "font.h"
 #include "guest_mem.h"
 #include "keymap.h"
+#include "snapshot.h"
 #include "memmgr.h"
 #include "misc.h"
 #include "nib.h"
@@ -113,15 +115,79 @@ static struct {
     qd_palette pal;
     char *nibs[NIB_MAX]; /* open IBNibRefs: objects.xib's text */
     size_t nib_len[NIB_MAX];
+    nib_file *parsed[NIB_MAX]; /* each one's text, parsed */
 } G;
+
+/* A snapshot's walk (snapshot.h): G with the screens saved under its
+   dialogs and its nibs' text (read_file's, with a NUL after it), since
+   closing a dialog or a nib frees them; LOONY_AUTO_ALERTS is the host's. front points into G itself, so it
+   is walked as an index (-1 for none): a snapshot kept in a recording is
+   put back in another process, where G is somewhere else. A nib's parsed
+   tree is host memory full of pointers, so it isn't in a snapshot: it is
+   parsed again from the text put back. */
+static void snap_walk(snapshot_walker *w) {
+    if (snapshot_loading(w)) {
+        for (int i = 0; i < DLG_MAX; i++)
+            free(G.d[i].saved);
+        for (int i = 0; i < NIB_MAX; i++) {
+            free(G.nibs[i]);
+            nib_free(G.parsed[i]);
+        }
+    }
+    snapshot_bytes(w, &G, sizeof G);
+    int32_t front = G.front ? (int32_t)(G.front - G.d) : -1;
+    SNAPSHOT_REBUILT(w, G.front);
+    snapshot_bytes(w, &front, sizeof front);
+    if (snapshot_loading(w)) {
+        if (front < -1 || front >= DLG_MAX)
+            fatal("snapshot: the front dialog is %d, of %d", (int)front, DLG_MAX);
+        G.front = front >= 0 ? &G.d[front] : NULL;
+    }
+    SNAPSHOT_HOST(w, G.auto_alerts);
+    for (int i = 0; i < 4; i++)
+        snapshot_check(w, memchr(G.param[i], 0, sizeof G.param[i]) != NULL, "ParamText %d", i);
+    for (int i = 0; i < DLG_MAX; i++) {
+        dialog *d = &G.d[i];
+        snapshot_check(w, memchr(d->name, 0, sizeof d->name) && d->nitems >= 0 && d->nitems <= MAX_ITEMS,
+                       "dialog %d's name or its %d items", i, d->nitems);
+        for (int k = 0; k < d->nitems; k++)
+            snapshot_check(w, d->items[k].len >= 0 && d->items[k].len <= TEXT_CAP,
+                           "dialog %d's item %d is %d bytes", i, k, d->items[k].len);
+        snapshot_check(w, !d->open || (d->focus >= -1 && d->focus < d->nitems && d->pressed >= -1 &&
+                              d->pressed < d->nitems && d->hit >= 0 && d->hit <= d->nitems &&
+                              d->default_item >= 0 && d->default_item <= d->nitems &&
+                              d->cancel_item >= 0 && d->cancel_item <= d->nitems),
+                       "dialog %d's items in use", i);
+        /* The screen under it, where screen() can put it back. */
+        qd_rect r = d->saved_r, sc = d->saved_screen;
+        snapshot_check(w, !d->saved || ((d->saved_depth == 8 || d->saved_depth == 16 || d->saved_depth == 32) &&
+                                        r.left < r.right && r.top < r.bottom && r.left >= sc.left &&
+                                        r.top >= sc.top && r.right <= sc.right && r.bottom <= sc.bottom),
+                       "dialog %d's saved screen", i);
+        SNAPSHOT_OWNED(w, d->saved,
+                       (size_t)rect_w(d->saved_r) * (size_t)(d->saved_depth / 8) *
+                           (size_t)rect_h(d->saved_r));
+    }
+    for (int i = 0; i < NIB_MAX; i++) {
+        snapshot_check(w, !G.nibs[i] || G.nib_len[i] < (64u << 20), "nib %d is %zu bytes", i, G.nib_len[i]);
+        SNAPSHOT_OWNED(w, G.nibs[i], G.nib_len[i] + 1);
+        snapshot_check(w, !G.nibs[i] || !G.nibs[i][G.nib_len[i]], "nib %d's text", i);
+        SNAPSHOT_REBUILT(w, G.parsed[i]);
+        if (snapshot_loading(w) && G.nibs[i])
+            G.parsed[i] = nib_parse(G.nibs[i], G.nib_len[i]);
+    }
+}
+SNAPSHOT_STATE_WALK(G, snap_walk)
 
 static void window_changed(uint32_t window, qd_window_change change, uint32_t arg);
 
 void dialogs_init(void) {
     for (int i = 0; i < DLG_MAX; i++)
         free(G.d[i].saved);
-    for (int i = 0; i < NIB_MAX; i++)
+    for (int i = 0; i < NIB_MAX; i++) {
         free(G.nibs[i]);
+        nib_free(G.parsed[i]);
+    }
     memset(&G, 0, sizeof G);
     const char *a = getenv("LOONY_AUTO_ALERTS");
     G.auto_alerts = a && strcmp(a, "1") == 0;
@@ -147,12 +213,16 @@ static void append(char *out, size_t cap, const uint8_t *text, size_t n) {
     out[o] = '\0';
 }
 
-/* Like append, but keeps carriage returns and spells the result in ASCII. */
-static void display_text(const item *it, char *out, size_t cap) {
+/* An item's text as drawn: spelled in ASCII, with carriage returns kept.
+   Only a DITL's items (an Alert's or a DLOG's) get the ParamText
+   substitutions; a nib's text and a standard alert's are shown as they are. */
+static void display_text(const dialog *d, const item *it, char *out, size_t cap) {
+    bool params = d->kind == KIND_DLOG || d->kind == KIND_ALERT;
     uint8_t mac[1024];
     size_t o = 0;
     for (int i = 0; i < it->len && o < sizeof mac; i++) {
-        if (it->text[i] == '^' && i + 1 < it->len && it->text[i + 1] >= '0' && it->text[i + 1] <= '3') {
+        if (params && it->text[i] == '^' && i + 1 < it->len && it->text[i + 1] >= '0' &&
+            it->text[i + 1] <= '3') {
             for (const char *p = G.param[it->text[++i] - '0']; *p && o < sizeof mac; p++)
                 mac[o++] = (uint8_t)*p;
         } else {
@@ -371,7 +441,7 @@ static void draw_item(dialog *d, int i) {
         return;
     qd_rect r = offset(it->r, d->bounds.left, d->bounds.top);
     char text[1024];
-    display_text(it, text, sizeof text);
+    display_text(d, it, text, sizeof text);
     switch (it->type) {
     case DLG_ITEM_BUTTON:
     case DLG_ITEM_CHECKBOX:
@@ -511,6 +581,17 @@ static void press(dialog *d, int item1) {
         d->hit = item1;
 }
 
+/* The next visible edit text after item from, going forward (step 1) or
+   back (step nitems - 1) and coming round to from itself; -1 if none. */
+static int next_field(const dialog *d, int from, int step) {
+    for (int k = 1, i = from; k <= d->nitems; k++) {
+        i = (i + step) % d->nitems;
+        if (d->items[i].type == DLG_ITEM_EDIT_TEXT && !d->items[i].hidden)
+            return i;
+    }
+    return -1;
+}
+
 static void set_focus(dialog *d, int i) {
     int old = d->focus;
     d->focus = i;
@@ -545,14 +626,12 @@ static void on_key(uint32_t vkey, uint8_t chr, uint32_t mods) {
     } else if (vkey == VK_ESCAPE || (cmd && vkey == VK_PERIOD)) {
         press(d, d->cancel_item);
     } else if (vkey == VK_TAB) {
-        int n = d->nitems, step = (mods & KM_SHIFT) ? n - 1 : 1;
-        for (int k = 1, i = d->focus; k <= n && d->focus >= 0; k++) {
-            i = (i + step) % n;
-            if (d->items[i].type == DLG_ITEM_EDIT_TEXT && !d->items[i].hidden) {
-                set_focus(d, i);
-                break;
-            }
-        }
+        /* with no focus (every field hidden, then one shown), the first or last */
+        bool back = (mods & KM_SHIFT) != 0;
+        int from = d->focus >= 0 ? d->focus : back ? 0 : d->nitems - 1;
+        int i = next_field(d, from, back ? d->nitems - 1 : 1);
+        if (i >= 0)
+            set_focus(d, i);
     } else if (vkey == VK_DELETE) {
         type_char(d, 0x08);
     } else if (!cmd && chr >= 0x20 && chr < 0x7F) {
@@ -596,6 +675,8 @@ static void on_text(const char *utf8) {
 
 static const ev_modal_sink sink = {on_key, on_mouse, on_text};
 
+const ev_modal_sink *dialogs_modal_sink(void) { return &sink; }
+
 /* Takes the input until an item is hit; returns it (1-based). */
 static int run_modal(dialog *d) {
     dialog *outer = G.front;
@@ -617,20 +698,20 @@ static int run_modal(dialog *d) {
 static const char *button_title(dialog *d, int item1, char *buf, size_t cap) {
     buf[0] = '\0';
     if (item1 >= 1 && item1 <= d->nitems)
-        display_text(&d->items[item1 - 1], buf, cap);
+        display_text(d, &d->items[item1 - 1], buf, cap);
     return buf;
 }
 
 /* Alert(id, filter) and StopAlert. The default item: bit 3 of the first
    stage's 4 bits in the ALRT's stages word picks item 2, otherwise item 1.
-   A program with no resources at all (MONSTER FAIR) still calls Alert on
-   a few paths it kept from Mac OS 9; there Alert finds no ALRT and returns
-   -1, as Mac OS does, showing nothing. In a classic game a missing ALRT is
-   a bug in the shim, so it crashes. */
+   A Mac OS X game (MONSTER FAIR, which has no resources) still calls Alert
+   on a few paths it kept from Mac OS 9; there Alert finds no ALRT and
+   returns -1, as Mac OS does, showing nothing. In a classic game a missing
+   ALRT is a bug in the shim, so it crashes, even with no resources at all. */
 static void h_alert(void) {
     int16_t id = (int16_t)trap_arg(0);
     rsrc_entry *alrt = rsrc_find(FOURCC('A', 'L', 'R', 'T'), id);
-    if (!alrt && rsrc_total() == 0) {
+    if (!alrt && gm_current_layout() == GM_LAYOUT_MACHO) {
         log_msg("Alert %d: the game has no ALRT %d; returning -1, as Mac OS does", id, id);
         trap_return((uint32_t)-1);
         return;
@@ -678,10 +759,13 @@ static void h_param_text(void) {
 
 static uint32_t ref_of(dialog *d) { return DLG_TAG_BASE + 16u * (uint32_t)(d - G.d); }
 
-static dialog *need_dialog(const char *call, uint32_t ref) {
+/* The open dialog of the given kind (KIND_DLOG or KIND_STD_ALERT) that ref
+   names; anything else crashes. */
+static dialog *need_dialog(const char *call, uint32_t ref, dialog_kind kind) {
     uint32_t i = (ref - DLG_TAG_BASE) / 16u;
-    if (ref < DLG_TAG_BASE || (ref - DLG_TAG_BASE) % 16u || i >= DLG_MAX || !G.d[i].open || G.d[i].kind != KIND_DLOG)
-        trap_crash("%s: 0x%08x is not a dialog", call, ref);
+    if (ref < DLG_TAG_BASE || (ref - DLG_TAG_BASE) % 16u || i >= DLG_MAX || !G.d[i].open ||
+        G.d[i].kind != kind)
+        trap_crash("%s: 0x%08x is not a %s", call, ref, kind == KIND_STD_ALERT ? "standard alert" : "dialog");
     return &G.d[i];
 }
 
@@ -737,7 +821,7 @@ static void h_modal_dialog(void) {
    *item, Rect *box). Text items' handles hold their current text; other
    items have none. */
 static void h_get_dialog_item(void) {
-    dialog *d = need_dialog("GetDialogItem", trap_arg(0));
+    dialog *d = need_dialog("GetDialogItem", trap_arg(0), KIND_DLOG);
     int16_t n = (int16_t)trap_arg(1);
     if (n < 1 || n > d->nitems)
         trap_crash("GetDialogItem: DLOG %d has no item %d", d->res_id, n);
@@ -764,7 +848,7 @@ static void h_get_dialog_item_text(void) {
 }
 
 static void h_dispose_dialog(void) {
-    dialog *d = need_dialog("DisposeDialog", trap_arg(0));
+    dialog *d = need_dialog("DisposeDialog", trap_arg(0), KIND_DLOG);
     close_dialog(d);
 }
 
@@ -778,13 +862,47 @@ static void fourcc_text(uint32_t c, char out[5]) {
     out[4] = '\0';
 }
 
-/* Sets an item's text from UTF-8, with line breaks as carriage returns (the
-   8x8 font is ASCII, which is all the game's dialogs use). */
+/* Sets an item's text from Mac Roman (a CFString's text, cf.h), with line
+   breaks as carriage returns. */
 static void set_text(item *it, const char *s) {
     int n = 0;
     for (; s[n] && n < TEXT_CAP; n++)
         it->text[n] = s[n] == '\n' ? '\r' : (uint8_t)s[n];
     it->len = n;
+}
+
+/* The code point of the UTF-8 sequence at *p, which moves past it; -1 for
+   a malformed one (*p then moves one byte on). */
+static int32_t utf8_next(const uint8_t **p) {
+    const uint8_t *s = *p;
+    int more = s[0] < 0x80 ? 0 : s[0] < 0xC0 ? -1 : s[0] < 0xE0 ? 1 : s[0] < 0xF0 ? 2 : s[0] < 0xF8 ? 3 : -1;
+    int32_t c = s[0] & (0x7F >> (more > 0 ? more + 1 : 0));
+    (*p)++;
+    if (more < 0)
+        return -1;
+    for (int i = 1; i <= more; i++) {
+        if ((s[i] & 0xC0) != 0x80)
+            return -1;
+        c = c << 6 | (s[i] & 0x3F);
+    }
+    if (more > 0 && c < (int32_t[]){0x80, 0x800, 0x10000}[more - 1])
+        return -1; /* overlong: a character spelled longer than it needs */
+    *p = s + more + 1;
+    return c;
+}
+
+/* Sets an item's text from a nib's UTF-8, converted to Mac Roman as the
+   Dialog Manager's text is, '?' standing for a character it doesn't have. */
+static void set_nib_text(item *it, const char *utf8) {
+    char mac[TEXT_CAP + 1];
+    int n = 0;
+    for (const uint8_t *p = (const uint8_t *)utf8; *p && n < TEXT_CAP;) {
+        int32_t c = utf8_next(&p);
+        int m = c < 0 ? -1 : files_unicode_to_mac((uint32_t)c);
+        mac[n++] = m < 0 ? '?' : (char)m;
+    }
+    mac[n] = '\0';
+    set_text(it, mac);
 }
 
 static uint32_t control_ref(dialog *d, int index) {
@@ -860,7 +978,9 @@ static void window_changed(uint32_t window, qd_window_change change, uint32_t ar
 }
 
 /* CreateNibReference(CFStringRef name, IBNibRef *out) -> OSStatus. Reads
-   <bundle>/Contents/Resources/English.lproj/<name>.nib/objects.xib. */
+   <bundle>/Contents/Resources/English.lproj/<name>.nib/objects.xib and
+   parses it, once for every window made from it. XML that can't be read
+   makes CreateWindowFromNib crash, saying why. */
 static void h_create_nib_reference(void) {
     const char *name = cf_string_text("CreateNibReference", trap_arg(0));
     uint32_t out = trap_arg(1);
@@ -884,6 +1004,7 @@ static void h_create_nib_reference(void) {
     }
     G.nibs[slot] = (char *)xml;
     G.nib_len[slot] = len;
+    G.parsed[slot] = nib_parse(G.nibs[slot], len);
     gm_w32(out, NIB_TAG_BASE + 16u * (uint32_t)slot);
     trap_return(NO_ERR);
 }
@@ -898,7 +1019,9 @@ static int need_nib(const char *call, uint32_t ref) {
 static void h_dispose_nib_reference(void) {
     int i = need_nib("DisposeNibReference", trap_arg(0));
     free(G.nibs[i]);
+    nib_free(G.parsed[i]);
     G.nibs[i] = NULL;
+    G.parsed[i] = NULL;
 }
 
 /* CreateWindowFromNib(IBNibRef, CFStringRef name, WindowRef *out) ->
@@ -911,7 +1034,7 @@ static void h_create_window_from_nib(void) {
     const char *name = cf_string_text("CreateWindowFromNib", trap_arg(1));
     static nib_window w;
     char err[256];
-    if (!nib_read_window(G.nibs[slot], G.nib_len[slot], name, &w, err, sizeof err))
+    if (!nib_file_window(G.parsed[slot], name, &w, err, sizeof err))
         trap_crash("CreateWindowFromNib: %s", err);
     if (w.ncontrols > MAX_ITEMS)
         trap_crash("CreateWindowFromNib: %s has %d controls (at most %d supported)", name, w.ncontrols,
@@ -935,7 +1058,7 @@ static void h_create_window_from_nib(void) {
         switch (c->kind) {
         case NIB_BUTTON:
             it->type = DLG_ITEM_BUTTON;
-            set_text(it, c->title);
+            set_nib_text(it, c->title);
             if (c->command == CMD_OK && !d->default_item)
                 d->default_item = i + 1;
             if (c->command == CMD_CANCEL && !d->cancel_item)
@@ -947,7 +1070,7 @@ static void h_create_window_from_nib(void) {
             break;
         case NIB_STATIC_TEXT:
             it->type = DLG_ITEM_STATIC_TEXT;
-            set_text(it, c->title);
+            set_nib_text(it, c->title);
             break;
         case NIB_EDIT_TEXT:
             it->type = DLG_ITEM_EDIT_TEXT;
@@ -975,7 +1098,7 @@ static void h_create_window_from_nib(void) {
 static void send_item_command(dialog *d, int i) {
     item *it = &d->items[i];
     char title[TEXT_CAP + 1], cmd[5];
-    display_text(it, title, sizeof title);
+    display_text(d, it, title, sizeof title);
     fourcc_text(it->command, cmd);
     log_msg("nib window %s: command '%s' (%s)", d->name, cmd, title);
     if (it->command)
@@ -1072,7 +1195,9 @@ static void h_get_control_by_id(void) {
     find_control(d, gm_r32(id), (int32_t)gm_r32(id + 4), trap_arg(2));
 }
 
-/* HIViewSetVisible(HIViewRef, Boolean) -> OSStatus */
+/* HIViewSetVisible(HIViewRef, Boolean) -> OSStatus. Hiding the edit text
+   with the focus moves it on to the next visible one, as Tab would, or
+   leaves none. */
 static void h_hiview_set_visible(void) {
     int i;
     dialog *d = need_control("HIViewSetVisible", trap_arg(0), &i);
@@ -1081,6 +1206,8 @@ static void h_hiview_set_visible(void) {
     bool hidden = (trap_arg(1) & 0xFF) == 0;
     if (d->items[i].hidden != hidden) {
         d->items[i].hidden = hidden;
+        if (hidden && d->focus == i)
+            d->focus = next_field(d, i, 1);
         if (d->shown)
             draw_all(d);
     }
@@ -1173,7 +1300,7 @@ static int add_alert_text(dialog *d, int y, const char *s) {
     it->type = DLG_ITEM_STATIC_TEXT;
     set_text(it, s);
     char text[1024];
-    display_text(it, text, sizeof text);
+    display_text(d, it, text, sizeof text);
     int w = STD_ALERT_W - 2 * STD_ALERT_MARGIN, starts[32], lens[32];
     int lines = font_wrap(text, w, 32, starts, lens);
     it->r = (qd_rect){(int16_t)y, STD_ALERT_MARGIN, (int16_t)(y + lines * FONT_LINE + 2),
@@ -1212,20 +1339,16 @@ static void h_create_standard_alert(void) {
 /* RunStandardAlert(DialogRef, ModalFilterUPP, DialogItemIndex *hit) ->
    OSStatus. Runs the alert, writes the item hit, and disposes of it. */
 static void h_run_standard_alert(void) {
-    uint32_t ref = trap_arg(0), i = (ref - DLG_TAG_BASE) / 16u;
-    if (ref < DLG_TAG_BASE || (ref - DLG_TAG_BASE) % 16u || i >= DLG_MAX || !G.d[i].open ||
-        G.d[i].kind != KIND_STD_ALERT)
-        trap_crash("RunStandardAlert: 0x%08x is not a standard alert", ref);
+    dialog *d = need_dialog("RunStandardAlert", trap_arg(0), KIND_STD_ALERT);
     if (trap_arg(1))
         trap_crash("RunStandardAlert: filter procs are not supported");
-    dialog *d = &G.d[i];
     char text[1024] = "";
     for (int k = 1; k < d->nitems; k++) {
         char part[TEXT_CAP + 1];
-        display_text(&d->items[k], part, sizeof part);
-        if (text[0])
-            append(text, sizeof text, (const uint8_t *)" | ", 3);
-        append(text, sizeof text, (const uint8_t *)part, strlen(part));
+        display_text(d, &d->items[k], part, sizeof part);
+        if (text[0]) /* part is shown as is: ParamText is for DITL items */
+            strlcat(text, " | ", sizeof text);
+        strlcat(text, part, sizeof text);
     }
     int hit;
     if (G.auto_alerts) {

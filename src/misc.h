@@ -22,13 +22,17 @@ void misc_set_system_version(uint32_t v);
    depend on host speed. */
 void misc_init(void);
 
-/* Called by ExitToShell before the process exits; it may not return (main
+/* Called by misc_exit before the process exits; it may not return (main
    uses it to go back to the picker). */
 void misc_set_exit_hook(void (*fn)(void));
 
 /* What ExitToShell and the C library's exit do: logs why, runs the exit
    hook, and exits with status. */
 _Noreturn void misc_exit(const char *why, int status);
+
+/* What crt1 does when a Mac OS X program's main returns: exit(status),
+   logged as "main returned <status>" before the exit hook runs. */
+_Noreturn void misc_main_returned(int32_t status);
 
 /* Seconds since 1970 (UTC). On the virtual clock, the same calendar as
    GetDateTime: 2003-01-01 00:00:00 plus the virtual time. */
@@ -42,7 +46,8 @@ void misc_sleep_us(uint64_t us);
 /* True if the virtual clock is in use. */
 bool misc_fixed_clock(void);
 
-/* Waits: sleeps on the real clock, or advances the virtual one. */
+/* Waits: sleeps on the real clock, or advances the virtual one. Returns at
+   once on a replay. */
 void misc_wait(double seconds);
 
 /* Notes that the game polled for time or events without waiting (see
@@ -54,6 +59,10 @@ uint32_t misc_ticks(void);
 
 /* Seconds since misc_init(), with microsecond resolution. */
 double misc_seconds(void);
+
+/* The clock as the game last saw it, without reading it again: on a
+   recording or a replay (replay.h), reading the clock is a step. */
+double misc_last_seconds(void);
 
 /* False while HideCursor has hidden the cursor (until InitCursor). */
 bool misc_cursor_visible(void);

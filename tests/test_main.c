@@ -1,12 +1,16 @@
 #include "test.h"
 
 #include <fcntl.h>
+#include <limits.h>
+#include <mach-o/dyld.h>
+#include <poll.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define MAX_TESTS 512
+#define MAX_TESTS 1024
 
 static struct {
     const char *name;
@@ -97,38 +101,159 @@ void test_remove_tree(const char *path) {
         fprintf(stderr, "can't remove %s\n", path);
 }
 
-int test_run_child(void (*fn)(void *), void *arg, char *out, size_t outlen) {
-    int fds[2];
-    if (pipe(fds) != 0)
-        return -2;
-    fflush(stdout);
-    fflush(stderr);
-    pid_t pid = fork();
-    if (pid == 0) {
-        close(fds[0]);
-        dup2(fds[1], STDERR_FILENO);
+/* The output of the last KEPT_CHILDREN children test_run_child (or
+   test_run_children) ran in the current test, each its last KEPT_BYTES: printed if the test fails, since
+   a test keeps a child's output in a buffer it checks, and a crash, an
+   unexpected status or a check of what a child said otherwise leaves
+   nothing to go on. */
+#define KEPT_CHILDREN 8
+#define KEPT_BYTES 16384
+static struct {
+    char *text;
+    int status;
+} kept[KEPT_CHILDREN];
+static int nkept;
+
+static void keep_child(const char *out, int status) {
+    size_t len = strlen(out);
+    const char *from = len > KEPT_BYTES ? out + len - KEPT_BYTES : out;
+    int slot = nkept++ % KEPT_CHILDREN;
+    free(kept[slot].text);
+    kept[slot].text = strdup(from);
+    kept[slot].status = status;
+}
+
+static void print_kept(void) {
+    int first = nkept > KEPT_CHILDREN ? nkept - KEPT_CHILDREN : 0;
+    for (int k = first; k < nkept; k++) {
+        int slot = k % KEPT_CHILDREN;
+        fprintf(stderr, "  child %d of the test exited with status %d; its output%s:\n%s\n", k + 1,
+                kept[slot].status, strlen(kept[slot].text) >= KEPT_BYTES ? ", the end of it" : "",
+                kept[slot].text ? kept[slot].text : "");
+    }
+}
+
+static void forget_kept(void) {
+    for (int k = 0; k < KEPT_CHILDREN; k++) {
+        free(kept[k].text);
+        kept[k].text = NULL;
+    }
+    nkept = 0;
+}
+
+#define MAX_CHILDREN 16 /* test_run_children's most at once */
+
+void test_run_children(size_t n, void (*fn)(void *), void *const *args, char *const *outs,
+                       size_t outlen, int *codes) {
+    if (n > MAX_CHILDREN) {
+        fprintf(stderr, "test_run_children: %zu children, at most %d\n", n, MAX_CHILDREN);
+        abort();
+    }
+    pid_t pids[MAX_CHILDREN];
+    size_t lens[MAX_CHILDREN];
+    struct pollfd polls[MAX_CHILDREN];
+    for (size_t i = 0; i < n; i++) {
+        lens[i] = 0;
+        outs[i][0] = '\0';
+        pids[i] = -1;
+        polls[i] = (struct pollfd){.fd = -1, .events = POLLIN};
+        int fds[2];
+        if (pipe(fds) != 0)
+            continue;
+        fflush(stdout);
+        fflush(stderr);
+        pids[i] = fork();
+        if (pids[i] == 0) {
+            close(fds[0]);
+            dup2(fds[1], STDERR_FILENO);
+            close(fds[1]);
+            fn(args[i]);
+            _exit(0);
+        }
         close(fds[1]);
-        fn(arg);
-        _exit(0);
+        if (pids[i] < 0)
+            close(fds[0]);
+        else
+            polls[i].fd = fds[0];
     }
-    close(fds[1]);
-    size_t len = 0;
+    /* Read each as it writes, so none waits on a full pipe; poll skips the
+       ones closed (fd -1). */
     for (;;) {
-        char tmp[4096];
-        ssize_t n = read(fds[0], tmp, sizeof tmp);
-        if (n <= 0)
+        bool open = false;
+        for (size_t i = 0; i < n; i++)
+            open |= polls[i].fd >= 0;
+        if (!open || poll(polls, (nfds_t)n, -1) < 0)
             break;
-        size_t take = (size_t)n;
-        if (take > outlen - 1 - len)
-            take = outlen - 1 - len;
-        memcpy(out + len, tmp, take);
-        len += take;
+        for (size_t i = 0; i < n; i++) {
+            if (polls[i].fd < 0 || !(polls[i].revents & (POLLIN | POLLHUP)))
+                continue;
+            char tmp[4096];
+            ssize_t got = read(polls[i].fd, tmp, sizeof tmp);
+            if (got <= 0) {
+                close(polls[i].fd);
+                polls[i].fd = -1;
+                continue;
+            }
+            size_t take = (size_t)got;
+            if (take > outlen - 1 - lens[i])
+                take = outlen - 1 - lens[i];
+            memcpy(outs[i] + lens[i], tmp, take);
+            lens[i] += take;
+            outs[i][lens[i]] = '\0';
+        }
     }
-    out[len] = '\0';
-    close(fds[0]);
-    int status = 0;
-    waitpid(pid, &status, 0);
-    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    for (size_t i = 0; i < n; i++) {
+        if (pids[i] < 0) {
+            codes[i] = -2;
+            continue;
+        }
+        int status = 0;
+        waitpid(pids[i], &status, 0);
+        codes[i] = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+        keep_child(outs[i], codes[i]);
+    }
+}
+
+int test_run_child(void (*fn)(void *), void *arg, char *out, size_t outlen) {
+    int code;
+    test_run_children(1, fn, (void *const[]){arg}, (char *const[]){out}, outlen, &code);
+    return code;
+}
+
+/* Set in the forked child a test runs in (start_test). */
+static bool forked;
+
+static void exec_self(void *filter) {
+    char self[PATH_MAX];
+    uint32_t size = sizeof self;
+    if (_NSGetExecutablePath(self, &size) == 0)
+        execl(self, "loony_tests", "-j", "1", (const char *)filter, (char *)NULL);
+    _exit(127);
+}
+
+bool test_rerun_unforked(const char *name) {
+    if (!forked)
+        return false;
+    char filter[256];
+    snprintf(filter, sizeof filter, "=%s", name);
+    static char out[65536];
+    int status = test_run_child(exec_self, filter, out, sizeof out);
+    if (status == 0 && strstr(out, "\n1 passed, 0 failed"))
+        return true;
+    fputs(out, stderr);
+    if (status == 0 && strstr(out, "0 failed, 1 skipped"))
+        cur_skipped = true;
+    else
+        test_fail(__FILE__, __LINE__, "the test failed in a process of its own");
+    return true;
+}
+
+/* Whether a test is picked: a filter is a part of its name, or with a
+   leading '=', the whole name. */
+static bool selected(const char *name, const char *filter) {
+    if (!filter)
+        return true;
+    return filter[0] == '=' ? strcmp(name, filter + 1) == 0 : strstr(name, filter) != NULL;
 }
 
 /* A test's exit status when it runs in a child of its own. */
@@ -153,7 +278,10 @@ static pid_t start_test(int i, const char *data_dir, const char *out_path) {
     mkdir(dir, 0700);
     setenv("LOONY_DATA_DIR", dir, 1);
     cur_failed = cur_skipped = false;
+    forked = true;
     tests[i].fn();
+    if (cur_failed)
+        print_kept();
     fflush(stdout);
     fflush(stderr);
     _exit(cur_failed ? CHILD_FAILED : cur_skipped ? CHILD_SKIPPED : CHILD_PASSED);
@@ -184,7 +312,7 @@ int main(int argc, char **argv) {
             char *end;
             jobs = strtol(n, &end, 10);
             if (!*n || *end || jobs < 1) {
-                fprintf(stderr, "usage: loony_tests [-j N] [substring]\n");
+                fprintf(stderr, "usage: loony_tests [-j N] [substring | =name]\n");
                 return 2;
             }
         } else {
@@ -201,13 +329,16 @@ int main(int argc, char **argv) {
     const char *failures[MAX_TESTS];
     if (jobs == 1) {
         for (int i = 0; i < ntests; i++) {
-            if (filter && !strstr(tests[i].name, filter))
+            if (!selected(tests[i].name, filter))
                 continue;
             cur_failed = cur_skipped = false;
+            forget_kept();
             fprintf(stderr, "%s\n", tests[i].name);
             tests[i].fn();
-            if (cur_failed)
+            if (cur_failed) {
+                print_kept();
                 failures[failed++] = tests[i].name;
+            }
             else if (cur_skipped)
                 skipped++;
             else
@@ -220,7 +351,7 @@ int main(int argc, char **argv) {
         for (;;) {
             while (running < jobs && next < ntests) {
                 int i = next++;
-                if (filter && !strstr(tests[i].name, filter))
+                if (!selected(tests[i].name, filter))
                     continue;
                 char out_path[1100];
                 snprintf(out_path, sizeof out_path, "%s/%d.out", data_dir, i);

@@ -9,6 +9,7 @@
 #include <xlocale.h>
 
 #include "guest_mem.h"
+#include "snapshot.h"
 #include "memmgr.h"
 #include "misc.h"
 #include "trap.h"
@@ -35,6 +36,14 @@ static struct {
     } keymgr[KEYMGR_KEYS];
     int nkeymgr;
 } L;
+
+/* A snapshot's walk (snapshot.h): the program's path is the host's. */
+static void snap_walk(snapshot_walker *w) {
+    snapshot_bytes(w, &L, sizeof L);
+    SNAPSHOT_HOST(w, L.exe_path);
+    snapshot_check(w, L.nkeymgr >= 0 && L.nkeymgr <= KEYMGR_KEYS, "%d keymgr keys", L.nkeymgr);
+}
+SNAPSHOT_STATE_WALK(L, snap_walk)
 
 static uint32_t new_object(uint32_t size) {
     uint32_t p = mm_new_ptr(size, true);
@@ -183,6 +192,7 @@ static void h_strcat(void) {
 static struct {
     uint32_t base, size, cmp;
 } Q;
+SNAPSHOT_STATE(Q)
 
 static bool before_or_equal(uint32_t i, uint32_t j) {
     uint32_t args[2] = {Q.base + i * Q.size, Q.base + j * Q.size};

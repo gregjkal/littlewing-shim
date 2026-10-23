@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "guest_mem.h"
+#include "snapshot.h"
 #include "misc.h"
 #include "qd.h"
 #include "trap.h"
@@ -21,6 +22,12 @@ static struct {
     int nmodes;
     int captured; /* captures not yet released */
 } G;
+
+static void snap_walk(snapshot_walker *w) {
+    snapshot_bytes(w, &G, sizeof G);
+    snapshot_check(w, G.nmodes >= 0 && G.nmodes <= MAX_MODES, "%d modes", G.nmodes);
+}
+SNAPSHOT_STATE_WALK(G, snap_walk)
 
 void cgdisplay_init(void) {
     memset(&G, 0, sizeof G);

@@ -79,6 +79,29 @@ TEST(trap_nested_guest_call) {
     CHECK_EQ(cpu_gpr(1), sp);
 }
 
+/* Each trap entry is counted at its guest_call depth: the import the outer
+   code calls at depth 1, the one the inner code calls from a handler's own
+   guest_call at depth 2. */
+TEST(trap_counts_entries_by_depth) {
+    static const char *const names[] = {"CallInner", "TestDouble"};
+    setup(names, 2);
+    emit_caller(INNER, TV_IMP1);
+    trap_register("CallInner", h_call_inner);
+    trap_register("TestDouble", h_double);
+    const uint64_t *counts;
+    CHECK_EQ(trap_depth_counts(&counts), TRAP_DEPTH_COUNTS);
+    CHECK_EQ(counts[1], 0);
+    uint32_t arg = 5;
+    CHECK_EQ(guest_call(TV_OUTER, 1, &arg), 12);
+    CHECK_EQ(counts[0], 0);
+    CHECK_EQ(counts[1], 1);
+    CHECK_EQ(counts[2], 1);
+    CHECK_EQ(counts[3], 0);
+    CHECK_EQ(guest_call(TV_OUTER, 1, &arg), 12);
+    CHECK_EQ(counts[1], 2);
+    CHECK_EQ(counts[2], 2);
+}
+
 static void child_unimplemented(void *unused) {
     (void)unused;
     static const char *const names[] = {"FooBar"};

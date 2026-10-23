@@ -1,0 +1,50 @@
+Backported from unicorn-engine/unicorn dev, for 2.1.4, without its tests.
+Remove when Unicorn is updated to a release that has it (2.2.0).
+
+From 6a790682977d8af4a5fccd2ca57408d38a26260f Mon Sep 17 00:00:00 2001
+From: Davidson Francis <davidsondfgl@gmail.com>
+Date: Mon, 6 Jul 2026 23:36:02 -0300
+Subject: [PATCH] cputlb: set TLB_NOTDIRTY flag only for executable pages
+ (#2337)
+
+Contrary to Qemu, Unicorn sets the TLB_NOTDIRTY flag unconditionally for
+all pages (since cpu_physical_memory_is_clean() always returns true).
+
+Due to this, on every write that hits a freshly filled TLB entry, Unicorn
+is forced to go through the slow-path (e.g., helper_be_stl_mmu() for
+PPC), which is much slower than the fast path, emitted as inline JITted
+code.
+
+Since TLB_NOTDIRTY's only purpose is to trap the first write to a page
+that has TBs translated from it (so notdirty_write() can invalidate those
+stale translations) there is no reason to set this flag for all pages,
+but only for executable pages.
+
+This was observed on a 512x512 int matmul running an unmodified AIX
+PPC32 [1] binary: 30s before this patch, ~8s after.
+
+[1]: https://github.com/Theldus/aix-user
+
+Signed-off-by: Davidson Francis <davidsondfgl@gmail.com>
+diff --git a/qemu/accel/tcg/cputlb.c b/qemu/accel/tcg/cputlb.c
+index 3d0bebd33e..2daf7d19c9 100644
+--- a/qemu/accel/tcg/cputlb.c
++++ b/qemu/accel/tcg/cputlb.c
+@@ -870,11 +870,16 @@ void tlb_set_page_with_attrs(CPUState *cpu, target_ulong vaddr,
+         /*
+          * Computing is_clean is expensive; avoid all that unless
+          * the page is actually writable.
++         *
++         * The usage of TLB_NOTDIRTY only matters for pages that
++         * could contain TBs, so set TLB_NOTDIRTY only for executable
++         * memory sections.
+          */
+         if (prot & PAGE_WRITE) {
+             if (section->readonly) {
+                 write_address |= TLB_DISCARD_WRITE;
+-            } else if (cpu_physical_memory_is_clean(iotlb)) {
++            } else if ((section->mr->perms & UC_PROT_EXEC) &&
++                       cpu_physical_memory_is_clean(iotlb)) {
+                 write_address |= TLB_NOTDIRTY;
+             }
+         }

@@ -19,6 +19,7 @@ struct cpu_context {
 static uc_engine *uc;
 static uc_hook mem_hook, intr_hook, write_hook;
 static cpu_write_fn write_fn;
+static int nexec_hooks;
 static bool mem_fault;
 static uc_mem_type mem_fault_type;
 static uint32_t mem_fault_addr;
@@ -99,11 +100,17 @@ void cpu_init(void) {
     reg_write(UC_PPC_REG_MSR, reg_read(UC_PPC_REG_MSR) | MSR_FP);
 }
 
+void cpu_no_exec(uint32_t begin, uint32_t end) {
+    if (begin < end)
+        check(uc_mem_protect(uc, begin, end - begin, UC_PROT_READ | UC_PROT_WRITE), "protect memory");
+}
+
 void cpu_shutdown(void) {
     if (uc)
         uc_close(uc);
     uc = NULL;
     write_fn = NULL;
+    nexec_hooks = 0;
 }
 
 static void on_write(uc_engine *engine, uc_mem_type type, uint64_t address, int size,
@@ -125,6 +132,23 @@ void cpu_watch_writes(uint32_t begin, uint32_t end, cpu_write_fn fn) {
     check(uc_hook_add(uc, &write_hook, UC_HOOK_MEM_WRITE, (void *)on_write, NULL, begin, end),
           "add write hook");
     write_fn = fn;
+}
+
+static void on_exec(uc_engine *engine, uint64_t address, uint32_t size, void *user) {
+    (void)engine;
+    (void)address;
+    (void)size;
+    ((cpu_exec_fn)user)();
+}
+
+void cpu_on_exec(uint32_t addr, cpu_exec_fn fn) {
+    if (nexec_hooks == CPU_MAX_EXEC_HOOKS)
+        fatal("cpu_on_exec: more than %d hooks", CPU_MAX_EXEC_HOOKS);
+    uc_hook h;
+    /* A bounded code hook is only compiled into the instructions it covers. */
+    check(uc_hook_add(uc, &h, UC_HOOK_CODE, (void *)on_exec, (void *)fn, addr, addr),
+          "add code hook");
+    nexec_hooks++;
 }
 
 uint32_t cpu_gpr(int n) { return (uint32_t)reg_read(UC_PPC_REG_0 + n); }
@@ -203,4 +227,92 @@ void cpu_restore(cpu_context *ctx) {
     check(uc_context_restore(uc, ctx->uc_ctx), "context restore");
     uc_context_free(ctx->uc_ctx);
     free(ctx);
+}
+
+size_t cpu_context_size(void) { return uc_context_size(uc); }
+
+/* The copies go through the CPU, so only Unicorn's public calls touch a
+   context: load src, save it where it goes, and put the CPU back. */
+void cpu_context_copy(cpu_context *dst, const cpu_context *src) {
+    uc_context *live;
+    check(uc_context_alloc(uc, &live), "context alloc");
+    check(uc_context_save(uc, live), "context save");
+    check(uc_context_restore(uc, src->uc_ctx), "context restore");
+    check(uc_context_save(uc, dst->uc_ctx), "context save");
+    check(uc_context_restore(uc, live), "context restore");
+    uc_context_free(live);
+}
+
+cpu_context *cpu_context_clone(const cpu_context *ctx) {
+    cpu_context *copy = cpu_save();
+    cpu_context_copy(copy, ctx);
+    return copy;
+}
+
+void cpu_context_free(cpu_context *ctx) {
+    if (ctx) {
+        uc_context_free(ctx->uc_ctx);
+        free(ctx);
+    }
+}
+
+void cpu_load(const cpu_context *ctx) {
+    check(uc_context_restore(uc, ctx->uc_ctx), "context restore");
+}
+
+/* The machine's registers, in the order cpu_context_same and
+   cpu_context_regs take them: the general ones, the floating-point ones,
+   then these. */
+static const struct {
+    int id;
+    const char *name;
+} named[] = {{UC_PPC_REG_PC, "pc"},   {UC_PPC_REG_LR, "lr"},   {UC_PPC_REG_CTR, "ctr"},
+             {UC_PPC_REG_CR, "cr"},   {UC_PPC_REG_XER, "xer"}, {UC_PPC_REG_MSR, "msr"},
+             {UC_PPC_REG_FPSCR, "fpscr"}};
+_Static_assert(64 + sizeof named / sizeof named[0] == CPU_REGS, "CPU_REGS");
+
+static int reg_id(int i) {
+    return i < 32 ? UC_PPC_REG_0 + i : i < 64 ? UC_PPC_REG_FPR0 + i - 32 : named[i - 64].id;
+}
+
+/* Register i of ctx, the 32-bit ones in their low half. */
+static uint64_t reg_of(const cpu_context *ctx, int i) {
+    uint64_t v = 0;
+    check(uc_context_reg_read(ctx->uc_ctx, reg_id(i), &v), "context read");
+    return i < 32 || i >= 64 ? (uint32_t)v : v;
+}
+
+bool cpu_context_same(const cpu_context *a, const cpu_context *b, char *what, size_t cap) {
+    for (int i = 0; i < CPU_REGS; i++) {
+        uint64_t va = reg_of(a, i), vb = reg_of(b, i);
+        if (va == vb)
+            continue;
+        char name[8];
+        if (i < 64)
+            snprintf(name, sizeof name, "%s%d", i < 32 ? "r" : "f", i % 32);
+        snprintf(what, cap, "%s 0x%0*llx, not 0x%0*llx", i < 64 ? name : named[i - 64].name,
+                 i >= 32 && i < 64 ? 16 : 8, (unsigned long long)va, i >= 32 && i < 64 ? 16 : 8,
+                 (unsigned long long)vb);
+        return false;
+    }
+    return true;
+}
+
+void cpu_context_regs(const cpu_context *ctx, uint64_t regs[CPU_REGS]) {
+    for (int i = 0; i < CPU_REGS; i++)
+        regs[i] = reg_of(ctx, i);
+}
+
+cpu_context *cpu_context_with_regs(const uint64_t regs[CPU_REGS]) {
+    cpu_context *ctx = cpu_save();
+    for (int i = 0; i < CPU_REGS; i++) {
+        uint64_t v = regs[i];
+        check(uc_context_reg_write(ctx->uc_ctx, reg_id(i), &v), "context write");
+    }
+    return ctx;
+}
+
+void cpu_flush_translations(void) {
+    check(uc_ctl_flush_tb(uc), "flush translations");
+    check(uc_ctl_flush_tlb(uc), "flush TLB");
 }
