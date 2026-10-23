@@ -34,13 +34,30 @@
 #define CARD3_LEFT0 ((PICKER_W - 3 * ART3_W - 2 * CARD3_GAP) / 2)
 #define CARD3_TOP 180
 #define NAME3_TOP 392
+/* Four cards: smaller still, two rows of two. */
+#define ART4_W 224
+#define ART4_H 168
+#define CARD4_GAP 64
+#define CARD4_LEFT0 ((PICKER_W - 2 * ART4_W - CARD4_GAP) / 2)
+#define CARD4_TOP0 108
+#define CARD4_ROW 216 /* from one row's card top to the next */
+#define NAME4_TOP0 284
+#define ICON_SIZE 128 /* icns 128's largest image, it32 */
 
 static const qd_rgb BLACK = {0, 0, 0}, GOLD = {0xFFFF, 0xCCCC, 0x3333}, DARK = {0x3333, 0x3333, 0x3333},
                     PLAIN = {0x2222, 0x2222, 0x2222}, WHITE = {0xFFFF, 0xFFFF, 0xFFFF},
                     GRAY = {0x8888, 0x8888, 0x8888};
 
-/* Where card i's art goes: two cards side by side, or three smaller ones. */
+/* Cards in a row: all of them, except four, which take two rows. */
+static int columns(int n) { return n == 4 ? 2 : n; }
+
+/* Where card i's art goes: two cards side by side, three smaller ones, or
+   four in two rows. */
 static qd_rect card(int n, int i) {
+    if (n == 4) {
+        int left = CARD4_LEFT0 + i % 2 * (ART4_W + CARD4_GAP), top = CARD4_TOP0 + i / 2 * CARD4_ROW;
+        return (qd_rect){(int16_t)top, (int16_t)left, (int16_t)(top + ART4_H), (int16_t)(left + ART4_W)};
+    }
     if (n == 3) {
         int left = CARD3_LEFT0 + i * (ART3_W + CARD3_GAP);
         return (qd_rect){CARD3_TOP, (int16_t)left, CARD3_TOP + ART3_H, (int16_t)(left + ART3_W)};
@@ -49,7 +66,9 @@ static qd_rect card(int n, int i) {
     return (qd_rect){CARD_TOP, (int16_t)left, CARD_TOP + PICKER_ART_H, (int16_t)(left + PICKER_ART_W)};
 }
 
-static int name_top(int n) { return n == 3 ? NAME3_TOP : NAME_TOP; }
+static int name_top(int n, int i) {
+    return n == 4 ? NAME4_TOP0 + i / 2 * CARD4_ROW : n == 3 ? NAME3_TOP : NAME_TOP;
+}
 
 static qd_pixels pixels(uint8_t *base, int w, int h) {
     qd_pixels p = {base, (uint32_t)w * 4, {0, 0, (int16_t)h, (int16_t)w}, 32, NULL};
@@ -116,7 +135,7 @@ void picker_draw(const picker_entry *e, int n, int selected, uint8_t *screen) {
         for (const char *p = e[i].game->title; *p && k + 1 < sizeof name; p++)
             name[k++] = (char)toupper((unsigned char)*p);
         name[k] = '\0';
-        draw_text(&s, left + w / 2, name_top(n), name, 2, i == selected ? WHITE : GRAY);
+        draw_text(&s, left + w / 2, name_top(n, i), name, 2, i == selected ? WHITE : GRAY);
     }
     draw_text(&s, PICKER_W / 2, HINT_TOP, "RETURN TO PLAY - CMD-Q TO QUIT", 2, GRAY);
 }
@@ -124,7 +143,7 @@ void picker_draw(const picker_entry *e, int n, int selected, uint8_t *screen) {
 int picker_hit(int n, int x, int y) {
     for (int i = 0; i < n && i < PICKER_MAX; i++) {
         qd_rect c = card(n, i);
-        if (x >= c.left - BORDER && x < c.right + BORDER && y >= c.top - BORDER && y < name_top(n) + 2 * FONT_H)
+        if (x >= c.left - BORDER && x < c.right + BORDER && y >= c.top - BORDER && y < name_top(n, i) + 2 * FONT_H)
             return i;
     }
     return -1;
@@ -134,6 +153,8 @@ int picker_key(int n, int selected, int scancode, bool *choose) {
     switch (scancode) {
     case SDL_SCANCODE_LEFT: return selected > 0 ? selected - 1 : 0;
     case SDL_SCANCODE_RIGHT: return selected < n - 1 ? selected + 1 : n - 1;
+    case SDL_SCANCODE_UP: return selected >= columns(n) ? selected - columns(n) : selected;
+    case SDL_SCANCODE_DOWN: return selected + columns(n) < n ? selected + columns(n) : selected;
     case SDL_SCANCODE_RETURN:
     case SDL_SCANCODE_KP_ENTER: *choose = true; return selected;
     default: return selected;
@@ -145,6 +166,68 @@ int picker_initial(const picker_entry *e, int n, const char *last_id) {
         if (strcmp(e[i].game->id, last_id) == 0)
             return i;
     return 0;
+}
+
+/* Unpacks one 128x128 plane of an it32 image: a byte n below 0x80 copies
+   the next n + 1 bytes, any other repeats the next byte n - 0x80 + 3 times.
+   *at moves past what was read. False if the data ends first or a run
+   overflows the plane. */
+static bool unpack_plane(const uint8_t *p, size_t len, size_t *at, uint8_t *plane) {
+    size_t k = 0;
+    while (k < ICON_SIZE * ICON_SIZE) {
+        if (*at >= len)
+            return false;
+        uint8_t b = p[(*at)++];
+        size_t run = b < 0x80 ? (size_t)b + 1 : (size_t)b - 0x80 + 3;
+        if (k + run > ICON_SIZE * ICON_SIZE || *at + (b < 0x80 ? run : 1) > len)
+            return false;
+        if (b < 0x80) {
+            memcpy(plane + k, p + *at, run);
+            *at += run;
+        } else {
+            memset(plane + k, p[(*at)++], run);
+        }
+        k += run;
+    }
+    return true;
+}
+
+/* A classic game's card when it has no title picture: the 128x128 image of
+   its icns 128 (it32, with the t8mk mask), centered on the plain card
+   color. False if the icon or its mask is missing or malformed. */
+static bool icns_card(const uint8_t *p, size_t len, uint8_t *art) {
+    const uint8_t *rgb = NULL, *mask = NULL;
+    size_t rgb_len = 0;
+    for (size_t at = 8; at + 8 <= len;) {
+        uint32_t type = rd_be32(p + at), n = rd_be32(p + at + 4);
+        if (n < 8 || n > len - at)
+            return false;
+        if (type == FOURCC('i', 't', '3', '2')) {
+            rgb = p + at + 8;
+            rgb_len = n - 8;
+        } else if (type == FOURCC('t', '8', 'm', 'k') && n - 8 == ICON_SIZE * ICON_SIZE) {
+            mask = p + at + 8;
+        }
+        at += n;
+    }
+    static uint8_t planes[3][ICON_SIZE * ICON_SIZE];
+    size_t at = 4; /* it32 starts with four zero bytes */
+    if (!rgb || !mask || rgb_len < at)
+        return false;
+    for (int c = 0; c < 3; c++)
+        if (!unpack_plane(rgb, rgb_len, &at, planes[c]))
+            return false;
+    qd_pixels a = pixels(art, PICKER_ART_W, PICKER_ART_H);
+    qd_fill(&a, a.bounds, a.bounds, PLAIN);
+    int left = (PICKER_ART_W - ICON_SIZE) / 2, top = (PICKER_ART_H - ICON_SIZE) / 2;
+    for (int y = 0; y < ICON_SIZE; y++)
+        for (int x = 0; x < ICON_SIZE; x++) {
+            size_t i = (size_t)y * ICON_SIZE + (size_t)x;
+            uint8_t *d = art + ((size_t)(top + y) * PICKER_ART_W + (size_t)(left + x)) * 4;
+            for (int c = 0; c < 3; c++)
+                d[1 + c] = (uint8_t)((planes[c][i] * mask[i] + 0x22 * (255 - mask[i]) + 127) / 255);
+        }
+    return true;
 }
 
 bool picker_load_art(const char *exe_path, uint8_t *art, char *err, size_t errlen) {
@@ -163,10 +246,14 @@ bool picker_load_art(const char *exe_path, uint8_t *art, char *err, size_t errle
         free(fork);
         return false;
     }
-    rsrc_entry *e = rsrc_find(FOURCC('P', 'I', 'C', 'T'), 800);
+    rsrc_entry *e = rsrc_find(FOURCC('P', 'I', 'C', 'T'), 800), *icon = rsrc_find(FOURCC('i', 'c', 'n', 's'), 128);
     qd_rect frame;
     uint8_t *full = NULL;
-    if (!e || !pict_frame(rsrc_data(e), e->len, &frame) || rect_w(frame) != ART_SRC_W ||
+    if (!e && icon) {
+        ok = icns_card(rsrc_data(icon), icon->len, art);
+        if (!ok)
+            snprintf(err, errlen, "%s: icns 128 has no 128x128 icon", exe_path);
+    } else if (!e || !pict_frame(rsrc_data(e), e->len, &frame) || rect_w(frame) != ART_SRC_W ||
         rect_h(frame) != ART_SRC_H) {
         snprintf(err, errlen, "%s has no 512x384 PICT 800", exe_path);
     } else if (!(full = calloc((size_t)ART_SRC_W * ART_SRC_H, 4))) {

@@ -119,6 +119,47 @@ TEST(picker_left_and_right_move_across_three) {
     CHECK_EQ(picker_hit(3, 300, 100), -1);      /* the heading */
 }
 
+/* Four games: 224x168 cards in two rows of two, at x = 144 and 432, from
+   y = 108 and 324. */
+TEST(picker_draws_four_cards_in_two_rows) {
+    picker_entry e[4] = {{game_at(0), solid_art(0xFF, 0, 0)}, {game_at(1), NULL}, {game_at(2), NULL},
+                         {game_at(3), solid_art(0, 0, 0xFF)}};
+    picker_draw(e, 4, 3, screen);
+    free(e[0].art);
+    free(e[3].art);
+    CHECK_EQ(px(144, 108)[1], 0xFF);              /* the first card's art, reduced */
+    CHECK_EQ(px(144 + 223, 108 + 167)[1], 0xFF);
+    CHECK_EQ(px(144 + 224, 200)[1], 0x33);        /* its gray border */
+    CHECK_EQ(px(432 + 100, 108 + 80)[1], 0x22);   /* the second: a plain card, beside it */
+    CHECK_EQ(px(144 + 100, 324 + 80)[1], 0x22);   /* the third: a plain card, under the first */
+    CHECK_EQ(px(432 + 100, 324 + 80)[3], 0xFF);   /* the fourth card's art */
+    CHECK_EQ(px(432 - 2, 400)[1], 0xFF);          /* gold border: the fourth is selected */
+    CHECK_EQ(px(432 - 2, 400)[2], 0xCC);
+    CHECK_EQ(px(400, 200)[1], 0);                 /* black between the columns */
+    CHECK_EQ(px(200, 318)[1], 0);                 /* and between the rows */
+}
+
+TEST(picker_keys_move_across_and_between_rows_of_four) {
+    bool choose = false;
+    CHECK_EQ(picker_key(4, 0, SDL_SCANCODE_RIGHT, &choose), 1);
+    CHECK_EQ(picker_key(4, 1, SDL_SCANCODE_RIGHT, &choose), 2); /* on to the next row */
+    CHECK_EQ(picker_key(4, 3, SDL_SCANCODE_RIGHT, &choose), 3);
+    CHECK_EQ(picker_key(4, 0, SDL_SCANCODE_DOWN, &choose), 2);
+    CHECK_EQ(picker_key(4, 3, SDL_SCANCODE_UP, &choose), 1);
+    CHECK_EQ(picker_key(4, 1, SDL_SCANCODE_UP, &choose), 1);   /* already on the top row */
+    CHECK_EQ(picker_key(4, 2, SDL_SCANCODE_DOWN, &choose), 2); /* already on the bottom row */
+    CHECK_EQ(picker_key(3, 1, SDL_SCANCODE_DOWN, &choose), 1); /* one row: Up and Down do nothing */
+    CHECK_EQ(picker_key(2, 0, SDL_SCANCODE_UP, &choose), 0);
+    CHECK(!choose);
+    CHECK_EQ(picker_hit(4, 144 + 5, 108 + 5), 0);
+    CHECK_EQ(picker_hit(4, 432 + 223, 108 + 167), 1);
+    CHECK_EQ(picker_hit(4, 144 + 100, 290), 0);  /* the name under a card counts */
+    CHECK_EQ(picker_hit(4, 432 + 100, 506), 3);
+    CHECK_EQ(picker_hit(4, 144 + 100, 330), 2);
+    CHECK_EQ(picker_hit(4, 400, 200), -1);       /* a gap */
+    CHECK_EQ(picker_hit(4, 300, 70), -1);        /* the heading */
+}
+
 /* A 128x128 icon, its left half opaque red and its right half clear. */
 static void write_icon(const char *path, int size) {
     uint8_t *rgba = calloc((size_t)size * (size_t)size, 4);
@@ -156,6 +197,26 @@ TEST(picker_draws_an_icon_card_for_a_bundle_game) {
     CHECK(red);
     CHECK(clear_is_card);
     CHECK(around_is_card);
+}
+
+/* Jinni Zeala has no PICT 800: its card is its icns 128 icon, centered. */
+TEST(picker_art_for_jinni_zeala_is_its_icon) {
+    SKIP_UNLESS_JZ();
+    uint8_t *art = malloc(PICKER_ART_W * PICKER_ART_H * 4);
+    char err[256] = "";
+    bool ok = picker_load_art(test_jz_exe_path(), art, err, sizeof err);
+    const uint8_t *corner = art + ((size_t)5 * PICKER_ART_W + 5) * 4;
+    const uint8_t *icon_corner = art + ((size_t)80 * PICKER_ART_W + 128) * 4; /* clear in the icon */
+    bool around_is_card = corner[1] == 0x22 && corner[2] == 0x22 && corner[3] == 0x22;
+    bool clear_is_card = icon_corner[1] == 0x22 && icon_corner[2] == 0x22 && icon_corner[3] == 0x22;
+    char got[16];
+    snprintf(got, sizeof got, "%08x", fnv1a32(art, PICKER_ART_W * PICKER_ART_H * 4));
+    free(art);
+    CHECK(ok);
+    CHECK_STR(err, "");
+    CHECK(around_is_card);
+    CHECK(clear_is_card);
+    CHECK_STR(got, "df198a6f"); /* the icon shown in the four-game picker */
 }
 
 TEST(picker_art_comes_from_the_games_title_picture) {

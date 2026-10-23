@@ -22,6 +22,10 @@ bool test_cc_present(void);
 const char *test_mf_app(void);
 const char *test_mf_exe_path(void);
 bool test_mf_present(void);
+/* Jinni Zeala's folder: $LOONY_JZ_DIR, or /Applications/Jinni Zeala. */
+const char *test_jz_dir(void);
+const char *test_jz_exe_path(void);
+bool test_jz_present(void);
 /* Whether to run the slow tests (minutes of play each): $LOONY_SLOW_TESTS
    set to anything but empty or 0. */
 bool test_slow_enabled(void);
@@ -126,6 +130,14 @@ bool test_rerun_unforked(const char *name);
     do {                                                                        \
         if (!test_mf_present()) {                                               \
             test_skip("MONSTER FAIR not found");                                \
+            return;                                                             \
+        }                                                                       \
+    } while (0)
+
+#define SKIP_UNLESS_JZ()                                                        \
+    do {                                                                        \
+        if (!test_jz_present()) {                                               \
+            test_skip("Jinni Zeala not found");                                 \
             return;                                                             \
         }                                                                       \
     } while (0)

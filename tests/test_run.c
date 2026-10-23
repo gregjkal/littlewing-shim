@@ -111,6 +111,39 @@ TEST(run_crystal_caliburn_plays_its_opening_headless) {
     free(png);
 }
 
+/* Jinni Zeala 1.2.2, an older build of the classic engine: its own alerts,
+   and the 123 calls it makes all answered. */
+TEST(run_jinni_zeala_plays_its_opening_headless) {
+    SKIP_UNLESS_JZ();
+    const char *t = getenv("TMPDIR");
+    snprintf(shot, sizeof shot, "%s/loony-run-XXXXXX", t && *t ? t : "/tmp");
+    int fd = mkstemp(shot);
+    CHECK(fd >= 0);
+    close(fd);
+    char out[32768];
+    test_tmp_dir(run_data, sizeof run_data);
+    int status = test_run_child(run_loony_headless, (void *)test_jz_dir(), out, sizeof out);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    size_t len = 0;
+    uint8_t *png = read_file(shot, &len);
+    unlink(shot);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "playing Jinni Zeala from");
+    CHECK_CONTAINS(out, "JINNI ZEALA 1.2.2: 123 imports");
+    CHECK_CONTAINS(out, "loony: Alert 128 (answering item 1): Play Demo");
+    CHECK_CONTAINS(out, "LittleWing JINNI ZEALA Pinball");
+    CHECK_CONTAINS(out, "loony: Alert 132 (answering item 1): OK");
+    CHECK_CONTAINS(out, "loony: exiting after 240 ticks (LOONY_EXIT_AFTER)");
+    CHECK(!strstr(out, "unknown selector"));
+    CHECK(!strstr(out, "not supported"));
+    CHECK(png != NULL);
+    CHECK(len > 33);
+    CHECK_EQ(rd_be32(png + 16), 800);
+    CHECK_EQ(rd_be32(png + 20), 600);
+    free(png);
+}
+
 /* Fixed-clock runs are deterministic, so their frames can be compared with
    golden hashes (FNV-1a32 of the PNG file, which is uncompressed). The user
    approved the golden frames on 2026-10-02: the LittleWing logo, the title,
@@ -2522,6 +2555,21 @@ TEST(run_monster_fair_starts_a_game) {
     CHECK_STR(got, "fa497979 e962c1a4");
 }
 
+/* Jinni Zeala has no demo to end: one Esc opens its menu, Up wraps to
+   QUIT, and Return ends the game with ExitToShell, as the other classic
+   games do (no quit Apple Event). */
+TEST(run_jinni_zeala_quits_from_its_own_menu) {
+    SKIP_UNLESS_JZ();
+    char out[32768];
+    int status = run_script_in(test_jz_dir(), "1720 down esc\n1724 up esc\n1800 down up\n1804 up up\n"
+                                              "1900 down return\n1906 up return\n",
+                               NULL, NULL, 0, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: ExitToShell");
+    CHECK(!strstr(out, "quit Apple Event"));
+    CHECK(!strstr(out, "LOONY_EXIT_AFTER"));
+}
+
 TEST(run_reports_missing_game_folder) {
     char out[4096];
     int status = test_run_child(run_loony, (void *)"/nonexistent/loony", out, sizeof out);
@@ -2803,6 +2851,40 @@ TEST(run_the_picker_shows_three_games_and_starts_monster_fair) {
     CHECK_STR(got, "a1fb5138"); /* approved by the user on 2026-10-09 */
 }
 
+/* Four games: two rows of two cards, Jinni Zeala's showing its icon.
+   Picked, it plays; the host's quit (Cmd-Q) quits the app. */
+TEST(run_the_picker_shows_four_games_and_starts_jinni_zeala) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_CC();
+    SKIP_UNLESS_MF();
+    SKIP_UNLESS_JZ();
+    test_tmp_dir(apps_dir, sizeof apps_dir);
+    CHECK(both_games() && link_game("MONSTER FAIR.app", test_mf_app()) && link_game("Jinni Zeala", test_jz_dir()));
+    test_tmp_dir(run_data, sizeof run_data);
+    tmp_name(pick_shot, sizeof pick_shot, "picker");
+    char out[32768];
+    int status = run_picker_with("jinni-zeala", "300 quit\n", out, sizeof out);
+    size_t len = 0;
+    uint8_t *png = read_file(pick_shot, &len);
+    char got[16];
+    snprintf(got, sizeof got, "%08x", png ? fnv1a32(png, len) : 0);
+    free(png);
+    unlink(pick_shot);
+    pick_shot[0] = '\0';
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    test_remove_tree(apps_dir);
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "picker: can't")); /* every card's art loaded */
+    CHECK(!strstr(out, "picker: /"));
+    CHECK_CONTAINS(out, "loony: picker: jinni-zeala");
+    CHECK_CONTAINS(out, "loony: playing Jinni Zeala from ");
+    CHECK_CONTAINS(out, "loony: sending the quit Apple Event");
+    CHECK_CONTAINS(out, "loony: ExitToShell");
+    CHECK(!strstr(out, "back to the picker"));
+    CHECK_STR(got, "29afcc5c");
+}
+
 /* Review Focus 1: the picker remembers the last game in the save root,
    and each game's preferences land in its own folder. */
 static void run_picker_home(void *unused) {
@@ -3024,6 +3106,11 @@ static const regression_start classic_start = {
 static const regression_start mf_start = {
     "2200 down esc\n2204 up esc\n2320 down return\n2326 up return\n2440 down return\n2446 up return\n", 2600};
 
+/* Jinni Zeala: no demo to end, so one Esc opens the menu; Return picks
+   NEW GAME, then 1 PLAYER. */
+static const regression_start jz_start = {
+    "1720 down esc\n1724 up esc\n1900 down return\n1906 up return\n2000 down return\n2006 up return\n", 2100};
+
 static void write_regression_script(const char *path, const regression_start *start, char shots[3][1024]) {
     FILE *f = fopen(path, "w");
     fputs(start->keys, f);
@@ -3117,6 +3204,26 @@ TEST(run_three_minutes_of_crystal_caliburn_match_the_recording) {
        play, 26,780 points. Minute 2: ball 3, 13 seconds of demo time left.
        Minute 3: the time ran out; the attract display shows the copyright. */
     CHECK_STR(got, "18e601a7 bdd31ce9 88136063 f331fd82");
+}
+
+/* The same three minutes in Jinni Zeala, started from its menu. */
+TEST(run_three_minutes_of_jinni_zeala_match_the_recording) {
+    SKIP_UNLESS_SLOW();
+    SKIP_UNLESS_JZ();
+    uint32_t h[3], wh;
+    size_t len;
+    char out[32768];
+    int status = play_regression(test_jz_dir(), &jz_start, h, &wh, &len, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "runtime error"));
+    CHECK_EQ(len, 44 + (size_t)REGRESSION_TICKS * 44100 / 60 * 4);
+    char got[64];
+    snprintf(got, sizeof got, "%08x %08x %08x %08x", h[0], h[1], h[2], wh);
+    /* Frames at minutes 1, 2 and 3, then the recording. Minute 1: ball 1,
+       25,500 points, 80 seconds of tryout time left. Minute 2: ball 3,
+       201,900 points, 36 seconds left. Minute 3: the time ran out, GAME
+       OVER and the best scores. */
+    CHECK_STR(got, "6a123811 e569cd02 18e95058 72ae1f12");
 }
 
 /* Three minutes of MONSTER FAIR, started from its menu, with the same
