@@ -33,13 +33,14 @@ static void restore_apps_dir(void) {
         unsetenv("LOONY_APPS_DIR");
 }
 
-TEST(game_table_knows_four_games) {
-    CHECK_EQ(game_count(), 4);
+TEST(game_table_knows_five_games) {
+    CHECK_EQ(game_count(), 5);
     CHECK_STR(game_at(0)->id, "loony-labyrinth");
     CHECK_STR(game_at(1)->id, "crystal-caliburn");
     CHECK_STR(game_at(2)->id, "monster-fair");
     CHECK_STR(game_at(3)->id, "jinni-zeala");
-    CHECK(game_at(4) == NULL);
+    CHECK_STR(game_at(4)->id, "mad-daedalus");
+    CHECK(game_at(5) == NULL);
     CHECK_EQ(game_at(0)->kind, GAME_PEF_FOLDER);
     CHECK_EQ(game_at(1)->kind, GAME_PEF_FOLDER);
     const game_info *jz = game_by_id("jinni-zeala");
@@ -52,6 +53,15 @@ TEST(game_table_knows_four_games) {
     CHECK_STR(mf->title, "MONSTER FAIR");
     CHECK_STR(mf->folder_name, "MONSTER FAIR.app");
     CHECK_STR(mf->exe, "Contents/MacOS/MONSTER FAIR");
+    const game_info *md = game_by_id("mad-daedalus");
+    CHECK_EQ(md->kind, GAME_MACHO_BUNDLE);
+    CHECK_STR(md->title, "Mad Daedalus");
+    CHECK_STR(md->folder_name, "Mad Daedalus.app");
+    CHECK_STR(md->exe, "Contents/MacOS/Mad Daedalus");
+    CHECK_EQ(md->screen_width, 1024);
+    CHECK_EQ(md->screen_height, 768);
+    CHECK_EQ(mf->screen_width, 800);
+    CHECK_EQ(mf->screen_height, 600);
     const game_info *cc = game_by_id("crystal-caliburn");
     CHECK(cc != NULL);
     CHECK_STR(cc->title, "Crystal Caliburn");

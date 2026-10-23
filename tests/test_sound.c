@@ -10,6 +10,7 @@
 #include "misc.h"
 #include "mixer.h"
 #include "sound.h"
+#include "util.h"
 
 static const char *const names[] = {
     "NewSndCallBackUPP", "SndNewChannel", "SndDisposeChannel", "SndDoCommand", "SndDoImmediate",
@@ -209,4 +210,71 @@ TEST(sound_volume_is_clamped_and_cubed) {
     CHECK(sound_gain(0) == 0.0f);
     CHECK(sound_gain(50) == 0.125f);
     CHECK(sound_gain(80) > 0.511f && sound_gain(80) < 0.513f);
+}
+
+static uint32_t source_frames, source_calls;
+
+static void source(int16_t *out, uint32_t frames) {
+    source_calls++;
+    source_frames += frames;
+    for (uint32_t k = 0; k < 2 * frames; k++)
+        out[k] = (int16_t)(out[k] + 100);
+}
+
+/* A source renders on the clock, from sound_pump alone: a Sound Manager
+   call catches the mixer up without it. */
+TEST(sound_source_renders_from_the_pump_on_the_clock) {
+    setenv("LOONY_FIXED_CLOCK", "1", 1);
+    setup();
+    sound_start_output(); /* the fixed clock: no device */
+    source_frames = source_calls = 0;
+    sound_set_source(source);
+    misc_sleep_us(100000);
+    uint32_t chan = new_channel();
+    CHECK(!busy(chan)); /* SndChannelStatus catches up */
+    CHECK_EQ(source_calls, 0);
+    misc_sleep_us(100000);
+    sound_pump();
+    CHECK(source_calls > 0);
+    CHECK(source_frames >= MIX_RATE / 10 && source_frames <= MIX_RATE / 5 + 1);
+    uint32_t before = source_frames;
+    sound_pump(); /* no time passed */
+    CHECK_EQ(source_frames, before);
+    sound_set_source(NULL);
+    misc_sleep_us(100000);
+    sound_pump();
+    CHECK_EQ(source_frames, before);
+    unsetenv("LOONY_FIXED_CLOCK");
+}
+
+/* With a device, a source plays SOUND_SOURCE_LEAD_MS behind. A stall's
+   sound is late, so the monitor drops it and is back to its lead at the
+   next pump, and on the real clock a gap of more than a second (the Mac
+   slept) isn't rendered at all. Each gap is measured, since a loaded
+   machine sleeps longer than asked. */
+TEST(sound_source_stays_its_lead_behind_after_a_stall) {
+    setup();
+    sound_set_source(source);
+    sound_start_output(); /* the dummy device, on the real clock */
+    source_frames = 0;
+    double lead = SOUND_SOURCE_LEAD_MS / 1000.0, t = wall_seconds();
+    usleep(300000);
+    sound_pump();
+    double gap = wall_seconds() - t;
+    if (gap < 0.9) { /* a stall, not a sleep */
+        CHECK(source_frames >= MIX_RATE / 4);
+        CHECK(sound_monitor_queued_seconds() < 0.01);
+    }
+    t = wall_seconds();
+    usleep(20000);
+    sound_pump();
+    gap = wall_seconds() - t;
+    double q = sound_monitor_queued_seconds();
+    if (gap < 1.5 * lead) /* on time: the lead and this pump's frames */
+        CHECK(q > lead && q <= lead + gap + 0.005);
+    uint32_t before = source_frames;
+    usleep(1100000);
+    sound_pump();
+    CHECK_EQ(source_frames, before);
+    sound_set_source(NULL);
 }

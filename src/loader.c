@@ -147,8 +147,9 @@ bool image_load(const uint8_t *buf, size_t len, loaded_image *img, char *err, si
 /* ---- Mach-O ---- */
 
 /* Imports the runtime needs that the program doesn't import by name: dlsym
-   hands out sprintf, and the __dyld section's words point at the helper. */
-static const char *const synthetic_imports[] = {"sprintf", "dyld_stub_binding_helper"};
+   hands out sprintf and snprintf, and the __dyld section's words point at
+   the helper. */
+static const char *const synthetic_imports[] = {"sprintf", "dyld_stub_binding_helper", "snprintf"};
 
 static image_data_fn data_resolver;
 

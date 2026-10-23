@@ -10,7 +10,8 @@ static const char *const names[] = {
     "CGMainDisplayID", "CGDisplayPixelsWide", "CGDisplayPixelsHigh", "CGDisplayBytesPerRow",
     "CGDisplayBaseAddress", "CGDisplayCurrentMode", "CGDisplayBestModeForParameters",
     "CGDisplaySwitchToMode", "CGDisplayCapture", "CGDisplayIsCaptured", "CGDisplayRelease",
-    "CGDisplayHideCursor", "CGDisplayShowCursor",
+    "CGDisplayHideCursor", "CGDisplayShowCursor", "CGCaptureAllDisplays", "CGReleaseAllDisplays",
+    "CGDisplayBitsPerPixel",
 };
 
 static uint32_t display;
@@ -120,4 +121,15 @@ TEST(cgdisplay_another_display_crashes) {
     char out[8192];
     CHECK_EQ(test_run_child(child_other_display, NULL, out, sizeof out), 2);
     CHECK_CONTAINS(out, "CGDisplayPixelsWide: 0x00001234 is not the main display");
+}
+
+TEST(cgdisplay_capturing_all_displays_captures_the_main_one) {
+    setup();
+    CHECK_EQ(call_import("CGDisplayBitsPerPixel", 1, display), 32);
+    CHECK_EQ(call_import("CGCaptureAllDisplays", 0), 0);
+    CHECK_EQ(call_import("CGDisplayIsCaptured", 1, display), 1);
+    CHECK(cgdisplay_captured());
+    CHECK_EQ(call_import("CGReleaseAllDisplays", 0), 0);
+    CHECK_EQ(call_import("CGDisplayIsCaptured", 1, display), 0);
+    CHECK_EQ(call_import("CGReleaseAllDisplays", 0), 1001); /* not captured */
 }

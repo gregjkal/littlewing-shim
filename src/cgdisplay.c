@@ -91,6 +91,13 @@ static void h_bytes_per_row(void) {
     trap_return(px.row_bytes);
 }
 
+static void h_bits_per_pixel(void) {
+    need_main("CGDisplayBitsPerPixel", trap_arg(0));
+    qd_pixels px;
+    screen(&px);
+    trap_return((uint32_t)px.depth);
+}
+
 static void h_base_address(void) {
     need_main("CGDisplayBaseAddress", trap_arg(0));
     trap_return(qd_screen_base());
@@ -126,17 +133,23 @@ static void h_switch_to_mode(void) {
     trap_return(CG_NO_ERR);
 }
 
-static void h_capture(void) {
-    need_main("CGDisplayCapture", trap_arg(0));
+static void capture(void) {
     G.captured++;
     qd_set_direct_drawing(true);
     trap_return(CG_NO_ERR);
 }
 
+static void h_capture(void) {
+    need_main("CGDisplayCapture", trap_arg(0));
+    capture();
+}
+
+/* The main display is the only one. */
+static void h_capture_all(void) { capture(); }
+
 /* CGDisplayRelease: ends one capture. Releasing a display that isn't
    captured is an illegal argument, and changes nothing. */
-static void h_release(void) {
-    need_main("CGDisplayRelease", trap_arg(0));
+static void release(void) {
     if (!G.captured) {
         trap_return(CG_ILLEGAL_ARG);
         return;
@@ -145,6 +158,13 @@ static void h_release(void) {
         qd_set_direct_drawing(false);
     trap_return(CG_NO_ERR);
 }
+
+static void h_release(void) {
+    need_main("CGDisplayRelease", trap_arg(0));
+    release();
+}
+
+static void h_release_all(void) { release(); }
 
 static void h_is_captured(void) {
     need_main("CGDisplayIsCaptured", trap_arg(0));
@@ -168,12 +188,15 @@ void cgdisplay_register(void) {
     trap_register("CGDisplayPixelsWide", h_pixels_wide);
     trap_register("CGDisplayPixelsHigh", h_pixels_high);
     trap_register("CGDisplayBytesPerRow", h_bytes_per_row);
+    trap_register("CGDisplayBitsPerPixel", h_bits_per_pixel);
     trap_register("CGDisplayBaseAddress", h_base_address);
     trap_register("CGDisplayCurrentMode", h_current_mode);
     trap_register("CGDisplayBestModeForParameters", h_best_mode_for_parameters);
     trap_register("CGDisplaySwitchToMode", h_switch_to_mode);
     trap_register("CGDisplayCapture", h_capture);
     trap_register("CGDisplayRelease", h_release);
+    trap_register("CGCaptureAllDisplays", h_capture_all);
+    trap_register("CGReleaseAllDisplays", h_release_all);
     trap_register("CGDisplayIsCaptured", h_is_captured);
     trap_register("CGDisplayHideCursor", h_hide_cursor);
     trap_register("CGDisplayShowCursor", h_show_cursor);

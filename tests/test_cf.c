@@ -14,6 +14,7 @@ static const char *const names[] = {
     "CFPreferencesGetAppIntegerValue", "CFPreferencesAppSynchronize", "CFBundleGetMainBundle",
     "CFBundleCopyResourcesDirectoryURL", "CFBundleCopyResourceURL",
     "CFURLCreateCopyAppendingPathComponent", "CFURLGetFileSystemRepresentation",
+    "CFURLCreateWithString",
 };
 
 static void setup(void) {
@@ -576,4 +577,10 @@ TEST(cf_prefs_leave_an_unreadable_file_alone) {
     CHECK_EQ(len, 6);
     free(kept);
     test_remove_tree(prefs_dir);
+}
+
+TEST(cf_url_from_a_string_is_the_whole_url) {
+    setup();
+    uint32_t u = call_import("CFURLCreateWithString", 3, 0, str("http://www.littlewingpinball.com/"), 0);
+    CHECK_STR(cf_url_path("test", u), "http://www.littlewingpinball.com/");
 }

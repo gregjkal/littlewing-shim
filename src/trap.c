@@ -280,10 +280,15 @@ static void run_until_return(uint32_t pc) {
     }
 }
 
+static uint32_t last_r4;
+
+uint32_t guest_last_r4(void) { return last_r4; }
+
 /* The guest_call at the current depth returns: the guest's r3, with the
    CPU put back as ctx holds it. */
 static uint32_t leave(uint32_t code, cpu_context *ctx) {
     uint32_t result = cpu_gpr(3);
+    last_r4 = cpu_gpr(4);
     if (T.trace_calls) {
         char a[32];
         fprintf(stderr, "loony: trace: return 0x%08x from %s depth %d\n", result,

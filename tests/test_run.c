@@ -2347,7 +2347,7 @@ TEST(run_monster_fair_reaches_main) {
     test_remove_tree(run_data);
     run_data[0] = '\0';
     CHECK_CONTAINS(out, "loony: playing MONSTER FAIR from ");
-    CHECK_CONTAINS(out, "207 imports, main at 0x41ca8, 13 initializers");
+    CHECK_CONTAINS(out, "208 imports, main at 0x41ca8, 13 initializers");
     /* main's first calls: the system version, then Carbon's. */
     CHECK_CONTAINS(out, "Gestalt(0x73797376, ");
     CHECK_CONTAINS(out, "from code+0x41d1c");
@@ -2567,6 +2567,60 @@ TEST(run_jinni_zeala_quits_from_its_own_menu) {
                                NULL, NULL, 0, out, sizeof out);
     CHECK_EQ(status, 0);
     CHECK_CONTAINS(out, "loony: ExitToShell");
+    CHECK(!strstr(out, "quit Apple Event"));
+}
+
+static void run_mad_daedalus_headless(void *unused) {
+    (void)unused;
+    setenv("LOONY_FIXED_CLOCK", "1", 1);
+    setenv("LOONY_EXIT_AFTER", "600", 1);
+    setenv("LOONY_SCREENSHOT", shot, 1);
+    run_loony((void *)test_md_app());
+}
+
+/* Mad Daedalus 1.1.9 answers its windows (Play Demo, then OK), loads its
+   sound through CoreAudio, takes the display at its own size, 1024x768,
+   32 bits, and by tick 600 shows its table, waiting for Esc. */
+TEST(run_mad_daedalus_plays_its_opening_headless) {
+    SKIP_UNLESS_MD();
+    tmp_name(shot, sizeof shot, "run");
+    char out[32768];
+    test_tmp_dir(run_data, sizeof run_data);
+    int status = test_run_child(run_mad_daedalus_headless, NULL, out, sizeof out);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    size_t len = 0;
+    uint8_t *png = read_file(shot, &len);
+    unlink(shot);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "playing Mad Daedalus from");
+    CHECK_CONTAINS(out, "Contents/MacOS/Mad Daedalus: 179 imports, main at 0x3a8dc, 6 initializers");
+    CHECK_CONTAINS(out, "loony: nib window Welcome: command 'ok  ' (Play Demo)");
+    CHECK_CONTAINS(out, "loony: nib window Demo: command 'ok  ' (OK)");
+    CHECK_CONTAINS(out, "loony: display mode 1024x768, 32 bits");
+    CHECK_CONTAINS(out, "loony: exiting after 600 ticks (LOONY_EXIT_AFTER)");
+    CHECK(!strstr(out, "coreaudio:")); /* every sound opened and converted */
+    CHECK(!strstr(out, "not supported"));
+    CHECK(png != NULL);
+    CHECK(len > 33);
+    CHECK_EQ(rd_be32(png + 16), 1024);
+    CHECK_EQ(rd_be32(png + 20), 768);
+    uint32_t h = fnv1a32(png, len);
+    free(png);
+    CHECK_EQ(h, 0xEFEC0DF5u); /* the table, "GAME OVER" and "PRESS ESC TO START" */
+}
+
+/* Mad Daedalus's own QUIT: Esc opens the menu over the table, Up wraps
+   to QUIT, Return. Its main returns (it has no ExitToShell), with no quit
+   Apple Event. The late quit ends a run whose menu missed QUIT. */
+TEST(run_mad_daedalus_quits_from_its_own_menu) {
+    SKIP_UNLESS_MD();
+    char out[32768];
+    int status = run_script_in(test_md_app(), "620 down esc\n624 up esc\n1250 down up\n1254 up up\n"
+                                              "1400 down return\n1406 up return\n2400 quit\n",
+                               NULL, NULL, 0, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: main returned 0");
     CHECK(!strstr(out, "quit Apple Event"));
 }
 
@@ -2885,6 +2939,43 @@ TEST(run_the_picker_shows_four_games_and_starts_jinni_zeala) {
     CHECK_STR(got, "29afcc5c");
 }
 
+/* Five games: a row of three and a row of two, Mad Daedalus's card, the
+   last, showing its icon. Picked, it plays; the host's quit (Cmd-Q) quits
+   the app. */
+TEST(run_the_picker_shows_five_games_and_starts_mad_daedalus) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_CC();
+    SKIP_UNLESS_MF();
+    SKIP_UNLESS_JZ();
+    SKIP_UNLESS_MD();
+    test_tmp_dir(apps_dir, sizeof apps_dir);
+    CHECK(both_games() && link_game("MONSTER FAIR.app", test_mf_app()) && link_game("Jinni Zeala", test_jz_dir()) &&
+          link_game("Mad Daedalus.app", test_md_app()));
+    test_tmp_dir(run_data, sizeof run_data);
+    tmp_name(pick_shot, sizeof pick_shot, "picker");
+    char out[32768];
+    int status = run_picker_with("mad-daedalus", "900 quit\n", out, sizeof out);
+    size_t len = 0;
+    uint8_t *png = read_file(pick_shot, &len);
+    char got[16];
+    snprintf(got, sizeof got, "%08x", png ? fnv1a32(png, len) : 0);
+    free(png);
+    unlink(pick_shot);
+    pick_shot[0] = '\0';
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    test_remove_tree(apps_dir);
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "picker: can't")); /* every card's art loaded */
+    CHECK(!strstr(out, "picker: /"));
+    CHECK_CONTAINS(out, "loony: picker: mad-daedalus");
+    CHECK_CONTAINS(out, "loony: playing Mad Daedalus from ");
+    CHECK_CONTAINS(out, "loony: sending the quit Apple Event");
+    CHECK_CONTAINS(out, "loony: main returned 0");
+    CHECK(!strstr(out, "back to the picker"));
+    CHECK_STR(got, "4aa50c83");
+}
+
 /* Review Focus 1: the picker remembers the last game in the save root,
    and each game's preferences land in its own folder. */
 static void run_picker_home(void *unused) {
@@ -3111,6 +3202,11 @@ static const regression_start mf_start = {
 static const regression_start jz_start = {
     "1720 down esc\n1724 up esc\n1900 down return\n1906 up return\n2000 down return\n2006 up return\n", 2100};
 
+/* Mad Daedalus: one Esc opens the menu over the table; Return picks NEW
+   GAME, then 1 PLAYER. */
+static const regression_start md_start = {
+    "620 down esc\n624 up esc\n1250 down return\n1256 up return\n1500 down return\n1506 up return\n", 2000};
+
 static void write_regression_script(const char *path, const regression_start *start, char shots[3][1024]) {
     FILE *f = fopen(path, "w");
     fputs(start->keys, f);
@@ -3244,6 +3340,31 @@ TEST(run_three_minutes_of_monster_fair_match_the_recording) {
        82 seconds of tryout time left. Minute 2: ball 2, 161,500 points, 33
        seconds left. Minute 3: TIME UP, GAME OVER. */
     CHECK_STR(got, "f0797114 9453e91a f7f53dc9 ef2e653a");
+}
+
+/* Three minutes of Mad Daedalus, started from its menu, with the same
+   plunger, flippers and nudges, its sound mixed through CoreAudio. */
+TEST(run_three_minutes_of_mad_daedalus_match_the_recording) {
+    SKIP_UNLESS_SLOW();
+    SKIP_UNLESS_MD();
+    uint32_t h[3], wh;
+    size_t len;
+    char out[32768];
+    int status = play_regression(test_md_app(), &md_start, h, &wh, &len, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "runtime error"));
+    CHECK(!strstr(out, "coreaudio:"));
+    /* Its clock moves in its own short sleeps, so the run ends at the first
+       pump past the last tick: up to a tick more sound. */
+    size_t want = 44 + (size_t)REGRESSION_TICKS * 44100 / 60 * 4;
+    CHECK(len >= want && len < want + 44100 / 60 * 4);
+    char got[64];
+    snprintf(got, sizeof got, "%08x %08x %08x %08x", h[0], h[1], h[2], wh);
+    /* Frames at minutes 1, 2 and 3, then the recording. Minute 1: ball 2,
+       11,100 points, 68 seconds of tryout time left. Minute 2: the three
+       balls are gone, GAME OVER at 155,300. Minute 3: the table plays its
+       own demo, ball 1. */
+    CHECK_STR(got, "ede7d3d1 af73d7df 3751c795 17b22851");
 }
 
 /* Edits the snapshot section of the recording at path in place: edit gets

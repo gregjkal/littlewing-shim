@@ -104,11 +104,12 @@ TEST(macho_load_binds_lazy_pointers_to_traps) {
     CHECK_EQ(gm_r32(MB_LA), GUEST_TRAP_ADDR(malloc_i));
     CHECK_EQ(gm_r32(MB_LA + 4), GUEST_TRAP_ADDR(exit_i));
     /* The imports in symbol order, then the synthetic ones. */
-    CHECK_EQ(img.nnames, 6);
+    CHECK_EQ(img.nnames, 7);
     CHECK_STR(img.names[0], "CFRelease");
     CHECK_STR(img.names[3], "malloc");
     CHECK_STR(img.names[4], "sprintf");
     CHECK_STR(img.names[5], "dyld_stub_binding_helper");
+    CHECK_STR(img.names[6], "snprintf");
     CHECK_EQ(gm_r32(MB_DYLD), GUEST_TRAP_ADDR(5));
     CHECK_EQ(gm_r32(MB_DYLD + 4), GUEST_TRAP_ADDR(5));
     image_free(&img);
@@ -269,7 +270,7 @@ TEST(macho_load_monster_fair) {
     CHECK(image_load_macho(buf, len, &img, err, sizeof err));
     CHECK_EQ(img.main_addr, 0x41ca8);
     CHECK_EQ(img.ninit, 13);
-    CHECK_EQ(img.nnames, 205 + 2);
+    CHECK_EQ(img.nnames, 205 + 3); /* and the synthetic imports */
     uint32_t slot = gm_r32(0x5b144);
     CHECK(slot >= GUEST_TRAP_BASE && slot < GUEST_TRAP_ADDR(205));
     /* The first constant CFString's isa is the class reference (addend 0). */

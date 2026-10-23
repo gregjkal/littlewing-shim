@@ -36,7 +36,10 @@ static struct {
     bool recording;
     int volume;
     sound_tap_fn tap;
-} SND = {.volume = SOUND_DEFAULT_VOLUME};
+    sound_source_fn source;
+    bool in_pump; /* the source renders only from sound_pump */
+    uint32_t lead_ms; /* how far behind the monitor plays */
+} SND = {.volume = SOUND_DEFAULT_VOLUME, .lead_ms = SOUND_MONITOR_LEAD_MS};
 
 /* A snapshot's walk (snapshot.h): what is the host's and not the game's
    stays as it is: the streams, the volume, a recording of the output, the
@@ -51,6 +54,9 @@ static void snap_walk(snapshot_walker *w) {
     SNAPSHOT_HOST(w, SND.recording);
     SNAPSHOT_HOST(w, SND.volume);
     SNAPSHOT_HOST(w, SND.tap);
+    SNAPSHOT_HOST(w, SND.source);
+    SNAPSHOT_HOST(w, SND.in_pump);
+    SNAPSHOT_HOST(w, SND.lead_ms);
 }
 SNAPSHOT_STATE_WALK(SND, snap_walk)
 
@@ -66,25 +72,38 @@ static void unlock(void) {
 }
 
 /* Plays n frames on the monitor. When it has run dry (at first, or the
-   replay stalled), silence first keeps it SOUND_MONITOR_LEAD_MS ahead of the
-   device, so the next frames come before these have played. */
+   replay stalled), silence first keeps it the lead (SOUND_MONITOR_LEAD_MS,
+   or SOUND_SOURCE_LEAD_MS for a source) ahead of the device, so the next
+   frames come before these have played. For a source, when the game's
+   clock has run ahead of the device's by four leads, what waits is
+   dropped (catch_up drops a stall's frames before they get here). */
 static void monitor(const int16_t *buf, uint32_t n) {
-    static const int16_t silence[2 * MIX_RATE * SOUND_MONITOR_LEAD_MS / 1000];
-    if (SDL_GetAudioStreamQueued(SND.monitor) == 0)
-        SDL_PutAudioStreamData(SND.monitor, silence, (int)sizeof silence);
+    static const int16_t silence[2 * MIX_RATE * SOUND_SOURCE_LEAD_MS / 1000];
+    _Static_assert(SOUND_SOURCE_LEAD_MS >= SOUND_MONITOR_LEAD_MS, "the silence covers both leads");
+    int lead = (int)(4 * MIX_RATE * SND.lead_ms / 1000);
+    int queued = SDL_GetAudioStreamQueued(SND.monitor);
+    if (SND.source && queued > 4 * lead) {
+        SDL_ClearAudioStream(SND.monitor);
+        queued = 0;
+    }
+    if (queued == 0)
+        SDL_PutAudioStreamData(SND.monitor, silence, lead);
     SDL_PutAudioStreamData(SND.monitor, buf, (int)(n * 4));
 }
 
 /* Renders frames, the first of them frame at of the game's sound (counted
-   from sound_init) when the clock drives it. */
-static void render(uint32_t frames, uint64_t at) {
+   from sound_init) when the clock drives it, and plays them on the monitor
+   if heard. */
+static void render(uint32_t frames, uint64_t at, bool heard) {
     int16_t buf[2 * RENDER_FRAMES];
     while (frames > 0) {
         uint32_t n = frames < RENDER_FRAMES ? frames : RENDER_FRAMES;
         mix_render(buf, n);
+        if (SND.source && SND.in_pump)
+            SND.source(buf, n);
         if (SND.stream)
             SDL_PutAudioStreamData(SND.stream, buf, (int)(n * 4));
-        if (SND.monitor_on)
+        if (SND.monitor_on && heard)
             monitor(buf, n);
         if (SND.recording)
             wav_write(&SND.wav, buf, n);
@@ -99,27 +118,42 @@ static void render(uint32_t frames, uint64_t at) {
 static void SDLCALL feed(void *unused, SDL_AudioStream *stream, int additional, int total) {
     (void)unused, (void)stream, (void)total;
     if (additional > 0)
-        render((uint32_t)additional / 4, 0);
+        render((uint32_t)additional / 4, 0, true);
 }
 
 /* Clock-driven: renders the frames between the last call and now. On a
    recording or a replay, now is when the game last read the clock: reading
    it here would be a step, which a recording with an audio device doesn't
-   take. */
+   take. A source's frames that come after a stall of more than two leads
+   are late already: the monitor drops them rather than stay behind by them,
+   and on the real clock, more than a second of them (the Mac slept) isn't
+   rendered at all, since the game's render callbacks would run through all
+   of it. */
 static void catch_up(void) {
     if (SND.stream)
         return;
-    double now = replay_recording() || replay_playing() ? misc_last_seconds() : misc_seconds();
+    bool real = !replay_recording() && !replay_playing();
+    double now = real ? misc_seconds() : misc_last_seconds();
     uint64_t target = (uint64_t)(now * MIX_RATE);
+    if (SND.source && real && !misc_fixed_clock() && target > SND.rendered + MIX_RATE)
+        SND.rendered = target;
     if (target > SND.rendered) {
+        uint64_t frames = target - SND.rendered;
+        bool late = SND.source && frames > 2 * MIX_RATE * SND.lead_ms / 1000;
+        if (late && SND.monitor_on)
+            SDL_ClearAudioStream(SND.monitor);
         double t0 = wall_seconds();
-        render((uint32_t)(target - SND.rendered), SND.rendered);
+        render((uint32_t)frames, SND.rendered, !late);
         SND.rendered = target;
         SND.render_seconds += wall_seconds() - t0;
     }
 }
 
 double sound_render_seconds(void) { return SND.render_seconds; }
+
+double sound_monitor_queued_seconds(void) {
+    return SND.monitor ? SDL_GetAudioStreamQueued(SND.monitor) / (4.0 * MIX_RATE) : 0;
+}
 
 void sound_init(void) {
     mix_init();
@@ -130,7 +164,10 @@ void sound_init(void) {
     SND.render_seconds = 0;
 }
 
+static void play_clock_driven(void);
+
 static void shutdown_output(void) {
+    SND.source = NULL; /* the game has ended: its code doesn't run again */
     if (SND.monitor) {
         SDL_DestroyAudioStream(SND.monitor);
         SND.monitor = NULL;
@@ -160,6 +197,10 @@ void sound_start_output(void) {
     atexit(shutdown_output);
     if (misc_fixed_clock() || replay_playing())
         return;
+    if (SND.source) {
+        play_clock_driven();
+        return;
+    }
     SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
         log_msg("sound: no audio output: %s (continuing silently)", SDL_GetError());
@@ -176,6 +217,26 @@ void sound_start_output(void) {
     SDL_SetAudioStreamGain(s, sound_gain(SND.volume));
     SND.stream = s;
     SDL_ResumeAudioStreamDevice(s);
+}
+
+/* A source's sound: rendered as the clock goes (catch_up) and played
+   behind it, from now. */
+static void play_clock_driven(void) {
+    if (SND.stream) {
+        SDL_DestroyAudioStream(SND.stream);
+        SND.stream = NULL;
+    }
+    double now = replay_recording() || replay_playing() ? misc_last_seconds() : misc_seconds();
+    SND.rendered = (uint64_t)(now * MIX_RATE);
+    SND.lead_ms = SOUND_SOURCE_LEAD_MS;
+    sound_open_monitor();
+    sound_monitor(true);
+}
+
+void sound_set_source(sound_source_fn fn) {
+    SND.source = fn;
+    if (fn && SND.stream)
+        play_clock_driven();
 }
 
 void sound_open_monitor(void) {
@@ -326,7 +387,9 @@ static void deliver_callback(int i, uint16_t param1, uint32_t param2) {
 /* On a replay the callbacks come from its file, when the recording
    delivered them; the mixer's own are dropped. */
 void sound_pump(void) {
+    SND.in_pump = true;
     catch_up();
+    SND.in_pump = false;
     mix_callback cb;
     if (replay_playing()) {
         while (mix_take_callback(&cb))

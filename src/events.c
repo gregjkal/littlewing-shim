@@ -752,6 +752,8 @@ static void h_send_event_to_event_target(void) {
 
 static void h_get_event_kind(void) { trap_return(need_event("GetEventKind", trap_arg(0))->kind); }
 
+static void h_get_event_class(void) { trap_return(need_event("GetEventClass", trap_arg(0))->cls); }
+
 /* FlushEvents(EventMask, EventMask stopMask): does nothing. It empties the
    classic Event Manager's queue, which nothing here fills. MONSTER FAIR
    imports it but never calls it. */
@@ -959,6 +961,7 @@ void events_register(void) {
     trap_register("InstallStandardEventHandler", h_install_standard_event_handler);
     trap_register("SendEventToEventTarget", h_send_event_to_event_target);
     trap_register("GetEventKind", h_get_event_kind);
+    trap_register("GetEventClass", h_get_event_class);
     trap_register("FlushEvents", h_flush_events);
     trap_register("GetEventParameter", h_get_event_parameter);
     trap_register("ReleaseEvent", h_release_event);

@@ -502,6 +502,15 @@ static void h_bundle_copy_resource_url(void) {
     trap_return(0);
 }
 
+/* CFURLCreateWithString(alloc, CFString, baseURL): a URL the game names in
+   full, such as its web page. */
+static void h_url_create_with_string(void) {
+    const char *call = "CFURLCreateWithString";
+    if (trap_arg(2))
+        trap_crash("%s: a URL relative to a base is not supported", call);
+    trap_return(cf_url(cf_string_text(call, trap_arg(1))));
+}
+
 /* CFURLCreateCopyAppendingPathComponent(alloc, url, component, isDirectory). */
 static void h_url_create_copy_appending_path_component(void) {
     const char *call = "CFURLCreateCopyAppendingPathComponent";
@@ -767,6 +776,7 @@ void cf_register(void) {
     trap_register("CFBundleGetMainBundle", h_bundle_get_main_bundle);
     trap_register("CFBundleCopyResourcesDirectoryURL", h_bundle_copy_resources_directory_url);
     trap_register("CFBundleCopyResourceURL", h_bundle_copy_resource_url);
+    trap_register("CFURLCreateWithString", h_url_create_with_string);
     trap_register("CFURLCreateCopyAppendingPathComponent",
                   h_url_create_copy_appending_path_component);
     trap_register("CFURLGetFileSystemRepresentation", h_url_get_file_system_representation);

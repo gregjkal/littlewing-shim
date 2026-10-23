@@ -14,12 +14,15 @@
 
 static const game_info games[] = {
     {"loony-labyrinth", "Loony Labyrinth", "Loony Labyrinth", "LOONY LABYRINTH 3.0.1",
-     GAME_PEF_FOLDER},
+     GAME_PEF_FOLDER, 800, 600},
     {"crystal-caliburn", "Crystal Caliburn", "Crystal Caliburn", "CRYSTAL CALIBURN 3.0.1",
-     GAME_PEF_FOLDER},
+     GAME_PEF_FOLDER, 800, 600},
     {"monster-fair", "MONSTER FAIR", "MONSTER FAIR.app", "Contents/MacOS/MONSTER FAIR",
-     GAME_MACHO_BUNDLE},
-    {"jinni-zeala", "Jinni Zeala", "Jinni Zeala", "JINNI ZEALA 1.2.2", GAME_PEF_FOLDER},
+     GAME_MACHO_BUNDLE, 800, 600},
+    {"jinni-zeala", "Jinni Zeala", "Jinni Zeala", "JINNI ZEALA 1.2.2", GAME_PEF_FOLDER, 800, 600},
+    /* Its table is drawn for 768 lines, and it plays at the display's size. */
+    {"mad-daedalus", "Mad Daedalus", "Mad Daedalus.app", "Contents/MacOS/Mad Daedalus",
+     GAME_MACHO_BUNDLE, 1024, 768},
 };
 #define NGAMES (sizeof games / sizeof games[0])
 

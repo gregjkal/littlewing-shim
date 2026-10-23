@@ -19,6 +19,7 @@ static const char *const names[] = {
     "NewEventLoopTimerUPP", "GetMainEventLoop", "InstallEventLoopTimer", "RemoveEventLoopTimer",
     "RunApplicationEventLoop", "QuitApplicationEventLoop", "Delay", "ReceiveNextEvent",
     "SendEventToEventTarget", "GetEventKind", "GetEventParameter", "ReleaseEvent",
+    "GetEventClass",
     "AEInstallEventHandler",
 };
 
@@ -315,6 +316,7 @@ TEST(events_startup_queues_app_activated) {
     uint32_t ev = next_event(EV_CLASS_APPLICATION, EV_APP_ACTIVATED);
     CHECK(ev != 0);
     CHECK_EQ(call_import("GetEventKind", 1, ev), EV_APP_ACTIVATED);
+    CHECK_EQ(call_import("GetEventClass", 1, ev), EV_CLASS_APPLICATION);
     call_import("ReleaseEvent", 1, ev);
     CHECK_EQ(events_queued(), 0);
 }

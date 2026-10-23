@@ -160,6 +160,43 @@ TEST(picker_keys_move_across_and_between_rows_of_four) {
     CHECK_EQ(picker_hit(4, 300, 70), -1);        /* the heading */
 }
 
+/* Five games: 224x168 cards, three in the first row at x = 8, 288 and 568,
+   two centered in the second at x = 148 and 428, from y = 108 and 324. */
+TEST(picker_draws_five_cards_in_rows_of_three_and_two) {
+    picker_entry e[5] = {{game_at(0), solid_art(0xFF, 0, 0)}, {game_at(1), NULL}, {game_at(2), NULL},
+                         {game_at(3), NULL}, {game_at(4), solid_art(0, 0, 0xFF)}};
+    picker_draw(e, 5, 4, screen);
+    free(e[0].art);
+    free(e[4].art);
+    CHECK_EQ(px(8, 108)[1], 0xFF);               /* the first card's art, reduced */
+    CHECK_EQ(px(8 + 223, 108 + 167)[1], 0xFF);
+    CHECK_EQ(px(288 + 100, 108 + 80)[1], 0x22);  /* the second and third: plain cards */
+    CHECK_EQ(px(568 + 223, 108 + 80)[1], 0x22);
+    CHECK_EQ(px(148 + 100, 324 + 80)[1], 0x22);  /* the fourth, under the first two */
+    CHECK_EQ(px(428 + 100, 324 + 80)[3], 0xFF);  /* the fifth card's art */
+    CHECK_EQ(px(428 - 2, 400)[1], 0xFF);         /* gold border: the fifth is selected */
+    CHECK_EQ(px(428 - 2, 400)[2], 0xCC);
+    CHECK_EQ(px(260, 200)[1], 0);                /* black between the columns */
+    CHECK_EQ(px(100, 400)[1], 0);                /* and beside the short row */
+}
+
+TEST(picker_keys_move_across_and_between_rows_of_five) {
+    bool choose = false;
+    CHECK_EQ(picker_key(5, 2, SDL_SCANCODE_RIGHT, &choose), 3); /* on to the next row */
+    CHECK_EQ(picker_key(5, 4, SDL_SCANCODE_RIGHT, &choose), 4);
+    CHECK_EQ(picker_key(5, 0, SDL_SCANCODE_DOWN, &choose), 3);
+    CHECK_EQ(picker_key(5, 1, SDL_SCANCODE_DOWN, &choose), 4);
+    CHECK_EQ(picker_key(5, 2, SDL_SCANCODE_DOWN, &choose), 4); /* nothing below: the last card */
+    CHECK_EQ(picker_key(5, 4, SDL_SCANCODE_DOWN, &choose), 4);
+    CHECK_EQ(picker_key(5, 4, SDL_SCANCODE_UP, &choose), 1);
+    CHECK_EQ(picker_key(5, 3, SDL_SCANCODE_UP, &choose), 0);
+    CHECK(!choose);
+    CHECK_EQ(picker_hit(5, 568 + 223, 108 + 167), 2);
+    CHECK_EQ(picker_hit(5, 148 + 5, 324 + 5), 3);
+    CHECK_EQ(picker_hit(5, 428 + 100, 506), 4); /* the name under a card counts */
+    CHECK_EQ(picker_hit(5, 100, 400), -1);      /* beside the short row */
+}
+
 /* A 128x128 icon, its left half opaque red and its right half clear. */
 static void write_icon(const char *path, int size) {
     uint8_t *rgba = calloc((size_t)size * (size_t)size, 4);
@@ -311,6 +348,24 @@ TEST(picker_art_for_jinni_zeala_is_its_icon) {
     CHECK(around_is_card);
     CHECK(clear_is_card);
     CHECK_STR(got, "df198a6f"); /* the icon shown in the four-game picker */
+}
+
+/* Mad Daedalus is a bundle: its card is appl.png, its 128x128 icon. */
+TEST(picker_art_for_mad_daedalus_is_its_icon) {
+    SKIP_UNLESS_MD();
+    char path[1200], err[512] = "";
+    snprintf(path, sizeof path, "%s/Contents/Resources/appl.png", test_md_app());
+    uint8_t *art = malloc(PICKER_ART_W * PICKER_ART_H * 4);
+    bool ok = picker_load_icon(path, art, err, sizeof err);
+    const uint8_t *corner = art + ((size_t)5 * PICKER_ART_W + 5) * 4;
+    bool around_is_card = corner[1] == 0x22 && corner[2] == 0x22 && corner[3] == 0x22;
+    char got[16];
+    snprintf(got, sizeof got, "%08x", fnv1a32(art, PICKER_ART_W * PICKER_ART_H * 4));
+    free(art);
+    CHECK(ok);
+    CHECK_STR(err, "");
+    CHECK(around_is_card);
+    CHECK_STR(got, "4561d7ee"); /* the icon shown in the five-game picker */
 }
 
 TEST(picker_art_comes_from_the_games_title_picture) {
