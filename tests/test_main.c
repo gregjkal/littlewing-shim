@@ -368,8 +368,11 @@ int main(int argc, char **argv) {
             slow_only = true;
         } else if (strcmp(argv[a], "--list") == 0) {
             list = true;
-        } else if (argv[a][0] == '-' || nfilters == MAX_FILTERS) {
+        } else if (argv[a][0] == '-') {
             fputs(usage, stderr);
+            return 2;
+        } else if (nfilters == MAX_FILTERS) {
+            fprintf(stderr, "loony_tests: at most %d filters\n", MAX_FILTERS);
             return 2;
         } else {
             filters[nfilters++] = argv[a];
@@ -380,7 +383,7 @@ int main(int argc, char **argv) {
     if (list) {
         for (int i = 0; i < ntests; i++)
             if (selected(i))
-                fprintf(stderr, "%s\n", tests[i].name);
+                printf("%s\n", tests[i].name);
         return 0;
     }
     if (slow_only)
@@ -467,15 +470,17 @@ int main(int argc, char **argv) {
 }
 
 /* The runner's choice of tests, from the names `--list` prints in a
-   loony_tests of its own: args ends in NULL. */
+   loony_tests of its own, its stdout sent to the stderr test_run_child
+   reads: args ends in NULL. */
 static void exec_list(void *args) {
     char self[PATH_MAX];
     uint32_t size = sizeof self;
-    char *argv[16] = {"loony_tests", "--list"};
+    char *argv[MAX_FILTERS + 4] = {"loony_tests", "--list"};
     int n = 2;
-    for (char *const *a = args; *a && n < 15; a++)
+    for (char *const *a = args; *a && n < MAX_FILTERS + 3; a++)
         argv[n++] = *a;
     argv[n] = NULL;
+    dup2(STDERR_FILENO, STDOUT_FILENO);
     if (_NSGetExecutablePath(self, &size) == 0)
         execv(self, argv);
     _exit(127);
@@ -531,6 +536,11 @@ TEST(tests_slow_picks_the_slow_tests_and_filters_add_up) {
     CHECK_EQ(test_run_child(exec_list, (char *[]){"three_minutes", "recorded", NULL}, out, sizeof out), 0);
     CHECK(lists_exactly(out, is_three_minutes_or_recorded));
     CHECK_EQ(test_run_child(exec_list, (char *[]){"--bogus", NULL}, out, sizeof out), 2);
+    static char *many[MAX_FILTERS + 2];
+    for (int f = 0; f <= MAX_FILTERS; f++)
+        many[f] = "x";
+    CHECK_EQ(test_run_child(exec_list, many, out, sizeof out), 2);
+    CHECK_CONTAINS(out, "at most 64 filters");
 }
 
 /* A slow test the runner is asked for by name still skips without

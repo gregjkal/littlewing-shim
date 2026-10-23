@@ -27,13 +27,13 @@ The slow tests (`SLOW_TEST`) are the only end-to-end check of whole games replay
 | The change touches | Filters |
 | --- | --- |
 | Emulation, drawing or sound (anything that can move a frame or a sample) | `three_minutes` |
-| Recording or replaying, or a new source of host input | `recorded` |
+| Recording or replaying, or a new source of host input | `recorded quit_stops_a_take` |
 | Seeking, snapshots, the viewer going back, or a `SNAPSHOT_STATE` block | `watched_game with_snapshots` |
-| The game-start snapshot or Share | `starts_at_the_game` |
+| The game-start snapshot or Share | `starts_at_the_game take_keeps_the_snapshot` |
 | MONSTER FAIR's startup or `patch.c` | `monster_fair` |
 | Mad Daedalus, or `coreaudio.c` | `mad_daedalus` |
 
-Before a release, run the whole set (`--slow` with no filter). Run slow tests on an idle Mac: they record on the real clock, so under load (another session's tests or build) they fail on timing alone. Rerun a failure on its own before chasing it.
+Before a release, run the whole slow set (`--slow` with no filter). Run slow tests on an idle Mac: they record on the real clock, so under load (another session's tests or build) they fail on timing alone. Rerun a failure on its own before chasing it.
 
 Headless run of a game (never let it open a window or play sound from a session):
 
