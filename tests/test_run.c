@@ -2557,17 +2557,17 @@ TEST(run_monster_fair_starts_a_game) {
 
 /* Jinni Zeala has no demo to end: one Esc opens its menu, Up wraps to
    QUIT, and Return ends the game with ExitToShell, as the other classic
-   games do (no quit Apple Event). */
+   games do (no quit Apple Event). The late quit ends a run whose menu
+   missed QUIT, failing the test rather than hanging it. */
 TEST(run_jinni_zeala_quits_from_its_own_menu) {
     SKIP_UNLESS_JZ();
     char out[32768];
     int status = run_script_in(test_jz_dir(), "1720 down esc\n1724 up esc\n1800 down up\n1804 up up\n"
-                                              "1900 down return\n1906 up return\n",
+                                              "1900 down return\n1906 up return\n2400 quit\n",
                                NULL, NULL, 0, out, sizeof out);
     CHECK_EQ(status, 0);
     CHECK_CONTAINS(out, "loony: ExitToShell");
     CHECK(!strstr(out, "quit Apple Event"));
-    CHECK(!strstr(out, "LOONY_EXIT_AFTER"));
 }
 
 TEST(run_reports_missing_game_folder) {

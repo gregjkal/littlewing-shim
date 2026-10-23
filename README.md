@@ -79,7 +79,8 @@ From a terminal:
 LOONY_GAME=crystal-caliburn ./build-release/loony   # that game, from its usual place
 ```
 
-`LOONY_GAME` takes `loony-labyrinth`, `crystal-caliburn`, `monster-fair` or `jinni-zeala`.
+`LOONY_GAME` takes `loony-labyrinth`, `crystal-caliburn`, `monster-fair` or
+`jinni-zeala`.
 
 Until it is registered, each game first shows two windows: the shareware screen
 (Play Demo, Buy Now, Enter Key-Code, Quit) and the key list. Click a button, or
@@ -117,8 +118,9 @@ level. The slider follows how loudness is heard, not the signal, so 50% is
 Each game's preferences (options, keys, the high-score table and the license)
 are saved when it quits (and at any exit but a crash), in
 `~/Library/Application Support/littlewing-shim/<game>/prefs.plist`, where `<game>`
-is `loony-labyrinth`, `crystal-caliburn`, `monster-fair` or `jinni-zeala`. Any file a game
-writes goes to its own folder there, never into the game's folder or app.
+is `loony-labyrinth`, `crystal-caliburn`, `monster-fair` or `jinni-zeala`. Any
+file a game writes goes to its own folder there, never into the game's folder
+or app.
 Delete a game's folder to start it over. The picker's last game and the volume
 are kept in `littlewing-shim/picker.plist`. Saves from before the project was
 renamed (`loony-shim/`) move to `littlewing-shim/` on the next launch, and
@@ -162,7 +164,8 @@ upscaler, or redrawn by hand, can replace the generated file. `LOONY_HD_SCALE`
   blur together. That file is left out of `hd-art/loony-labyrinth`, so the
   score display keeps the original font.
 - **Other games:** art for another game goes in `hd-art/<game id>`
-  (`crystal-caliburn`, `monster-fair`, `jinni-zeala`), and the app uses it from then on.
+  (`crystal-caliburn`, `monster-fair`, `jinni-zeala`), and the app uses it
+  from then on.
 
 ## Giving it to someone
 

@@ -199,23 +199,25 @@ TEST(picker_draws_an_icon_card_for_a_bundle_game) {
     CHECK(around_is_card);
 }
 
-/* An icns holding a 128x128 it32 (red: each plane one color, as runs of
-   130 and a run of 4) and a t8mk whose left half is opaque. Returns its
-   length; cut_it32 bytes are dropped from the end of the it32, and
-   with_mask leaves out the t8mk. */
+/* An icns holding a 128x128 it32 (red: each plane one color, as 126
+   repeat runs of 130 and a literal run of 4) and a t8mk whose left half
+   is opaque. Returns its length; cut_it32 bytes are dropped from the end
+   of the it32, and with_mask false leaves out the t8mk. */
 static size_t build_icns(uint8_t *out, size_t cut_it32, bool with_mask) {
     static const uint8_t color[3] = {0xFF, 0, 0};
     uint8_t *it32 = out + 8;
     size_t n = 8 + 4; /* the it32 header, then four zero bytes */
     memcpy(it32, "it32", 4);
     memset(it32 + 8, 0, 4);
-    for (int c = 0; c < 3; c++)
-        for (int left = 128 * 128; left > 0;) {
-            int run = left >= 130 ? 130 : left;
-            it32[n++] = (uint8_t)(0x80 + run - 3);
+    for (int c = 0; c < 3; c++) {
+        for (int r = 0; r < 126; r++) {
+            it32[n++] = 0xFF; /* repeat the next byte 130 times */
             it32[n++] = color[c];
-            left -= run;
         }
+        it32[n++] = 0x03; /* copy the next 4 bytes */
+        for (int i = 0; i < 4; i++)
+            it32[n++] = color[c];
+    }
     n -= cut_it32;
     for (int b = 0; b < 4; b++)
         it32[4 + b] = (uint8_t)(n >> (24 - 8 * b));
@@ -254,24 +256,37 @@ TEST(picker_draws_an_icon_card_from_an_icns) {
     CHECK(around_is_card);
 }
 
+/* picker_load_icns on a copy of exactly len bytes, so the sanitizer
+   reports any read past its end. */
+static bool load_exact(const uint8_t *icns, size_t len, uint8_t *art) {
+    uint8_t *copy = malloc(len);
+    memcpy(copy, icns, len);
+    bool ok = picker_load_icns(copy, len, art);
+    free(copy);
+    return ok;
+}
+
 /* A damaged icon is refused, never read past its end. */
 TEST(picker_refuses_a_damaged_icns) {
     static uint8_t icns[64 * 1024];
     uint8_t *art = malloc(PICKER_ART_W * PICKER_ART_H * 4);
-    size_t len = build_icns(icns, 1, true); /* the blue plane's last color byte is missing */
-    bool truncated = picker_load_icns(icns, len, art);
+    size_t len = build_icns(icns, 1, true); /* the last literal run is a byte short */
+    bool short_literal = load_exact(icns, len, art);
+    len = build_icns(icns, 6, true); /* the last repeat run has no byte to repeat */
+    bool short_repeat = load_exact(icns, len, art);
     len = build_icns(icns, 0, false);
-    bool no_mask = picker_load_icns(icns, len, art);
+    bool no_mask = load_exact(icns, len, art);
     len = build_icns(icns, 0, true);
-    bool cut_short = picker_load_icns(icns, len - 100, art); /* the mask runs past the end */
-    icns[8 + 7] = 4;                                         /* an element shorter than its header */
+    bool cut_short = load_exact(icns, len - 100, art); /* the mask runs past the end */
+    icns[8 + 7] = 4;                                   /* an element shorter than its header */
     icns[8 + 4] = icns[8 + 5] = icns[8 + 6] = 0;
-    bool tiny_element = picker_load_icns(icns, len, art);
+    bool tiny_element = load_exact(icns, len, art);
     len = build_icns(icns, 0, true);
-    icns[8 + 12 + 126 * 2] = 0xFF; /* the red plane's last run, 4, becomes 130: past the plane */
-    bool overlong = picker_load_icns(icns, len, art);
+    icns[8 + 12 + 126 * 2] = 0x04; /* the red plane's literal run, 4, becomes 5: past the plane */
+    bool overlong = load_exact(icns, len, art);
     free(art);
-    CHECK(!truncated);
+    CHECK(!short_literal);
+    CHECK(!short_repeat);
     CHECK(!no_mask);
     CHECK(!cut_short);
     CHECK(!tiny_element);

@@ -11,11 +11,11 @@
    selection marked in gold. A bundle game (MONSTER FAIR) has no title
    picture the shim reads: its card shows its icon, appl.png, centered.
    Neither does a classic game without PICT 800 (Jinni Zeala), whose card
-   shows the 128x128 icon in its resource fork's icns 128. Two games get two large cards side by side;
-   three get three smaller ones (240x180) in a row; four get two rows of
-   two (224x168), the art reduced to fit. This file draws and reads input;
-   picker_run (Task 5) shows it. Pixels here are QuickDraw 32-bit:
-   big-endian xRGB. */
+   shows the 128x128 icon in its resource fork's icns 128. Two games get
+   two large cards side by side; three get three smaller ones (240x180) in
+   a row; four get two rows of two (224x168), the art reduced to fit. This
+   file draws and reads input; picker_run (Task 5) shows it. Pixels here
+   are QuickDraw 32-bit: big-endian xRGB. */
 
 #define PICKER_W 800
 #define PICKER_H 600
