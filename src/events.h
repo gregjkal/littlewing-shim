@@ -38,6 +38,9 @@
 #define EV_APPLE_EVENT     1
 #define EV_CLASS_COMMAND     0x636D6473u /* 'cmds' */
 #define EV_COMMAND_PROCESS 1
+#define EV_CLASS_MOUSE       0x6D6F7573u /* 'mous' */
+#define EV_MOUSE_DOWN 1
+#define EV_MOUSE_UP   2
 
 typedef struct {
     uint32_t target, handler, user_data;
@@ -85,7 +88,9 @@ void events_set_screenshot(ev_screenshot_fn fn);
    kEventRawKeyDown, Up or Repeat with 'kcod', 'kchr' and 'kmod'. */
 void events_post_key(int scancode, bool down, bool repeat);
 /* The left mouse button went down or up at (x, y) on the emulated screen.
-   Only a modal sink sees mouse input; the game uses none. */
+   A modal sink takes it. Otherwise only a game that has called the classic
+   Event Manager sees it: as kEventMouseDown or Up, and in Button, StillDown
+   and GetGlobalMouse. The Carbon games use none. */
 void events_post_mouse(int x, int y, bool down);
 
 /* Text to insert (Cmd-V, or a script's "type"), UTF-8. Only a modal sink
@@ -184,7 +189,11 @@ bool events_script_rest(void);
    InstallStandardEventHandler, NewEventLoopTimerUPP, GetMainEventLoop,
    InstallEventLoopTimer, RemoveEventLoopTimer, RunApplicationEventLoop,
    QuitApplicationEventLoop, ReceiveNextEvent, SendEventToEventTarget,
-   GetEventKind, GetEventClass, GetEventParameter and ReleaseEvent.
+   GetEventKind, GetEventClass, GetEventParameter and ReleaseEvent; and the
+   classic Event Manager a PowerPlant game uses: WaitNextEvent,
+   GetNextEvent, EventAvail, Button, StillDown, GetKeys,
+   GetCurrentKeyModifiers, GetGlobalMouse, GetCaretTime, GetDblTime,
+   GetCurrentEventLoop and AEProcessAppleEvent.
 
    If LOONY_EXIT_AFTER is set to a tick count (1/60 s), the process exits with
    status 0 once that many ticks have passed. */
