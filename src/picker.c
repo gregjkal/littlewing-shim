@@ -192,10 +192,7 @@ static bool unpack_plane(const uint8_t *p, size_t len, size_t *at, uint8_t *plan
     return true;
 }
 
-/* A classic game's card when it has no title picture: the 128x128 image of
-   its icns 128 (it32, with the t8mk mask), centered on the plain card
-   color. False if the icon or its mask is missing or malformed. */
-static bool icns_card(const uint8_t *p, size_t len, uint8_t *art) {
+bool picker_load_icns(const uint8_t *p, size_t len, uint8_t *art) {
     const uint8_t *rgb = NULL, *mask = NULL;
     size_t rgb_len = 0;
     for (size_t at = 8; at + 8 <= len;) {
@@ -250,9 +247,10 @@ bool picker_load_art(const char *exe_path, uint8_t *art, char *err, size_t errle
     qd_rect frame;
     uint8_t *full = NULL;
     if (!e && icon) {
-        ok = icns_card(rsrc_data(icon), icon->len, art);
+        ok = picker_load_icns(rsrc_data(icon), icon->len, art);
         if (!ok)
-            snprintf(err, errlen, "%s: icns 128 has no 128x128 icon", exe_path);
+            snprintf(err, errlen, "%s: icns 128 has no readable 128x128 icon (it32) and mask (t8mk)",
+                     exe_path);
     } else if (!e || !pict_frame(rsrc_data(e), e->len, &frame) || rect_w(frame) != ART_SRC_W ||
         rect_h(frame) != ART_SRC_H) {
         snprintf(err, errlen, "%s has no 512x384 PICT 800", exe_path);

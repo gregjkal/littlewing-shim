@@ -10,8 +10,8 @@
    read from the user's copy) on a card, its name under it, and the
    selection marked in gold. A bundle game (MONSTER FAIR) has no title
    picture the shim reads: its card shows its icon, appl.png, centered.
-   Neither does Jinni Zeala, whose card shows the 128x128 icon in its
-   resource fork's icns 128. Two games get two large cards side by side;
+   Neither does a classic game without PICT 800 (Jinni Zeala), whose card
+   shows the 128x128 icon in its resource fork's icns 128. Two games get two large cards side by side;
    three get three smaller ones (240x180) in a row; four get two rows of
    two (224x168), the art reduced to fit. This file draws and reads input;
    picker_run (Task 5) shows it. Pixels here are QuickDraw 32-bit:
@@ -36,6 +36,11 @@ typedef struct {
    Opens and closes the Resource Manager's fork, so call it before the
    game's own is opened. */
 bool picker_load_art(const char *exe_path, uint8_t *art, char *err, size_t errlen);
+
+/* A card from an icns resource (len bytes at icns): its 128x128 image
+   (it32, with the t8mk mask) blended over the plain card color and
+   centered, into art. False if either is missing or malformed. */
+bool picker_load_icns(const uint8_t *icns, size_t len, uint8_t *art);
 
 /* A bundle game's card: the PNG at png_path (at most PICKER_ART_W x
    PICKER_ART_H), centered on the plain card color, into art. False, with

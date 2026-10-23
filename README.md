@@ -38,12 +38,12 @@ file:
 | Jinni Zeala | `/Applications/Jinni Zeala` | `JINNI ZEALA 1.2.2` | the Mac version, 1.2.2 |
 | MONSTER FAIR | `/Applications/MONSTER FAIR.app` | `Contents/MacOS/MONSTER FAIR` | the Mac OS X version, 1.2.5 (the only version supported) |
 
-To get a game, download it from LittleWing's
-[download page](http://www.littlewingpinball.com/doc/en/downloads/index.html),
-open the disk image, and drag the game onto the Applications shortcut next to
-it: the game's folder for Loony Labyrinth, Crystal Caliburn and Jinni Zeala, the app itself
-for MONSTER FAIR. Keep its name. MONSTER FAIR's own app doesn't run on Apple
-Silicon; LittleWing.app runs it.
+To get a game, download it from LittleWing's [download
+page](http://www.littlewingpinball.com/doc/en/downloads/index.html), open the
+disk image, and drag the game onto the Applications shortcut next to it: the
+game's folder for Loony Labyrinth, Crystal Caliburn and Jinni Zeala, the app
+itself for MONSTER FAIR. Keep its name. MONSTER FAIR's own app doesn't run on
+Apple Silicon; LittleWing.app runs it.
 
 Download `LittleWing-<version>.zip` from
 [Releases](https://github.com/gregjkal/littlewing-shim/releases), unzip it,
@@ -51,22 +51,22 @@ and move `LittleWing.app` to `/Applications` (or anywhere); or build it as
 above and copy `build-release/LittleWing.app`. Double-click it. With two to
 four games installed, it opens on a picker showing each game's title picture
 (MONSTER FAIR's and Jinni Zeala's cards show their icons): the arrow keys (or
-the mouse) choose,
-and Return (or a click) plays. It starts on the last game played. With one
-game installed, it plays that game. Choosing QUIT in a game's own menu goes
-back to the picker; Cmd-Q or closing the window quits. The app carries its own
-copies of Unicorn and SDL3, so Homebrew upgrades don't affect it. A release is
-notarized and opens without a warning, and updates itself: it checks for a new
-release once a day, and LittleWing → Check for Updates… checks now. A new
-version found at launch, or after the Mac has sat idle, is offered in a
-window; one found while you play only retitles that menu item ("Update to
-LittleWing 0.5.0…"), so play isn't interrupted. Installing replaces the app
-where it is and reopens it. Built as above, it is signed ad hoc, which is
-enough on the Mac that built it. On another Mac, Gatekeeper blocks the first launch;
-open System Settings, then Privacy & Security, and click Open Anyway near the
-bottom. (On macOS 15 and later, right-click and Open no longer gets past it.) To give
-the app to someone without that step, sign and notarize it (below). When the app can't
-start or the game crashes, it says so in a message box; its log is
+the mouse) choose, and Return (or a click) plays. It starts on the last game
+played. With one game installed, it plays that game. Choosing QUIT in a game's
+own menu goes back to the picker; Cmd-Q or closing the window quits. The app
+carries its own copies of Unicorn and SDL3, so Homebrew upgrades don't affect
+it. A release is notarized and opens without a warning, and updates itself: it
+checks for a new release once a day, and LittleWing → Check for Updates…
+checks now. A new version found at launch, or after the Mac has sat idle, is
+offered in a window; one found while you play only retitles that menu item
+("Update to LittleWing 0.5.0…"), so play isn't interrupted. Installing
+replaces the app where it is and reopens it. Built as above, it is signed ad
+hoc, which is enough on the Mac that built it. On another Mac, Gatekeeper
+blocks the first launch; open System Settings, then Privacy & Security, and
+click Open Anyway near the bottom. (On macOS 15 and later, right-click and
+Open no longer gets past it.) To give the app to someone without that step,
+sign and notarize it (below). When the app can't start or the game crashes, it
+says so in a message box; its log is
 `~/Library/Logs/littlewing-shim/loony.log` (the run before is kept as
 `loony.previous.log`).
 
