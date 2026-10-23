@@ -606,6 +606,9 @@ static port_info *need_window(const char *call, uint32_t w) {
     return p;
 }
 
+/* QDError: nothing here fails without crashing, so noErr. */
+static void h_qd_error(void) { trap_return(QD_NO_ERR); }
+
 static void h_get_window_list(void) { trap_return(window_behind(0)); }
 static void h_front_window(void) { trap_return(front_visible_window()); }
 static void h_get_next_window(void) { trap_return(window_behind(need_window("GetNextWindow", trap_arg(0))->addr)); }
@@ -619,6 +622,11 @@ static void h_get_front_window_of_class(void) {
         return;
     }
     trap_return(visible ? front_visible_window() : window_behind(0));
+}
+
+/* IsWindowHilited: the front visible window is the active one. */
+static void h_is_window_hilited(void) {
+    trap_return(need_window("IsWindowHilited", trap_arg(0))->addr == front_visible_window());
 }
 
 static void h_is_window_visible(void) { trap_return(need_window("IsWindowVisible", trap_arg(0))->visible); }
@@ -961,6 +969,8 @@ void qd_register(void) {
     trap_register("GetNextWindow", h_get_next_window);
     trap_register("GetFrontWindowOfClass", h_get_front_window_of_class);
     trap_register("IsWindowVisible", h_is_window_visible);
+    trap_register("IsWindowHilited", h_is_window_hilited);
+    trap_register("QDError", h_qd_error);
     trap_register("IsValidWindowPtr", h_is_valid_window_ptr);
     trap_register("GetWindowFromPort", h_get_window_from_port);
     trap_register("FindWindow", h_find_window);
