@@ -33,14 +33,20 @@ static void restore_apps_dir(void) {
         unsetenv("LOONY_APPS_DIR");
 }
 
-TEST(game_table_knows_three_games) {
-    CHECK_EQ(game_count(), 3);
+TEST(game_table_knows_four_games) {
+    CHECK_EQ(game_count(), 4);
     CHECK_STR(game_at(0)->id, "loony-labyrinth");
     CHECK_STR(game_at(1)->id, "crystal-caliburn");
     CHECK_STR(game_at(2)->id, "monster-fair");
-    CHECK(game_at(3) == NULL);
+    CHECK_STR(game_at(3)->id, "jinni-zeala");
+    CHECK(game_at(4) == NULL);
     CHECK_EQ(game_at(0)->kind, GAME_PEF_FOLDER);
     CHECK_EQ(game_at(1)->kind, GAME_PEF_FOLDER);
+    const game_info *jz = game_by_id("jinni-zeala");
+    CHECK_EQ(jz->kind, GAME_PEF_FOLDER);
+    CHECK_STR(jz->title, "Jinni Zeala");
+    CHECK_STR(jz->folder_name, "Jinni Zeala");
+    CHECK_STR(jz->exe, "JINNI ZEALA 1.2.2");
     const game_info *mf = game_by_id("monster-fair");
     CHECK_EQ(mf->kind, GAME_MACHO_BUNDLE);
     CHECK_STR(mf->title, "MONSTER FAIR");

@@ -19,6 +19,7 @@ static const game_info games[] = {
      GAME_PEF_FOLDER},
     {"monster-fair", "MONSTER FAIR", "MONSTER FAIR.app", "Contents/MacOS/MONSTER FAIR",
      GAME_MACHO_BUNDLE},
+    {"jinni-zeala", "Jinni Zeala", "Jinni Zeala", "JINNI ZEALA 1.2.2", GAME_PEF_FOLDER},
 };
 #define NGAMES (sizeof games / sizeof games[0])
 

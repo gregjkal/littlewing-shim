@@ -1,6 +1,6 @@
 #!/bin/sh
 # Builds LittleWing.app around a loony binary: it plays the LittleWing games
-# installed in /Applications, with a picker when there are two or three. The Unicorn
+# installed in /Applications, with a picker when there are two to four. The Unicorn
 # and SDL3 libraries are copied into the bundle (so a Homebrew upgrade can't break
 # it), the icon is compiled from tools/AppIcon.icon (an Icon Composer file,
 # which needs Xcode 26 or later), and the bundle is signed with

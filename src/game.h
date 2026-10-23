@@ -4,11 +4,12 @@
 #include <stdint.h>
 #include <time.h>
 
-/* The LittleWing games the shim can play. The two classic games share one
-   engine and make the same 132 calls, so they differ only in names.
-   MONSTER FAIR is a Mac OS X bundle with a Mach-O program. Adding a game is
-   a row in game.c (the picker is laid out for two; a third needs a new
-   layout). */
+/* The LittleWing games the shim can play. The classic games share one
+   engine: Loony Labyrinth and Crystal Caliburn (3.0.1) make the same 132
+   calls, so they differ only in names. Jinni Zeala (1.2.2, an older build
+   of the engine) makes 120 of those and 3 more. MONSTER FAIR is a Mac OS X
+   bundle with a Mach-O program. Adding a game is a row in game.c (the
+   picker lays out two to PICKER_MAX games). */
 typedef enum {
     GAME_PEF_FOLDER,   /* a folder holding a PEF program with a resource fork */
     GAME_MACHO_BUNDLE, /* an .app bundle holding a Mach-O program */

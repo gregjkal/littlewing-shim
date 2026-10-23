@@ -80,6 +80,21 @@ bool test_mf_present(void) {
     return access(test_mf_exe_path(), R_OK) == 0;
 }
 
+const char *test_jz_dir(void) {
+    const char *d = getenv("LOONY_JZ_DIR");
+    return d && *d ? d : "/Applications/Jinni Zeala";
+}
+
+const char *test_jz_exe_path(void) {
+    static char path[1100];
+    snprintf(path, sizeof path, "%s/JINNI ZEALA 1.2.2", test_jz_dir());
+    return path;
+}
+
+bool test_jz_present(void) {
+    return access(test_jz_exe_path(), R_OK) == 0;
+}
+
 bool test_slow_enabled(void) {
     const char *s = getenv("LOONY_SLOW_TESTS");
     return s && *s && strcmp(s, "0") != 0;

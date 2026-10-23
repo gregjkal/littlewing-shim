@@ -1,8 +1,9 @@
 # littlewing-shim
 
-Runs three PowerPC Mac pinball games by LittleWing natively on Apple Silicon:
+Runs four PowerPC Mac pinball games by LittleWing natively on Apple Silicon:
 *Loony Labyrinth 3.0.1* and *Crystal Caliburn 3.0.1* (2003, Carbon programs for
-Mac OS 9 and X) and *MONSTER FAIR 1.2.5* (2010, a Mac OS X application). It
+Mac OS 9 and X), *Jinni Zeala 1.2.2* (2004, an older build of the same engine)
+and *MONSTER FAIR 1.2.5* (2010, a Mac OS X application). It
 emulates their CPU (Unicorn) and reimplements the Mac OS calls they make in C.
 This repo contains no game files: you need your own copies of the games. The
 one exception is `hd-art/`, enlarged art made from the game's pictures (see HD
@@ -34,36 +35,38 @@ file:
 |---|---|---|---|
 | Loony Labyrinth | `/Applications/Loony Labyrinth` | `LOONY LABYRINTH 3.0.1` | `loony_labyrinth_301a.dmg` |
 | Crystal Caliburn | `/Applications/Crystal Caliburn` | `CRYSTAL CALIBURN 3.0.1` | `crystal_caliburn_301a.dmg` |
+| Jinni Zeala | `/Applications/Jinni Zeala` | `JINNI ZEALA 1.2.2` | the Mac version, 1.2.2 |
 | MONSTER FAIR | `/Applications/MONSTER FAIR.app` | `Contents/MacOS/MONSTER FAIR` | the Mac OS X version, 1.2.5 (the only version supported) |
 
-To get a game, download it from LittleWing's
-[download page](http://www.littlewingpinball.com/doc/en/downloads/index.html),
-open the disk image, and drag the game onto the Applications shortcut next to
-it: the game's folder for Loony Labyrinth and Crystal Caliburn, the app itself
-for MONSTER FAIR. Keep its name. MONSTER FAIR's own app doesn't run on Apple
-Silicon; LittleWing.app runs it.
+To get a game, download it from LittleWing's [download
+page](http://www.littlewingpinball.com/doc/en/downloads/index.html), open the
+disk image, and drag the game onto the Applications shortcut next to it: the
+game's folder for Loony Labyrinth, Crystal Caliburn and Jinni Zeala, the app
+itself for MONSTER FAIR. Keep its name. MONSTER FAIR's own app doesn't run on
+Apple Silicon; LittleWing.app runs it.
 
 Download `LittleWing-<version>.zip` from
 [Releases](https://github.com/gregjkal/littlewing-shim/releases), unzip it,
 and move `LittleWing.app` to `/Applications` (or anywhere); or build it as
-above and copy `build-release/LittleWing.app`. Double-click it. With two or
-three games installed, it opens on a picker showing each game's title picture
-(MONSTER FAIR's card shows its icon): Left and Right (or the mouse) choose,
-and Return (or a click) plays. It starts on the last game played. With one
-game installed, it plays that game. Choosing QUIT in a game's own menu goes
-back to the picker; Cmd-Q or closing the window quits. The app carries its own
-copies of Unicorn and SDL3, so Homebrew upgrades don't affect it. A release is
-notarized and opens without a warning, and updates itself: it checks for a new
-release once a day, and LittleWing → Check for Updates… checks now. A new
-version found at launch, or after the Mac has sat idle, is offered in a
-window; one found while you play only retitles that menu item ("Update to
-LittleWing 0.5.0…"), so play isn't interrupted. Installing replaces the app
-where it is and reopens it. Built as above, it is signed ad hoc, which is
-enough on the Mac that built it. On another Mac, Gatekeeper blocks the first launch;
-open System Settings, then Privacy & Security, and click Open Anyway near the
-bottom. (On macOS 15 and later, right-click and Open no longer gets past it.) To give
-the app to someone without that step, sign and notarize it (below). When the app can't
-start or the game crashes, it says so in a message box; its log is
+above and copy `build-release/LittleWing.app`. Double-click it. With two to
+four games installed, it opens on a picker showing each game's title picture
+(MONSTER FAIR's and Jinni Zeala's cards show their icons): the arrow keys (or
+the mouse) choose, and Return (or a click) plays. It starts on the last game
+played. With one game installed, it plays that game. Choosing QUIT in a game's
+own menu goes back to the picker; Cmd-Q or closing the window quits. The app
+carries its own copies of Unicorn and SDL3, so Homebrew upgrades don't affect
+it. A release is notarized and opens without a warning, and updates itself: it
+checks for a new release once a day, and LittleWing → Check for Updates…
+checks now. A new version found at launch, or after the Mac has sat idle, is
+offered in a window; one found while you play only retitles that menu item
+("Update to LittleWing 0.5.0…"), so play isn't interrupted. Installing
+replaces the app where it is and reopens it. Built as above, it is signed ad
+hoc, which is enough on the Mac that built it. On another Mac, Gatekeeper
+blocks the first launch; open System Settings, then Privacy & Security, and
+click Open Anyway near the bottom. (On macOS 15 and later, right-click and
+Open no longer gets past it.) To give the app to someone without that step,
+sign and notarize it (below). When the app can't start or the game crashes, it
+says so in a message box; its log is
 `~/Library/Logs/littlewing-shim/loony.log` (the run before is kept as
 `loony.previous.log`).
 
@@ -76,7 +79,8 @@ From a terminal:
 LOONY_GAME=crystal-caliburn ./build-release/loony   # that game, from its usual place
 ```
 
-`LOONY_GAME` takes `loony-labyrinth`, `crystal-caliburn` or `monster-fair`.
+`LOONY_GAME` takes `loony-labyrinth`, `crystal-caliburn`, `monster-fair` or
+`jinni-zeala`.
 
 Until it is registered, each game first shows two windows: the shareware screen
 (Play Demo, Buy Now, Enter Key-Code, Quit) and the key list. Click a button, or
@@ -87,9 +91,10 @@ the preferences, so later launches go straight to the game. For testing Loony
 Labyrinth, `docs/test_key.txt` has an e-mail address and key code that were posted
 publicly on [archive.org](https://archive.org/details/littlewing-pinball/).
 
-The game then plays its opening and a self-playing demo. All three games use
-the same keys by default (MONSTER FAIR adds X and . to nudge the table's left
-and right sides):
+The game then plays its opening and a self-playing demo. All the games use
+the same keys by default (MONSTER FAIR and Jinni Zeala add X and . to nudge
+the table's left and right sides, and in Jinni Zeala, which has no demo to
+stop, the first Esc opens the menu):
 
 | Key | Does |
 |---|---|
@@ -113,8 +118,9 @@ level. The slider follows how loudness is heard, not the signal, so 50% is
 Each game's preferences (options, keys, the high-score table and the license)
 are saved when it quits (and at any exit but a crash), in
 `~/Library/Application Support/littlewing-shim/<game>/prefs.plist`, where `<game>`
-is `loony-labyrinth`, `crystal-caliburn` or `monster-fair`. Any file a game
-writes goes to its own folder there, never into the game's folder or app.
+is `loony-labyrinth`, `crystal-caliburn`, `monster-fair` or `jinni-zeala`. Any
+file a game writes goes to its own folder there, never into the game's folder
+or app.
 Delete a game's folder to start it over. The picker's last game and the volume
 are kept in `littlewing-shim/picker.plist`. Saves from before the project was
 renamed (`loony-shim/`) move to `littlewing-shim/` on the next launch, and
@@ -158,7 +164,8 @@ upscaler, or redrawn by hand, can replace the generated file. `LOONY_HD_SCALE`
   blur together. That file is left out of `hd-art/loony-labyrinth`, so the
   score display keeps the original font.
 - **Other games:** art for another game goes in `hd-art/<game id>`
-  (`crystal-caliburn`, `monster-fair`), and the app uses it from then on.
+  (`crystal-caliburn`, `monster-fair`, `jinni-zeala`), and the app uses it
+  from then on.
 
 ## Giving it to someone
 
@@ -316,8 +323,9 @@ is the size each game expects: 800x600 for the classic games, and 1024x768 at
 host window keeps its size and scales it to fit.
 
 Tests that need a game's files skip when it isn't installed (`SKIP_UNLESS_GAME`,
-`SKIP_UNLESS_CC` and `SKIP_UNLESS_MF` in `tests/test.h`). `LOONY_GAME_DIR`,
-`LOONY_CC_DIR` and `LOONY_MF_APP` point them at copies elsewhere. The tests
+`SKIP_UNLESS_CC`, `SKIP_UNLESS_MF` and `SKIP_UNLESS_JZ` in `tests/test.h`).
+`LOONY_GAME_DIR`, `LOONY_CC_DIR`, `LOONY_MF_APP` and `LOONY_JZ_DIR` point them
+at copies elsewhere. The tests
 that register take the address and key code from the environment and skip
 without them: `LOONY_TEST_EMAIL` and `LOONY_TEST_KEY` (Loony Labyrinth), and
 `LOONY_TEST_MF_EMAIL` and `LOONY_TEST_MF_KEY` (MONSTER FAIR; the public key in
