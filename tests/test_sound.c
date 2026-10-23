@@ -245,3 +245,27 @@ TEST(sound_source_renders_from_the_pump_on_the_clock) {
     CHECK_EQ(source_frames, before);
     unsetenv("LOONY_FIXED_CLOCK");
 }
+
+/* With a device, a source plays SOUND_SOURCE_LEAD_MS behind. A stall's
+   sound is late, so the monitor drops it and is back to its lead at the
+   next pump, and on the real clock a gap of more than a second (the Mac
+   slept) isn't rendered at all. */
+TEST(sound_source_stays_its_lead_behind_after_a_stall) {
+    setup();
+    sound_set_source(source);
+    sound_start_output(); /* the dummy device, on the real clock */
+    source_frames = 0;
+    usleep(300000);
+    sound_pump();
+    CHECK(source_frames >= MIX_RATE / 4);
+    CHECK(sound_monitor_queued_seconds() < 0.01);
+    usleep(20000);
+    sound_pump();
+    double q = sound_monitor_queued_seconds();
+    CHECK(q > SOUND_SOURCE_LEAD_MS / 1000.0 && q < 2 * SOUND_SOURCE_LEAD_MS / 1000.0);
+    uint32_t before = source_frames;
+    usleep(1100000);
+    sound_pump();
+    CHECK_EQ(source_frames, before);
+    sound_set_source(NULL);
+}

@@ -110,6 +110,9 @@ static void snap_walk(snapshot_walker *w) {
                               CA.convs[i].left_n <= IMA4_PACKET_FRAMES &&
                               CA.convs[i].map[0] < 2 && CA.convs[i].map[1] < 2,
                        "converter %d", i);
+    for (int i = 0; i < MAX_FILES; i++)
+        snapshot_check(w, !CA.files[i].used || (CA.files[i].nch >= 1 && CA.files[i].nch <= 2),
+                       "file %d of %u channels", i, CA.files[i].nch);
 }
 SNAPSHOT_STATE_WALK(CA, snap_walk)
 
@@ -358,7 +361,8 @@ static void render_slice(void) {
         gm_w32(s + SCR_OUT_ABL + 12, samples);
         uint32_t args[6] = {CA.inputs[e].refcon, s + SCR_FLAGS, s + SCR_TIME, e, CA_SLICE, s + SCR_OUT_ABL};
         guest_call(proc, 6, args);
-        const uint8_t *p = gm_ptr(samples, 4 * CA_SLICE);
+        /* The callback may have pointed the buffer at its own samples. */
+        const uint8_t *p = gm_ptr(gm_r32(s + SCR_OUT_ABL + 12), 4 * CA_SLICE);
         for (uint32_t k = 0; k < 2 * CA_SLICE; k++)
             sum[k] += (int16_t)rd_be16(p + 2 * k);
     }
@@ -448,8 +452,8 @@ static void h_audio_file_open_with_callbacks(void) {
             comm = true;
         } else if (id == FOURCC('S', 'S', 'N', 'D') && len >= 8 && read_at(client, read, pos + 8, 8, b)) {
             uint32_t skip = rd_be32(p);
-            if (skip <= len - 8) {
-                data_off = (uint32_t)pos + 16 + skip;
+            if (skip <= len - 8 && pos + 16 + skip <= size) {
+                data_off = (uint32_t)(pos + 16 + skip);
                 data_len = len - 8 - skip;
                 ssnd = true;
             }

@@ -621,8 +621,9 @@ static void h_open(void) {
     }
     int fd = open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
-        log_msg("open(%s): %s", path, strerror(errno));
-        set_errno(errno == ENOENT ? GUEST_ENOENT : GUEST_EACCES);
+        int err = errno;
+        log_msg("open(%s): %s", path, strerror(err));
+        set_errno(err == ENOENT ? GUEST_ENOENT : GUEST_EACCES);
         trap_return(0xFFFFFFFFu);
         return;
     }

@@ -16,7 +16,7 @@ static const char *const names[] = {
     "AUGraphInitialize", "AUGraphStart", "AudioUnitGetProperty", "AudioUnitSetProperty",
     "AudioFileOpenWithCallbacks", "AudioFileGetPropertyInfo", "AudioFileGetProperty",
     "AudioFileReadPackets", "AudioFileClose", "AudioConverterNew", "AudioConverterSetProperty",
-    "AudioConverterFillComplexBuffer", "ReadProc", "SizeProc", "RenderA", "RenderB", "InputProc",
+    "AudioConverterFillComplexBuffer", "ReadProc", "SizeProc", "RenderA", "RenderB", "RenderOwn", "InputProc",
 };
 #define NNAMES (uint32_t)(sizeof names / sizeof names[0])
 
@@ -26,10 +26,22 @@ static uint32_t cb(const char *name) { return GUEST_TRAP_ADDR(trap_find(name)); 
 
 static uint8_t file[4096];
 static uint32_t file_len;
+/* Or a file of 4 GB: file, then far_len bytes of far at far_at. */
+static uint32_t far_at, far_len;
+static uint8_t far[16];
 
 static void h_read_proc(void) {
     uint64_t pos = (uint64_t)trap_arg(1) << 32 | trap_arg(2);
     uint32_t n = trap_arg(3), buf = trap_arg(4), actual = trap_arg(5);
+    if (far_at && pos >= far_at) {
+        uint32_t k = (uint32_t)(pos - far_at);
+        n = k < far_len && n > far_len - k ? far_len - k : k < far_len ? n : 0;
+        if (n)
+            memcpy(gm_ptr(buf, n), far + k, n);
+        gm_w32(actual, n);
+        trap_return(0);
+        return;
+    }
     if (pos > file_len)
         pos = file_len;
     if (n > file_len - pos)
@@ -42,7 +54,7 @@ static void h_read_proc(void) {
 
 static void h_size_proc(void) {
     trap_return(0);
-    cpu_set_gpr(4, file_len);
+    cpu_set_gpr(4, far_at ? 0xFFFFFFFFu : file_len);
 }
 
 static void put(uint32_t *at, const void *p, uint32_t n) {
@@ -108,6 +120,19 @@ static void fill(int16_t left, int16_t right) {
 static void h_render_a(void) { fill(1000, -1000); }
 static void h_render_b(void) { fill(32000, -32000); }
 
+/* A callback that points the buffer list at samples of its own. */
+static uint32_t own_samples;
+
+static void h_render_own(void) {
+    uint32_t frames = trap_arg(4), abl = trap_arg(5);
+    for (uint32_t f = 0; f < frames; f++) {
+        gm_w16(own_samples + 4 * f, 300);
+        gm_w16(own_samples + 4 * f + 2, (uint16_t)-300);
+    }
+    gm_w32(abl + 12, own_samples);
+    trap_return(0);
+}
+
 /* ---- the converter's input proc: the packets at in_data, a few at a time ---- */
 
 static uint32_t in_data, in_packets, in_next, in_bpp;
@@ -137,8 +162,10 @@ static void setup(void) {
     trap_register("SizeProc", h_size_proc);
     trap_register("RenderA", h_render_a);
     trap_register("RenderB", h_render_b);
+    trap_register("RenderOwn", h_render_own);
     trap_register("InputProc", h_input_proc);
     nrendered = 0;
+    far_at = far_len = 0;
 }
 
 /* For helpers, which can't CHECK: a call that must succeed. */
@@ -241,6 +268,17 @@ TEST(coreaudio_mixer_sums_the_inputs_callbacks_a_slice_at_a_time) {
     CHECK_EQ(out[1], -32768);
 }
 
+TEST(coreaudio_mixer_plays_a_callbacks_own_buffer) {
+    setup();
+    uint32_t mixer = build_graph(1);
+    own_samples = scratch(4 * CA_SLICE);
+    CHECK_EQ(render_callback(mixer, 0, "RenderOwn"), 0);
+    int16_t out[2 * 4] = {0};
+    coreaudio_render(out, 4);
+    CHECK_EQ(out[0], 300);
+    CHECK_EQ(out[7], -300);
+}
+
 TEST(coreaudio_mixer_is_silent_until_the_graph_starts) {
     setup();
     int16_t out[2 * 16] = {0};
@@ -304,6 +342,20 @@ TEST(coreaudio_refuses_files_that_arent_ima4_aifc) {
     CHECK_EQ(open_file(&f), FOURCC('t', 'y', 'p', '?'));
     make_aifc(FOURCC('i', 'm', 'a', '4'), 1, 4);
     file_len -= 10; /* the packets run past the end */
+    CHECK_EQ(open_file(&f), FOURCC('d', 't', 'a', '?'));
+    /* In a 4 GB file, an SSND chunk whose sound would start past the end
+       (and at 4 bytes in, counted in 32 bits). */
+    make_aifc(FOURCC('i', 'm', 'a', '4'), 1, 0);
+    uint32_t at = 56; /* over the SSND chunk */
+    put32(&at, FOURCC('J', 'U', 'N', 'K'));
+    put32(&at, 0x7FFFFFC4);
+    file_len = at;
+    far_at = 0x80000004;
+    far_len = 16;
+    wr_be32(far, FOURCC('S', 'S', 'N', 'D'));
+    wr_be32(far + 4, 0x7FFFFFF8);
+    wr_be32(far + 8, 0x7FFFFFF0);
+    wr_be32(far + 12, 0);
     CHECK_EQ(open_file(&f), FOURCC('d', 't', 'a', '?'));
 }
 
