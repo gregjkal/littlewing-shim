@@ -43,6 +43,10 @@
 #include "util.h"
 #include "watch.h"
 
+/* A local build can define this, in a file of its own, to change a game's
+   code after it loads. Releases have only this one, which does nothing. */
+__attribute__((weak)) void local_patch_hook(const char *game_id) { (void)game_id; }
+
 /* Launched as the app (from Finder or `open`), there is no terminal: the
    log goes to ~/Library/Logs/littlewing-shim/loony.log (the one before it is kept
    as loony.previous.log; after a restart for the picker, the same log
@@ -354,6 +358,7 @@ int main(int argc, char **argv) {
                 return startup_error("MONSTER FAIR 1.2.5 is the only version supported: %s", err);
             log_msg("MONSTER FAIR 1.2.5: its second license check is off");
         }
+        local_patch_hook(game->id);
         rsrc_open_empty();
         misc_init();
         misc_set_system_version(MISC_SYSTEM_VERSION_MACHO);
@@ -375,6 +380,7 @@ int main(int argc, char **argv) {
         uint32_t code_end = (img.code_base + img.code_len + 0xFFFu) & ~0xFFFu;
         cpu_no_exec(GUEST_IMAGE_BASE, img.code_base);
         cpu_no_exec(code_end, GUEST_IMAGE_LIMIT);
+        local_patch_hook(game->id);
         if (!rsrc_open(fork, fork_len, err, sizeof err))
             return startup_error("can't load the resources of %s: %s", path, err);
         mm_init();
