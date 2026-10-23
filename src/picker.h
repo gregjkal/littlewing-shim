@@ -10,16 +10,18 @@
    read from the user's copy) on a card, its name under it, and the
    selection marked in gold. A bundle game (MONSTER FAIR) has no title
    picture the shim reads: its card shows its icon, appl.png, centered.
-   Two games get two large cards side by side; three get three smaller
-   ones (240x180) in a row, the art reduced to fit. This file draws and
-   reads input; picker_run (Task 5) shows it. Pixels here are QuickDraw
-   32-bit: big-endian xRGB. */
+   Neither does a classic game without PICT 800 (Jinni Zeala), whose card
+   shows the 128x128 icon in its resource fork's icns 128. Two games get
+   two large cards side by side; three get three smaller ones (240x180) in
+   a row; four get two rows of two (224x168), the art reduced to fit. This
+   file draws and reads input; picker_run (Task 5) shows it. Pixels here
+   are QuickDraw 32-bit: big-endian xRGB. */
 
 #define PICKER_W 800
 #define PICKER_H 600
 #define PICKER_ART_W 384 /* PICT 800 (512x384) at 3/4 */
 #define PICKER_ART_H 288
-#define PICKER_MAX 3     /* the layouts fit two or three games */
+#define PICKER_MAX 4     /* the layouts fit two, three or four games */
 
 typedef struct {
     const game_info *game;
@@ -27,11 +29,18 @@ typedef struct {
 } picker_entry;
 
 /* Reads the program's resource fork (exe_path/..namedfork/rsrc), draws its
-   PICT 800 and reduces it into art. False, with err naming the file, if
-   the fork or the picture can't be read or the picture isn't 512x384.
+   PICT 800 and reduces it into art; a fork without PICT 800 but with an
+   icns 128 gets that icon's card instead. False, with err naming the file,
+   if the fork or the picture can't be read, the picture isn't 512x384, or
+   the icon has no 128x128 image.
    Opens and closes the Resource Manager's fork, so call it before the
    game's own is opened. */
 bool picker_load_art(const char *exe_path, uint8_t *art, char *err, size_t errlen);
+
+/* A card from an icns resource (len bytes at icns): its 128x128 image
+   (it32, with the t8mk mask) blended over the plain card color and
+   centered, into art. False if either is missing or malformed. */
+bool picker_load_icns(const uint8_t *icns, size_t len, uint8_t *art);
 
 /* A bundle game's card: the PNG at png_path (at most PICKER_ART_W x
    PICKER_ART_H), centered on the plain card color, into art. False, with
@@ -46,7 +55,8 @@ void picker_draw(const picker_entry *e, int n, int selected, uint8_t *screen);
 int picker_hit(int n, int x, int y);
 
 /* The selection after an SDL scancode: Left and Right move (stopping at
-   the ends), Return and keypad Enter set *choose. Other keys change nothing. */
+   the ends), Up and Down move between rows (four cards), Return and keypad
+   Enter set *choose. Other keys change nothing. */
 int picker_key(int n, int selected, int scancode, bool *choose);
 
 /* The entry for last_id (the last game picked), or 0. */
