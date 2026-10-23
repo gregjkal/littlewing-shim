@@ -274,9 +274,8 @@ static void run_loony_replaying(void *unused) {
    replays it headless: the replay reaches the end of the recording with
    every frame check matching, and leaves the same last frame and the same
    preferences. */
-TEST(run_a_recorded_game_replays_exactly) {
+SLOW_TEST(run_a_recorded_game_replays_exactly) {
     SKIP_UNLESS_GAME();
-    SKIP_UNLESS_SLOW();
     char rec_dir[1024], play_dir[1024], prefs[2][1100], shots[2][1024];
     test_tmp_dir(rec_dir, sizeof rec_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
@@ -409,9 +408,8 @@ static void run_loony_recording_games(void *dir) {
 /* Unless told otherwise, each game is recorded into a file of its own
    (replay.h) that replays from launch exactly to the game's end; a clip of
    the second game starts where it does, past the first. */
-TEST(run_each_game_is_recorded_into_a_file_of_its_own) {
+SLOW_TEST(run_each_game_is_recorded_into_a_file_of_its_own) {
     SKIP_UNLESS_GAME();
-    SKIP_UNLESS_SLOW();
     char rec_dir[1024], play_dir[1024], recs[1100], names[2][256], out[4][32768];
     test_tmp_dir(rec_dir, sizeof rec_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
@@ -533,9 +531,8 @@ static int hidden_files(const char *dir) {
    (gamestart_take_later), so its first replay starts at the game; the
    second game, which the quit ends, gets none. A share's take while a
    background one runs puts it off until after. */
-TEST(run_a_recorded_game_gets_its_snapshot_when_it_ends) {
+SLOW_TEST(run_a_recorded_game_gets_its_snapshot_when_it_ends) {
     SKIP_UNLESS_GAME();
-    SKIP_UNLESS_SLOW();
     char rec_dir[1024], play_dir[1024], names[2][256], path[2][1400], recs[1100];
     test_tmp_dir(rec_dir, sizeof rec_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
@@ -602,9 +599,8 @@ TEST(run_a_recorded_game_gets_its_snapshot_when_it_ends) {
 /* Quitting while a take runs in the background stops it: the recording
    is left as it was (it replays to its end), with no hidden file beside
    it, and no take is left running. */
-TEST(run_a_quit_stops_a_take_in_the_background) {
+SLOW_TEST(run_a_quit_stops_a_take_in_the_background) {
     SKIP_UNLESS_GAME();
-    SKIP_UNLESS_SLOW();
     char rec_dir[1024], play_dir[1024], names[2][256], path[1400], recs[1100];
     test_tmp_dir(rec_dir, sizeof rec_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
@@ -1739,9 +1735,8 @@ static bool went_back_from_main(const char *out, const char *how) {
    tick 9450 to 9550 and the recording a few to a hundred ticks after the
    quit at 10200: the J between games is at 9900, and the one after the
    end far past it. */
-TEST(run_a_watched_game_goes_back) {
+SLOW_TEST(run_a_watched_game_goes_back) {
     SKIP_UNLESS_GAME();
-    SKIP_UNLESS_SLOW();
     char rec_dir[1024], play_dir[1024];
     test_tmp_dir(rec_dir, sizeof rec_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
@@ -1775,9 +1770,8 @@ TEST(run_a_watched_game_goes_back) {
 
 /* Going back from the end of a recording that ends inside a trap of the
    run loop, between games, where the viewer holds the last frame. */
-TEST(run_a_watched_game_goes_back_from_the_end_of_the_recording) {
+SLOW_TEST(run_a_watched_game_goes_back_from_the_end_of_the_recording) {
     SKIP_UNLESS_GAME();
-    SKIP_UNLESS_SLOW();
     char rec_dir[1024], play_dir[1024];
     test_tmp_dir(rec_dir, sizeof rec_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
@@ -1900,9 +1894,8 @@ static bool copy_recording(const char *path, const char *dir, const char *name, 
    taken (LOONY_SNAPSHOT_VERIFY), plays exactly as one that takes none: the
    same frame checks, the same last frame, the same sound. A capture or a
    restore that changed anything the game sees would show here. */
-TEST(run_a_replay_with_snapshots_plays_as_one_without) {
+SLOW_TEST(run_a_replay_with_snapshots_plays_as_one_without) {
     SKIP_UNLESS_GAME();
-    SKIP_UNLESS_SLOW();
     char rec_dir[1024], play_dir[1024];
     test_tmp_dir(rec_dir, sizeof rec_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
@@ -1956,9 +1949,8 @@ static uint32_t png_width(const char *path, uint32_t *hash) {
    screenshot of the end are far past it, as in
    run_a_watched_game_goes_back. The straight run takes the snapshot of
    the game's start; the other two, at once, verify it (watch_fastest). */
-TEST(run_a_watched_game_in_hd_looks_the_same_after_going_back) {
+SLOW_TEST(run_a_watched_game_in_hd_looks_the_same_after_going_back) {
     SKIP_UNLESS_GAME();
-    SKIP_UNLESS_SLOW();
     char rec_dir[1024], play_dir[1024];
     test_tmp_dir(rec_dir, sizeof rec_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
@@ -2435,8 +2427,7 @@ static int mf_register_and_play_past_the_recheck(const char *email, const char *
 /* With the second license check's verdict dropped (patch.h), the test key
    survives it: the game plays on until the script quits, keeps the license,
    and the next launch skips the Welcome window. */
-TEST(run_monster_fair_keeps_a_license_with_the_recheck_skipped) {
-    SKIP_UNLESS_SLOW();
+SLOW_TEST(run_monster_fair_keeps_a_license_with_the_recheck_skipped) {
     SKIP_UNLESS_MF();
     const char *email, *key;
     MF_TEST_KEY_OR_SKIP(email, key);
@@ -3266,8 +3257,7 @@ static int play_regression(const char *dir, const regression_start *start, uint3
     return status;
 }
 
-TEST(run_three_minutes_of_play_match_the_recording) {
-    SKIP_UNLESS_SLOW();
+SLOW_TEST(run_three_minutes_of_play_match_the_recording) {
     SKIP_UNLESS_GAME();
     uint32_t h[3], wh;
     size_t len;
@@ -3284,8 +3274,7 @@ TEST(run_three_minutes_of_play_match_the_recording) {
 
 /* The same three minutes in Crystal Caliburn (the same keys). Recorded
    after the user's Plan 8 playtest. */
-TEST(run_three_minutes_of_crystal_caliburn_match_the_recording) {
-    SKIP_UNLESS_SLOW();
+SLOW_TEST(run_three_minutes_of_crystal_caliburn_match_the_recording) {
     SKIP_UNLESS_CC();
     uint32_t h[3], wh;
     size_t len;
@@ -3303,8 +3292,7 @@ TEST(run_three_minutes_of_crystal_caliburn_match_the_recording) {
 }
 
 /* The same three minutes in Jinni Zeala, started from its menu. */
-TEST(run_three_minutes_of_jinni_zeala_match_the_recording) {
-    SKIP_UNLESS_SLOW();
+SLOW_TEST(run_three_minutes_of_jinni_zeala_match_the_recording) {
     SKIP_UNLESS_JZ();
     uint32_t h[3], wh;
     size_t len;
@@ -3324,8 +3312,7 @@ TEST(run_three_minutes_of_jinni_zeala_match_the_recording) {
 
 /* Three minutes of MONSTER FAIR, started from its menu, with the same
    plunger, flippers and nudges. Recorded after the user's Plan 9 playtest. */
-TEST(run_three_minutes_of_monster_fair_match_the_recording) {
-    SKIP_UNLESS_SLOW();
+SLOW_TEST(run_three_minutes_of_monster_fair_match_the_recording) {
     SKIP_UNLESS_MF();
     uint32_t h[3], wh;
     size_t len;
@@ -3344,8 +3331,7 @@ TEST(run_three_minutes_of_monster_fair_match_the_recording) {
 
 /* Three minutes of Mad Daedalus, started from its menu, with the same
    plunger, flippers and nudges, its sound mixed through CoreAudio. */
-TEST(run_three_minutes_of_mad_daedalus_match_the_recording) {
-    SKIP_UNLESS_SLOW();
+SLOW_TEST(run_three_minutes_of_mad_daedalus_match_the_recording) {
     SKIP_UNLESS_MD();
     uint32_t h[3], wh;
     size_t len;
@@ -3462,9 +3448,8 @@ static char *prefs_of(const char *play_dir, const char *name) {
    counter is in the game's data, or which changes the game's code, is
    said not to fit, and replaced; LOONY_GAMESTART=0 neither uses one nor
    takes one. */
-TEST(run_a_recorded_game_starts_at_the_game_from_its_snapshot) {
+SLOW_TEST(run_a_recorded_game_starts_at_the_game_from_its_snapshot) {
     SKIP_UNLESS_GAME();
-    SKIP_UNLESS_SLOW();
     char rec_dir[1024], play_dir[1024];
     test_tmp_dir(rec_dir, sizeof rec_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
@@ -3531,9 +3516,8 @@ TEST(run_a_recorded_game_starts_at_the_game_from_its_snapshot) {
 /* A take (LOONY_GAMESTART=take, gamestart_take_start), which draws
    nothing, keeps the same snapshot of the game's start, byte for byte, as
    a replay that draws every frame. */
-TEST(run_a_take_keeps_the_snapshot_a_drawing_replay_keeps) {
+SLOW_TEST(run_a_take_keeps_the_snapshot_a_drawing_replay_keeps) {
     SKIP_UNLESS_GAME();
-    SKIP_UNLESS_SLOW();
     char rec_dir[1024], play_dir[1024], taken[1200], err[256] = "";
     test_tmp_dir(rec_dir, sizeof rec_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
@@ -3598,9 +3582,8 @@ static bool other_home(char *home, size_t cap, const char *email, const char *ke
    sharer's home folder. Replayed under another home folder, as on the
    recipient's Mac, it goes to the game's start from that snapshot and
    ends on the same frame as a replay of it from launch. */
-TEST(run_a_shared_game_starts_at_the_game_on_another_install) {
+SLOW_TEST(run_a_shared_game_starts_at_the_game_on_another_install) {
     SKIP_UNLESS_GAME();
-    SKIP_UNLESS_SLOW();
     const char *email = getenv("LOONY_TEST_EMAIL"), *key = getenv("LOONY_TEST_KEY");
     if (!email || !*email || !key || !*key) {
         test_skip("LOONY_TEST_EMAIL and LOONY_TEST_KEY aren't set");
