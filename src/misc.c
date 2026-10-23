@@ -407,6 +407,9 @@ static void h_set_text_service_language(void) { trap_return(0); }
 static void h_tis_copy_ascii_capable_source(void) { trap_return(0); }
 static void h_tis_select_input_source(void) { trap_return((uint32_t)-50); }
 static void h_get_mbar_height(void) { trap_return(0); }
+/* A PowerPC program has no A5 world: SetA5 and SetCurrentA5 change nothing
+   and return the old A5, 0. */
+static void h_set_a5(void) { trap_return(0); }
 
 /* ---- Apple Events and Internet Config ---- */
 
@@ -579,6 +582,8 @@ void misc_register(void) {
     trap_register("SetThemeCursor", h_set_theme_cursor);
     trap_register("KeyScript", h_key_script);
     trap_register("GetMBarHeight", h_get_mbar_height);
+    trap_register("SetA5", h_set_a5);
+    trap_register("SetCurrentA5", h_set_a5);
     trap_register("NewAEEventHandlerUPP", h_new_ae_event_handler_upp);
     trap_register("AEInstallEventHandler", h_ae_install_event_handler);
     trap_register("ICStart", h_ic_start);

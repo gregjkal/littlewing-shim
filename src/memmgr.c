@@ -235,6 +235,18 @@ uint32_t mm_free_bytes(void) {
     return total;
 }
 
+uint32_t mm_largest_free(void) {
+    uint32_t best = 0;
+    for (uint32_t p = HEAP_BASE + MM_HEADER_SIZE; p < HEAP_END; p = next_block(p)) {
+        if (magic(p) == MAGIC_FREE) {
+            coalesce(p);
+            if (capacity(p) > best)
+                best = capacity(p);
+        }
+    }
+    return best;
+}
+
 int16_t mm_error(void) { return last_error; }
 void mm_set_error(int16_t err) { last_error = err; }
 
@@ -380,6 +392,48 @@ static void h_hset_state(void) {
 
 static void h_mem_error(void) { ret_err(last_error); }
 
+static void h_set_handle_size(void) {
+    uint32_t h = trap_arg(0);
+    if (!need_handle("SetHandleSize", h))
+        return;
+    last_error = mm_set_handle_size(h, trap_arg(1));
+}
+
+/* EmptyHandle: on a Mac the data is freed and the master pointer is NULL.
+   Handles here are never empty, so the data shrinks to nothing instead;
+   GetHandleSize says 0 either way. */
+static void h_empty_handle(void) {
+    uint32_t h = trap_arg(0);
+    if (!need_handle("EmptyHandle", h))
+        return;
+    last_error = mm_set_handle_size(h, 0);
+}
+
+static void h_hlock_hi(void) { change_state("HLockHi", MM_STATE_LOCKED, 0); }
+
+/* TempNewHandle(size, &err): temporary memory is the same heap. */
+static void h_temp_new_handle(void) {
+    uint32_t h = mm_new_handle(trap_arg(0), false);
+    last_error = h ? MM_NO_ERR : MM_MEM_FULL_ERR;
+    if (trap_arg(1))
+        gm_w16(trap_arg(1), (uint16_t)last_error);
+    trap_return(h);
+}
+
+static void h_max_block(void) {
+    last_error = MM_NO_ERR;
+    trap_return(mm_largest_free());
+}
+
+/* Master pointers come with each handle, and the heap never asks the game
+   to free memory, so its grow zone procedure is kept but never called;
+   GZSaveHnd only means something inside one. */
+static void h_more_master_pointers(void) { last_error = MM_NO_ERR; }
+static void h_new_grow_zone_upp(void) { trap_return(trap_arg(0)); }
+static void h_dispose_grow_zone_upp(void) {}
+static void h_set_grow_zone(void) {}
+static void h_gz_save_hnd(void) { trap_return(0); }
+
 void mm_register(void) {
     trap_register("NewPtr", h_new_ptr);
     trap_register("NewPtrClear", h_new_ptr_clear);
@@ -400,4 +454,14 @@ void mm_register(void) {
     trap_register("HGetState", h_hget_state);
     trap_register("HSetState", h_hset_state);
     trap_register("MemError", h_mem_error);
+    trap_register("SetHandleSize", h_set_handle_size);
+    trap_register("EmptyHandle", h_empty_handle);
+    trap_register("HLockHi", h_hlock_hi);
+    trap_register("TempNewHandle", h_temp_new_handle);
+    trap_register("MaxBlock", h_max_block);
+    trap_register("MoreMasterPointers", h_more_master_pointers);
+    trap_register("NewGrowZoneUPP", h_new_grow_zone_upp);
+    trap_register("DisposeGrowZoneUPP", h_dispose_grow_zone_upp);
+    trap_register("SetGrowZone", h_set_grow_zone);
+    trap_register("GZSaveHnd", h_gz_save_hnd);
 }
