@@ -74,8 +74,8 @@ void sound_pump(void);
    the sound is clock-driven even with an audio device, which plays what
    is rendered SOUND_SOURCE_LEAD_MS behind, as a watched replay's is
    (sound_open_monitor). Setting one with the device open switches it over,
-   rendering from now. What is rendered after a stall is late, so the
-   device doesn't play it, and on the real clock a gap of over a second
+   rendering from now. What is rendered after a stall of more than two
+   leads is late, so the device doesn't play it, and on the real clock a gap of over a second
    (the Mac slept) is skipped, not rendered. NULL (and the end of the
    program) removes it. */
 #define SOUND_SOURCE_LEAD_MS 60
