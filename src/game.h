@@ -7,9 +7,10 @@
 /* The LittleWing games the shim can play. The classic games share one
    engine: Loony Labyrinth and Crystal Caliburn (3.0.1) make the same 132
    calls, so they differ only in names. Jinni Zeala (1.2.2, an older build
-   of the engine) makes 120 of those and 3 more. MONSTER FAIR is a Mac OS X
-   bundle with a Mach-O program. Adding a game is a row in game.c (the
-   picker lays out two to PICKER_MAX games). */
+   of the engine) makes 120 of those and 3 more. MONSTER FAIR and Mad
+   Daedalus (1.1.9) are Mac OS X bundles with Mach-O programs; Mad Daedalus
+   plays its sound through CoreAudio and wants a 1024x768 display. Adding a
+   game is a row in game.c (the picker lays out two to PICKER_MAX games). */
 typedef enum {
     GAME_PEF_FOLDER,   /* a folder holding a PEF program with a resource fork */
     GAME_MACHO_BUNDLE, /* an .app bundle holding a Mach-O program */
@@ -21,6 +22,7 @@ typedef struct {
     const char *folder_name; /* its folder (or bundle) in the applications folder */
     const char *exe;         /* the program's path in that folder */
     game_kind kind;
+    int screen_width, screen_height; /* the emulated display's size at launch */
 } game_info;
 
 size_t game_count(void);

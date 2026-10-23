@@ -38,24 +38,30 @@
 #define ART4_W 224
 #define ART4_H 168
 #define CARD4_GAP 64
-#define CARD4_LEFT0 ((PICKER_W - 2 * ART4_W - CARD4_GAP) / 2)
 #define CARD4_TOP0 108
 #define CARD4_ROW 216 /* from one row's card top to the next */
 #define NAME4_TOP0 284
+/* Five cards: the same size, two rows of three columns, the second row
+   centered under the first. */
+#define CARD5_GAP 56
 #define ICON_SIZE 128 /* icns 128's largest image, it32 */
 
 static const qd_rgb BLACK = {0, 0, 0}, GOLD = {0xFFFF, 0xCCCC, 0x3333}, DARK = {0x3333, 0x3333, 0x3333},
                     PLAIN = {0x2222, 0x2222, 0x2222}, WHITE = {0xFFFF, 0xFFFF, 0xFFFF},
                     GRAY = {0x8888, 0x8888, 0x8888};
 
-/* Cards in a row: all of them, except four, which take two rows. */
-static int columns(int n) { return n == 4 ? 2 : n; }
+/* Cards in a row: all of them, except four, which take two rows of two,
+   and five, two rows of three. */
+static int columns(int n) { return n == 4 ? 2 : n == 5 ? 3 : n; }
 
 /* Where card i's art goes: two cards side by side, three smaller ones, or
-   four in two rows. */
+   four or five in two rows, each row centered. */
 static qd_rect card(int n, int i) {
-    if (n == 4) {
-        int left = CARD4_LEFT0 + i % 2 * (ART4_W + CARD4_GAP), top = CARD4_TOP0 + i / 2 * CARD4_ROW;
+    if (n >= 4) {
+        int cols = columns(n), gap = n == 4 ? CARD4_GAP : CARD5_GAP, row = i / cols;
+        int in_row = n - row * cols < cols ? n - row * cols : cols;
+        int left = (PICKER_W - in_row * ART4_W - (in_row - 1) * gap) / 2 + i % cols * (ART4_W + gap);
+        int top = CARD4_TOP0 + row * CARD4_ROW;
         return (qd_rect){(int16_t)top, (int16_t)left, (int16_t)(top + ART4_H), (int16_t)(left + ART4_W)};
     }
     if (n == 3) {
@@ -67,7 +73,7 @@ static qd_rect card(int n, int i) {
 }
 
 static int name_top(int n, int i) {
-    return n == 4 ? NAME4_TOP0 + i / 2 * CARD4_ROW : n == 3 ? NAME3_TOP : NAME_TOP;
+    return n >= 4 ? NAME4_TOP0 + i / columns(n) * CARD4_ROW : n == 3 ? NAME3_TOP : NAME_TOP;
 }
 
 static qd_pixels pixels(uint8_t *base, int w, int h) {
@@ -154,7 +160,10 @@ int picker_key(int n, int selected, int scancode, bool *choose) {
     case SDL_SCANCODE_LEFT: return selected > 0 ? selected - 1 : 0;
     case SDL_SCANCODE_RIGHT: return selected < n - 1 ? selected + 1 : n - 1;
     case SDL_SCANCODE_UP: return selected >= columns(n) ? selected - columns(n) : selected;
-    case SDL_SCANCODE_DOWN: return selected + columns(n) < n ? selected + columns(n) : selected;
+    case SDL_SCANCODE_DOWN: /* to the card below, or the last card when the row below is short */
+        return selected + columns(n) < n                   ? selected + columns(n)
+               : selected / columns(n) < (n - 1) / columns(n) ? n - 1
+                                                             : selected;
     case SDL_SCANCODE_RETURN:
     case SDL_SCANCODE_KP_ENTER: *choose = true; return selected;
     default: return selected;

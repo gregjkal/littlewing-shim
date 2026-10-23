@@ -9,6 +9,7 @@
 #include <sys/wait.h>
 #include <time.h>
 
+#include "cf.h"
 #include "cpu.h"
 #include "guest_mem.h"
 #include "snapshot.h"
@@ -401,6 +402,10 @@ static void h_init_cursor(void) { M.cursor_level = 0; }
 static void h_hide_cursor(void) { M.cursor_level--; }
 static void h_set_theme_cursor(void) { trap_return(0); }
 static void h_key_script(void) {}
+/* The keyboard's input source is the host's: these change nothing. */
+static void h_set_text_service_language(void) { trap_return(0); }
+static void h_tis_copy_ascii_capable_source(void) { trap_return(0); }
+static void h_tis_select_input_source(void) { trap_return((uint32_t)-50); }
 static void h_get_mbar_height(void) { trap_return(0); }
 
 /* ---- Apple Events and Internet Config ---- */
@@ -431,6 +436,23 @@ static void h_ic_start(void) {
 
 static void h_ic_stop(void) { trap_return(0); }
 
+/* Opens an http or https URL the game asked call to open, except on a
+   replay. False, logged, for any other URL. */
+static bool open_web(const char *call, const char *url) {
+    if (strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0) {
+        log_msg("%s: not opening \"%s\" (only http and https)", call, url);
+        return false;
+    }
+    if (replay_playing()) { /* the person who recorded it saw the page */
+        log_msg("replay: not opening %s", url);
+        return true;
+    }
+    log_msg("opening %s", url);
+    if (!M.open_url(url))
+        log_msg("%s: couldn't open %s", call, url);
+    return true;
+}
+
 /* ICLaunchURL(ICInstance, ConstStr255Param hint, const void *data, long len,
    long *selStart, long *selEnd) -> OSStatus. The URL is data[*selStart,
    *selEnd). Only http and https URLs are opened. */
@@ -445,20 +467,14 @@ static void h_ic_launch_url(void) {
     char url[1024];
     memcpy(url, gm_ptr(data + (uint32_t)start, (uint32_t)(end - start) + 1), (size_t)(end - start));
     url[end - start] = '\0';
-    if (strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0) {
-        log_msg("ICLaunchURL: not opening \"%s\" (only http and https)", url);
-        trap_return((uint32_t)-50);
-        return;
-    }
-    if (replay_playing()) { /* the person who recorded it saw the page */
-        log_msg("replay: not opening %s", url);
-        trap_return(0);
-        return;
-    }
-    log_msg("opening %s", url);
-    if (!M.open_url(url))
-        log_msg("ICLaunchURL: couldn't open %s", url);
-    trap_return(0);
+    trap_return(open_web("ICLaunchURL", url) ? 0 : (uint32_t)-50);
+}
+
+/* LSOpenCFURLRef(CFURLRef url, CFURLRef *outLaunchedURL) -> OSStatus. */
+static void h_ls_open_cfurl_ref(void) {
+    if (trap_arg(1))
+        gm_w32(trap_arg(1), 0);
+    trap_return(open_web("LSOpenCFURLRef", cf_url_path("LSOpenCFURLRef", trap_arg(0))) ? 0 : (uint32_t)-50);
 }
 
 /* ---- SANE ---- */
@@ -568,6 +584,10 @@ void misc_register(void) {
     trap_register("ICStart", h_ic_start);
     trap_register("ICStop", h_ic_stop);
     trap_register("ICLaunchURL", h_ic_launch_url);
+    trap_register("LSOpenCFURLRef", h_ls_open_cfurl_ref);
+    trap_register("SetTextServiceLanguage", h_set_text_service_language);
+    trap_register("TISCopyCurrentASCIICapableKeyboardInputSource", h_tis_copy_ascii_capable_source);
+    trap_register("TISSelectInputSource", h_tis_select_input_source);
     trap_register("num2dec", h_num2dec);
     trap_register("ExitToShell", h_exit_to_shell);
 }

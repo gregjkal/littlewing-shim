@@ -104,5 +104,7 @@ typedef struct {
 void misc_num2dec(int style, int digits, double x, misc_decimal *out);
 
 /* Registers Gestalt, time, string, cursor, Apple Event, Internet Config,
-   KeyScript, GetMBarHeight, BlockMoveData, num2dec and ExitToShell imports. */
+   LSOpenCFURLRef, KeyScript and the text input source calls (which change
+   nothing), GetMBarHeight, BlockMoveData, num2dec and ExitToShell
+   imports. */
 void misc_register(void);

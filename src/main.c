@@ -12,6 +12,7 @@
 #include "cgdisplay.h"
 #include "cgimage.h"
 #include "clip.h"
+#include "coreaudio.h"
 #include "cpu.h"
 #include "cxxrt.h"
 #include "dialogs.h"
@@ -427,12 +428,13 @@ int main(int argc, char **argv) {
         if (!clip_on()) /* a clip's replay saves into a folder nobody reads */
             atexit(save_prefs_at_exit);
     }
-    qd_init(800, 600, macho ? 32 : 8);
+    qd_init(game->screen_width, game->screen_height, macho ? 32 : 8);
     dialogs_init();
     cgimage_init();
     cgdisplay_init();
     events_init();
     sound_init();
+    coreaudio_init();
     display_init();
     char self[PATH_MAX];
     uint32_t self_size = sizeof self;
@@ -483,6 +485,7 @@ int main(int argc, char **argv) {
     events_register();
     files_register();
     sound_register();
+    coreaudio_register();
 
     if (macho) {
         log_msg("loaded %s: %u imports, main at 0x%x, %u initializers", path, img.nnames,

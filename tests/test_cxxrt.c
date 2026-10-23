@@ -9,6 +9,7 @@ static const char *const names[] = {
     "_Znwm", "_Znam", "_ZdlPv", "_ZdaPv", "__cxa_guard_acquire", "__cxa_guard_release",
     "__cxa_pure_virtual", "__cxa_allocate_exception", "__cxa_throw", "__cxa_rethrow",
     "_Unwind_Resume", "__cxa_begin_catch", "__cxa_end_catch", "__gxx_personality_v0",
+    "__cxa_free_exception",
 };
 
 static void setup(void) {
@@ -104,4 +105,16 @@ TEST(cxxrt_unwinding_crashes) {
     CHECK_CONTAINS(out, "nothing was thrown");
     CHECK_EQ(test_run_child(child_call, (void *)"__gxx_personality_v0", out, sizeof out), 2);
     CHECK_CONTAINS(out, "__gxx_personality_v0 called");
+}
+
+TEST(cxxrt_free_exception_frees_what_allocate_made) {
+    setup();
+    uint32_t e = call_import("__cxa_allocate_exception", 1, 12);
+    CHECK(!mm_is_ptr(e)); /* the object follows the runtime's header */
+    uint32_t free_before = mm_free_bytes();
+    call_import("__cxa_free_exception", 1, e);
+    CHECK(mm_free_bytes() > free_before);
+    char out[8192];
+    CHECK_EQ(test_run_child(child_call, (void *)"__cxa_free_exception", out, sizeof out), 2);
+    CHECK_CONTAINS(out, "not an exception __cxa_allocate_exception made");
 }

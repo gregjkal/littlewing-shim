@@ -123,6 +123,12 @@ static void h_allocate_exception(void) {
     trap_return(p + EXCEPTION_HEADER);
 }
 
+static void h_free_exception(void) {
+    uint32_t obj = trap_arg(0);
+    if (!obj || mm_dispose_ptr(obj - EXCEPTION_HEADER) != MM_NO_ERR)
+        trap_crash("__cxa_free_exception(0x%08x): not an exception __cxa_allocate_exception made", obj);
+}
+
 /* Where the game called the import from: the bl before the return address. */
 static const char *call_site(char buf[static 32]) {
     return trap_format_addr(cpu_lr() - 4, buf);
@@ -173,6 +179,7 @@ void cxxrt_register(void) {
     trap_register("__cxa_guard_release", h_guard_release);
     trap_register("__cxa_pure_virtual", h_pure_virtual);
     trap_register("__cxa_allocate_exception", h_allocate_exception);
+    trap_register("__cxa_free_exception", h_free_exception);
     trap_register("__cxa_throw", h_throw);
     trap_register("__cxa_rethrow", h_rethrow);
     trap_register("_Unwind_Resume", h_unwind_resume);

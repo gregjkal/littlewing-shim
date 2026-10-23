@@ -67,9 +67,27 @@ void sound_set_tap(sound_tap_fn fn);
    iteration. */
 void sound_pump(void);
 
+/* A second source of sound, added into what the mixer renders: fn adds
+   frames stereo frames to out (2 * frames samples, clamped as it adds). It
+   runs game code (coreaudio.h), so it is called on the main thread only,
+   from sound_pump, never from a Sound Manager call. While a source is set
+   the sound is clock-driven even with an audio device, which plays what
+   is rendered SOUND_SOURCE_LEAD_MS behind, as a watched replay's is
+   (sound_open_monitor). Setting one with the device open switches it over,
+   rendering from now. What is rendered after a stall of more than two
+   leads is late, so the device doesn't play it, and on the real clock a gap of over a second
+   (the Mac slept) is skipped, not rendered. NULL (and the end of the
+   program) removes it. */
+#define SOUND_SOURCE_LEAD_MS 60
+typedef void (*sound_source_fn)(int16_t *out, uint32_t frames);
+void sound_set_source(sound_source_fn fn);
+
 /* Clock-driven: the wall-clock seconds spent rendering since sound_init
    (watch.h measures the mixer's share of an unpaced replay with it). */
 double sound_render_seconds(void);
+
+/* The seconds of sound waiting on the monitor to play (tests read it). */
+double sound_monitor_queued_seconds(void);
 
 /* Registers NewSndCallBackUPP, SndNewChannel, SndDisposeChannel,
    SndDoCommand, SndDoImmediate and SndChannelStatus. */
