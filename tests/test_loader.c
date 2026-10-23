@@ -189,6 +189,21 @@ TEST(macho_load_finds_main_after_start) {
     free(buf);
 }
 
+/* CodeWarrior's runtime links MSL's exit in: main is the call before
+   _start's last, whether exit is imported (Angel Egg) or not (Golden Logres). */
+TEST(macho_load_finds_main_before_a_linked_exit) {
+    for (int imported = 0; imported < 2; imported++) {
+        loaded_image img;
+        char err[256] = "";
+        uint8_t *buf;
+        CHECK(load_built(&(mb_opts){.linked_exit = true, .no_exit_import = !imported}, &img, err,
+                         sizeof err, &buf));
+        CHECK_EQ(img.main_addr, MB_MAIN);
+        image_free(&img);
+        free(buf);
+    }
+}
+
 TEST(macho_load_lists_static_initializers) {
     loaded_image img;
     char err[256] = "";

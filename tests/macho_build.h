@@ -35,7 +35,9 @@ typedef struct {
     bool no_ppc;          /* a fat file with only an i386 slice */
     bool section_outside; /* __text's file offset is past the end */
     bool bad_indirect;    /* an indirect entry names symbol 99 */
-    bool no_exit_call;    /* _start never calls the exit stub */
+    bool no_exit_call;    /* _start calls only helper: no main, no exit */
+    bool linked_exit;     /* _start ends bl main; bl helper, a linked-in exit (MSL) */
+    bool no_exit_import;  /* the exit import is __exit (CodeWarrior's runtime) */
 } mb_opts;
 
 enum {
@@ -156,8 +158,10 @@ static inline void mb_build_slice(uint8_t *s, const mb_opts *o) {
     wr_be32(t + 0x00, mb_bl(MB_ENTRY, MB_START));
     wr_be32(t + 0x04, 0x7FE00008); /* trap */
     wr_be32(t + 0x10, mb_bl(MB_START, 0x1830));
-    wr_be32(t + 0x14, mb_bl(MB_START + 4, MB_MAIN));
-    wr_be32(t + 0x18, o->no_exit_call ? 0x60000000 : mb_bl(MB_START + 8, MB_STUBS + 16));
+    wr_be32(t + 0x14, o->no_exit_call ? 0x60000000 : mb_bl(MB_START + 4, MB_MAIN));
+    wr_be32(t + 0x18, o->no_exit_call  ? 0x60000000
+                     : o->linked_exit ? mb_bl(MB_START + 8, 0x1830)
+                                      : mb_bl(MB_START + 8, MB_STUBS + 16));
     wr_be32(t + 0x1C, 0x7FE00008);
     wr_be32(t + 0x30, 0x4E800020); /* blr */
     wr_be32(t + 0x40, 0x3860002A); /* li r3,42 */
@@ -182,7 +186,7 @@ static inline void mb_build_slice(uint8_t *s, const mb_opts *o) {
     wr_be32(d + 0x20, 8);
 
     /* Strings and symbols. */
-    static const char *const names[] = {"_main", "_CFRelease", "_exit",
+    const char *const names[] = {"_main", "_CFRelease", o->no_exit_import ? "__exit" : "_exit",
                                         "_kCFPreferencesCurrentApplication", "_malloc"};
     uint32_t strx = 1; /* offset 0 is the empty name */
     for (uint32_t i = 0; i < nsyms; i++) {

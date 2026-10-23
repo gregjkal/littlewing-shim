@@ -296,34 +296,46 @@ static uint32_t stub_for(const binder *b, const char *name) {
 }
 
 /* crt1's entry calls _start, which calls main and then exit. main is the
-   target of the last bl before the one to the exit stub. */
+   target of the last bl before the one to the exit stub. CodeWarrior's
+   runtime (Golden Logres, Angel Egg) links MSL's exit in, and its _start
+   ends bl main; bl exit without calling an exit stub: there main is the
+   target of the bl before _start's last. _start ends at a trap or at the
+   next function's mflr r0. */
 #define MAX_SCAN 256
+#define PPC_TRAP 0x7FE00008u
+#define PPC_MFLR_R0 0x7C0802A6u
 
 static bool find_main(binder *b, char *err, size_t errlen) {
     const macho_section *text = macho_find_section(b->m, "__TEXT", "__text");
+    if (!text)
+        return fail(err, errlen, "can't find main (no __text)");
     uint32_t exit_stub = stub_for(b, "exit");
-    if (!text || !exit_stub)
-        return fail(err, errlen, "can't find main (no __text or no exit stub)");
     uint32_t end = text->addr + text->size;
     uint32_t start = 0;
     for (uint32_t a = b->m->entry; a < end && a < b->m->entry + 4 * MAX_SCAN && !start; a += 4)
         start = bl_target(a);
     if (!start || start < text->addr || start >= end)
         return fail(err, errlen, "can't find main (no call to _start after the entry point)");
-    uint32_t prev = 0;
-    for (uint32_t a = start; a < end && a < start + 4 * MAX_SCAN; a += 4) {
+    uint32_t prev = 0, last = 0;
+    for (uint32_t a = start + 4; a < end && a < start + 4 * MAX_SCAN; a += 4) {
+        uint32_t w = gm_r32(a);
+        if (w == PPC_TRAP || w == PPC_MFLR_R0)
+            break;
         uint32_t t = bl_target(a);
         if (!t)
             continue;
-        if (t == exit_stub) {
-            if (!prev || prev < text->addr || prev >= end)
-                return fail(err, errlen, "can't find main (no call before exit in _start)");
-            b->img->main_addr = prev;
-            return true;
+        if (exit_stub && t == exit_stub) {
+            prev = last;
+            last = t;
+            break;
         }
-        prev = t;
+        prev = last;
+        last = t;
     }
-    return fail(err, errlen, "can't find main (_start never calls exit)");
+    if (!prev || prev < text->addr || prev >= end)
+        return fail(err, errlen, "can't find main (_start makes no call before its exit)");
+    b->img->main_addr = prev;
+    return true;
 }
 
 static bool list_initializers(binder *b, char *err, size_t errlen) {
