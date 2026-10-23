@@ -63,5 +63,7 @@ int files_unicode_to_mac(uint32_t c);
    game the FSRef and fork calls: FSPathMakeRef (host paths inside the game
    or data folder), FSGetDataForkName, FSOpenFork, FSGetForkSize,
    FSGetForkPosition, FSSetForkPosition and FSCloseFork. Fork refnums are
-   File Manager refnums, so the game can mix the two. */
+   File Manager refnums, so the game can mix the two. Also FSRead,
+   FindFolder (the Preferences folder alone), FSpGetFInfo, ResolveAliasFile
+   (there are no aliases), NewAlias and FlushVol. */
 void files_register(void);

@@ -6,9 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
 #include "guest_mem.h"
+#include "memmgr.h"
 #include "snapshot.h"
 #include "trap.h"
 #include "util.h"
@@ -773,6 +775,114 @@ static void h_fs_close(void) {
     trap_return(failed ? (uint32_t)FILES_IO_ERR : 0);
 }
 
+/* FSRead(short refNum, long *count, void *buffer) -> OSErr: from the mark. */
+static void h_fs_read(void) {
+    open_file *o = file_of((int16_t)trap_arg(0));
+    uint32_t count_p = trap_arg(1);
+    if (!o) {
+        trap_return((uint32_t)FILES_RF_NUM_ERR);
+        return;
+    }
+    int32_t want = (int32_t)gm_r32(count_p);
+    int16_t err = want < 0 ? FILES_PARAM_ERR : 0;
+    size_t got = 0;
+    if (!err && want > 0) {
+        fseek(o->f, 0, SEEK_CUR);
+        got = fread(gm_ptr(trap_arg(2), (uint32_t)want), 1, (size_t)want, o->f);
+        if (got < (size_t)want)
+            err = FILES_EOF_ERR;
+    }
+    gm_w32(count_p, (uint32_t)got);
+    trap_return((uint32_t)(int32_t)err);
+}
+
+/* The FindFolder types the shim knows. */
+#define FOLDER_PREFERENCES 0x70726566u /* 'pref' */
+
+/* FindFolder(short vRefNum, OSType folderType, Boolean createFolder,
+   short *foundVRefNum, long *foundDirID) -> OSErr. The Preferences
+   folder is the game folder, whose files the data folder overlays, so
+   what the game saves there lands in its save folder. Other folders
+   aren't found. */
+static void h_find_folder(void) {
+    uint32_t type = trap_arg(1);
+    if (type != FOLDER_PREFERENCES) {
+        log_msg("FindFolder: no folder of type '%c%c%c%c'", (char)(type >> 24), (char)(type >> 16),
+                (char)(type >> 8), (char)type);
+        trap_return((uint32_t)FILES_FNF_ERR);
+        return;
+    }
+    gm_w16(trap_arg(3), (uint16_t)FILES_VREFNUM);
+    gm_w32(trap_arg(4), FILES_ROOT_DIRID);
+    trap_return(0);
+}
+
+/* FSpGetFInfo(const FSSpec *spec, FInfo *info) -> OSErr: the type,
+   creator, flags and place from the file's Finder info (zeros where it
+   has none). */
+#define FINFO_SIZE 16
+static void h_fsp_get_finfo(void) {
+    char rel[REL_CAP], path[PATH_CAP];
+    spec_rel_path(trap_arg(0), rel, sizeof rel);
+    locate(rel, false, path, sizeof path);
+    if (!exists(path, false)) {
+        trap_return((uint32_t)FILES_FNF_ERR);
+        return;
+    }
+    uint8_t info[32] = {0};
+    getxattr(path, XATTR_FINDERINFO_NAME, info, sizeof info, 0, 0);
+    memcpy(gm_ptr(trap_arg(1), FINFO_SIZE), info, FINFO_SIZE);
+    trap_return(0);
+}
+
+/* ResolveAliasFile(FSSpec *target, Boolean resolveAliasChains, Boolean
+   *targetIsFolder, Boolean *wasAliased) -> OSErr. The fake volume holds no
+   aliases, so the target is what it names. */
+static void h_resolve_alias_file(void) {
+    uint32_t spec = trap_arg(0);
+    uint32_t dir = gm_r32(spec + 2);
+    if (!dir_path(dir))
+        trap_crash("ResolveAliasFile: unknown directory ID %u", dir);
+    char mac[256], utf[REL_CAP], rel[REL_CAP], path[PATH_CAP];
+    gm_read_pstr(spec + 6, mac);
+    files_mac_to_utf8(mac, utf, sizeof utf);
+    join(dir_path(dir), utf, rel, sizeof rel);
+    bool folder = is_dir(rel);
+    locate(rel, false, path, sizeof path);
+    gm_w8(trap_arg(2), folder);
+    gm_w8(trap_arg(3), 0);
+    trap_return(folder || exists(path, false) ? 0 : (uint32_t)FILES_FNF_ERR);
+}
+
+/* NewAlias(const FSSpec *fromFile, const FSSpec *target, AliasHandle
+   *alias) -> OSErr. An AliasRecord's userType and aliasSize, then the
+   target's FSSpec: nothing on the fake volume reads one back, and the
+   game keeps it as it is. */
+#define ALIAS_HEADER 6
+static void h_new_alias(void) {
+    uint32_t size = ALIAS_HEADER + FSSPEC_SIZE;
+    uint32_t h = mm_new_handle(size, true);
+    if (!h) {
+        gm_w32(trap_arg(2), 0);
+        trap_return((uint32_t)MM_MEM_FULL_ERR);
+        return;
+    }
+    uint32_t p = gm_r32(h);
+    gm_w16(p + 4, (uint16_t)size);
+    memcpy(gm_ptr(p + ALIAS_HEADER, FSSPEC_SIZE), gm_ptr(trap_arg(1), FSSPEC_SIZE), FSSPEC_SIZE);
+    gm_w32(trap_arg(2), h);
+    trap_return(0);
+}
+
+/* FlushVol(ConstStr63Param volName, short vRefNum) -> OSErr: every write
+   is in the host's hands already. */
+static void h_flush_vol(void) {
+    for (int i = 0; i < MAX_FILES; i++)
+        if (F.files[i].f)
+            fflush(F.files[i].f);
+    trap_return(0);
+}
+
 void files_register(void) {
     trap_register("FSMakeFSSpec", h_fs_make_fsspec);
     trap_register("FSpCreate", h_fsp_create);
@@ -792,4 +902,10 @@ void files_register(void) {
     trap_register("FSGetForkPosition", h_fs_get_fork_position);
     trap_register("FSSetForkPosition", h_fs_set_fork_position);
     trap_register("FSCloseFork", h_fs_close);
+    trap_register("FSRead", h_fs_read);
+    trap_register("FindFolder", h_find_folder);
+    trap_register("FSpGetFInfo", h_fsp_get_finfo);
+    trap_register("ResolveAliasFile", h_resolve_alias_file);
+    trap_register("NewAlias", h_new_alias);
+    trap_register("FlushVol", h_flush_vol);
 }
