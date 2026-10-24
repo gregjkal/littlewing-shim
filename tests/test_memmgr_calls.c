@@ -8,7 +8,9 @@
 static const char *const names[] = {
     "NewPtr", "NewPtrClear", "DisposePtr", "GetPtrSize", "SetPtrSize", "NewHandleClear",
     "DisposeHandle", "GetHandleSize", "RecoverHandle", "HLock", "HUnlock", "HPurge",
-    "HNoPurge", "MoveHHi", "HGetState", "HSetState", "MemError", "ReserveMem",
+    "HNoPurge", "MoveHHi", "HGetState", "HSetState", "MemError", "SetHandleSize", "EmptyHandle",
+    "HLockHi", "TempNewHandle", "MaxBlock", "MoreMasterPointers", "NewGrowZoneUPP",
+    "DisposeGrowZoneUPP", "SetGrowZone", "GZSaveHnd", "ReserveMem",
 };
 
 static void setup(void) {
@@ -158,6 +160,52 @@ TEST(mmcall_clobbered_header_with_wrapping_size_crashes) {
     int status = test_run_child(child_clobbered_header, &cap, out, sizeof out);
     CHECK_EQ(status, 2);
     CHECK_CONTAINS(out, "is corrupt");
+}
+
+/* The calls a PowerPlant program (Golden Logres, Angel Egg) adds. */
+TEST(mmcall_handle_size_empty_lock_hi_and_temp_memory) {
+    setup();
+    uint32_t h = call_import("NewHandleClear", 1, 16u);
+    call_import("SetHandleSize", 2, h, 4000u);
+    CHECK_EQ(mem_error(), 0);
+    CHECK_EQ(call_import("GetHandleSize", 1, h), 4000);
+    call_import("EmptyHandle", 1, h);
+    CHECK_EQ(mem_error(), 0);
+    CHECK_EQ(call_import("GetHandleSize", 1, h), 0);
+    call_import("HLockHi", 1, h);
+    CHECK(call_import("HGetState", 1, h) & MM_STATE_LOCKED);
+
+    uint32_t err = scratch(2);
+    gm_w16(err, 0x7777);
+    uint32_t t = call_import("TempNewHandle", 2, 100u, err);
+    CHECK(mm_is_handle(t));
+    CHECK_EQ(gm_r16(err), 0);
+    CHECK_EQ(call_import("GetHandleSize", 1, t), 100);
+    CHECK_EQ(call_import("TempNewHandle", 2, 0xF0000000u, err), 0);
+    CHECK_EQ((int16_t)gm_r16(err), MM_MEM_FULL_ERR);
+}
+
+TEST(mmcall_max_block_is_the_largest_free_block) {
+    setup();
+    uint32_t whole = call_import("MaxBlock", 0);
+    CHECK_EQ(whole, mm_free_bytes());
+    call_import("NewPtr", 1, 1000u);
+    CHECK(call_import("MaxBlock", 0) < whole);
+    CHECK(call_import("MaxBlock", 0) <= mm_free_bytes());
+}
+
+/* The heap never runs the grow zone procedure, so it is only kept. */
+TEST(mmcall_grow_zone_and_master_pointers_change_nothing) {
+    setup();
+    uint32_t free_before = mm_free_bytes();
+    call_import("MoreMasterPointers", 1, 0x500u);
+    CHECK_EQ(mem_error(), 0);
+    uint32_t upp = call_import("NewGrowZoneUPP", 1, 0x1f3d8u);
+    CHECK_EQ(upp, 0x1f3d8u);
+    call_import("SetGrowZone", 1, upp);
+    CHECK_EQ(call_import("GZSaveHnd", 0), 0);
+    call_import("DisposeGrowZoneUPP", 1, upp);
+    CHECK_EQ(mm_free_bytes(), free_before);
 }
 
 TEST(mmcall_reserve_mem_succeeds) {

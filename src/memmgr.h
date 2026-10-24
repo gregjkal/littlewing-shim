@@ -55,6 +55,8 @@ void mm_set_handle_state(uint32_t h, uint8_t state);
 
 /* Total payload bytes in free blocks. */
 uint32_t mm_free_bytes(void);
+/* The largest free block's payload bytes (MaxBlock). */
+uint32_t mm_largest_free(void);
 
 /* MemError: the result of the last guest Memory Manager call. */
 int16_t mm_error(void);
