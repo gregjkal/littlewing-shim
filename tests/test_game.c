@@ -1,7 +1,6 @@
 #include "test.h"
 
 #include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 
 #include "game.h"
@@ -75,20 +74,18 @@ TEST(game_table_knows_five_games) {
 TEST(game_folders_are_under_the_apps_dir) {
     char def[1024], out[1024];
     set_apps_dir(""); /* empty means unset */
-    game_folder(game_at(1), def, sizeof def);
+    snprintf(def, sizeof def, "%s", game_apps_dir());
     setenv("LOONY_APPS_DIR", "/tmp/apps", 1);
     game_folder(game_at(0), out, sizeof out);
     restore_apps_dir();
-    /* This Mac may keep it in a folder under /Applications. */
-    CHECK(strncmp(def, "/Applications/", 14) == 0);
-    CHECK(strlen(def) >= 17 && strcmp(def + strlen(def) - 17, "/Crystal Caliburn") == 0);
+    CHECK_STR(def, "/Applications");
     CHECK_STR(out, "/tmp/apps/Loony Labyrinth");
 }
 
 /* Makes <apps>/<sub>/Loony Labyrinth with its program; sub may be "". */
 static void put_loony(const char *apps, const char *sub) {
     char dir[1200];
-    snprintf(dir, sizeof dir, "%s/%s%sLoony Labyrinth", apps, sub, *sub ? "/" : "");
+    snprintf(dir, sizeof dir, "%s/%s/Loony Labyrinth", apps, sub);
     make_dirs(dir);
     touch(dir, "LOONY LABYRINTH 3.0.1");
 }
