@@ -18,7 +18,8 @@ static const char *const names[] = {
     "EndFullScreen", "ClipRect", "RGBForeColor", "PaintRect", "CopyBits", "DrawPicture",
     "GetEntryColor", "DisposePalette", "CreateNewWindow", "ChangeWindowAttributes",
     "SetWindowTitleWithCFString", "SetClip", "GetClip", "GetPortVisibleRegion", "NewRgn",
-    "RectRgn", "UnionRgn", "GetRegionBounds",
+    "RectRgn", "UnionRgn", "GetRegionBounds", "GetDeviceList", "GetNextDevice", "GetMaxDevice",
+    "TestDeviceAttribute",
 };
 
 static void setup(void) {
@@ -444,4 +445,25 @@ TEST(qd_palette_entry_outside_crashes) {
     char out[16384];
     CHECK_EQ(test_run_child(child_entry_outside, NULL, out, sizeof out), 2);
     CHECK_CONTAINS(out, "GetEntryColor: entry 1 is outside the palette (1 entries)");
+}
+
+/* The device list is the main screen, a color screen device. */
+TEST(qd_the_device_list_is_the_main_screen) {
+    setup();
+    uint32_t gd = call_import("GetMainDevice", 0);
+    CHECK_EQ(call_import("GetDeviceList", 0), gd);
+    CHECK_EQ(call_import("GetNextDevice", 1, gd), 0);
+    CHECK_EQ(call_import("GetMaxDevice", 1, rect(0, 0, 10, 10)), gd);
+    CHECK_EQ(call_import("TestDeviceAttribute", 2, gd, 11u), 1); /* mainScreen */
+    CHECK_EQ(call_import("TestDeviceAttribute", 2, gd, 13u), 1); /* screenDevice */
+    CHECK_EQ(call_import("TestDeviceAttribute", 2, gd, 0u), 1);  /* gdDevType: color */
+    CHECK_EQ(call_import("TestDeviceAttribute", 2, gd, 14u), 0); /* noDriver */
+}
+
+/* Golden Logres sets the depth on a NULL device: the main screen's. */
+TEST(qd_set_depth_on_no_device_sets_the_main_screens) {
+    setup();
+    CHECK_EQ(call_import("SetDepth", 4, 0u, 16u, 1u, 1u), 0);
+    uint32_t gd = call_import("GetMainDevice", 0);
+    CHECK_EQ(gm_r16(gm_r32(gm_r32(gm_r32(gd) + GD_PMAP)) + PM_PIXEL_SIZE), 16);
 }
