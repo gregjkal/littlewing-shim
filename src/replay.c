@@ -887,11 +887,6 @@ static int by_start(const void *a, const void *b) {
     return m < n ? -1 : m > n ? 1 : strcmp(x, y);
 }
 
-static bool ends_with(const char *s, const char *end) {
-    size_t n = strlen(s), m = strlen(end);
-    return n >= m && strcmp(s + n - m, end) == 0;
-}
-
 /* When the recording name in dir was running: from the time in its name
    (after "<game_id>-") to its last write, give or take REPLAY_SCORE_SLACK. */
 static bool recording_span(const char *dir, const char *name, size_t id_len, time_t *from,

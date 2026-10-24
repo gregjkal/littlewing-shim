@@ -123,3 +123,8 @@ bool same_file(const char *a, const char *b) {
     struct stat sa, sb;
     return stat(a, &sa) == 0 && stat(b, &sb) == 0 && sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino;
 }
+
+bool ends_with(const char *s, const char *end) {
+    size_t n = strlen(s), m = strlen(end);
+    return n >= m && strcmp(s + n - m, end) == 0;
+}

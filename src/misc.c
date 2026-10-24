@@ -400,6 +400,7 @@ static void h_block_move_data(void) {
 
 static void h_init_cursor(void) { M.cursor_level = 0; }
 static void h_hide_cursor(void) { M.cursor_level--; }
+static void h_show_cursor(void) { misc_show_cursor(); }
 static void h_set_theme_cursor(void) { trap_return(0); }
 static void h_key_script(void) {}
 /* The keyboard's input source is the host's: these change nothing. */
@@ -566,7 +567,18 @@ static void h_exit_to_shell(void) {
     misc_exit("ExitToShell", 0);
 }
 
+/* Fix2X(Fixed) -> double, in f1. */
+static void h_fix2x(void) { cpu_set_fpr(1, (int32_t)trap_arg(0) / 65536.0); }
+
+/* Long2Fix(long) -> Fixed, saturating as the Toolbox does. */
+static void h_long2fix(void) {
+    int32_t v = (int32_t)trap_arg(0);
+    trap_return(v > 0x7FFF ? 0x7FFFFFFFu : v < -0x8000 ? 0x80000000u : (uint32_t)v << 16);
+}
+
 void misc_register(void) {
+    trap_register("Fix2X", h_fix2x);
+    trap_register("Long2Fix", h_long2fix);
     trap_register("Gestalt", h_gestalt);
     trap_register("TickCount", h_tick_count);
     trap_register("Microseconds", h_microseconds);
@@ -579,6 +591,7 @@ void misc_register(void) {
     trap_register("BlockMoveData", h_block_move_data);
     trap_register("InitCursor", h_init_cursor);
     trap_register("HideCursor", h_hide_cursor);
+    trap_register("ShowCursor", h_show_cursor);
     trap_register("SetThemeCursor", h_set_theme_cursor);
     trap_register("KeyScript", h_key_script);
     trap_register("GetMBarHeight", h_get_mbar_height);

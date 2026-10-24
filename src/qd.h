@@ -100,6 +100,14 @@ void qd_mark_dirty(void);
    while direct drawing is on. */
 bool qd_take_dirty(void);
 
+/* Pads every new GWorld's rows as System 7.1's NewGWorld did: rounded up
+   to 16 bytes, and 16 more. Angel Egg's data files hold images at those
+   strides (a 384-pixel 8-bit row is 400 bytes, a 16-bit one 784) and read
+   them straight into GWorld pixels, so they need it. Off by default: the
+   other games size buffers of their own from a GWorld's width and copy by
+   its rowBytes, and change if their rows grow. */
+void qd_pad_gworld_rows(bool on);
+
 /* A game is drawing into the screen's pixels itself (a captured display),
    so QuickDraw can't tell when they change. */
 void qd_set_direct_drawing(bool on);

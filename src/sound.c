@@ -27,6 +27,7 @@ static struct {
         bool ours;     /* allocated by SndNewChannel */
     } ch[MIX_CHANNELS];
     bool warned[256], warned_encoding[256];
+    uint32_t play_chan;      /* SndPlay's own channel, once it has one */
     SDL_AudioStream *stream; /* NULL: clock-driven */
     SDL_AudioStream *monitor; /* clock-driven, and played too (sound_open_monitor) */
     bool monitor_on;
@@ -160,6 +161,7 @@ void sound_init(void) {
     memset(SND.ch, 0, sizeof SND.ch);
     memset(SND.warned, 0, sizeof SND.warned);
     memset(SND.warned_encoding, 0, sizeof SND.warned_encoding);
+    SND.play_chan = 0;
     SND.rendered = 0;
     SND.render_seconds = 0;
 }
@@ -415,28 +417,33 @@ void sound_pump(void) {
 
 static void h_new_snd_callback_upp(void) { trap_return(trap_arg(0)); }
 
-/* SndNewChannel(SndChannelPtr *chan, short synth, long init, SndCallBackUPP userRoutine) */
-static void h_snd_new_channel(void) {
-    uint32_t pp = trap_arg(0);
+/* Opens a channel at chan (a new one, ours, if 0) with callback proc, and
+   returns its address. */
+static uint32_t open_channel(const char *call, uint32_t chan, uint32_t proc) {
     int i;
     for (i = 0; i < MIX_CHANNELS && SND.ch[i].addr; i++)
         ;
     if (i == MIX_CHANNELS)
-        trap_crash("SndNewChannel: more than %d channels", MIX_CHANNELS);
-    uint32_t chan = gm_r32(pp);
+        trap_crash("%s: more than %d channels", call, MIX_CHANNELS);
     bool ours = chan == 0;
     if (ours) {
         chan = mm_new_ptr(SND_CHANNEL_SIZE, true);
         if (!chan)
-            trap_crash("SndNewChannel: out of guest memory");
-        gm_w32(pp, chan);
+            trap_crash("%s: out of guest memory", call);
     }
-    gm_w32(chan + CHAN_CALLBACK, trap_arg(3));
+    gm_w32(chan + CHAN_CALLBACK, proc);
     SND.ch[i].addr = chan;
     SND.ch[i].ours = ours;
     lock();
     mix_open(i);
     unlock();
+    return chan;
+}
+
+/* SndNewChannel(SndChannelPtr *chan, short synth, long init, SndCallBackUPP userRoutine) */
+static void h_snd_new_channel(void) {
+    uint32_t pp = trap_arg(0);
+    gm_w32(pp, open_channel("SndNewChannel", gm_r32(pp), trap_arg(3)));
     trap_return(0);
 }
 
@@ -457,18 +464,9 @@ static void h_snd_dispose_channel(void) {
     trap_return(0);
 }
 
-/* SndDoCommand(chan, const SndCommand *cmd, Boolean noWait) */
-static void h_snd_do_command(void) {
-    int i = find(trap_arg(0));
-    if (i < 0) {
-        trap_return((uint32_t)SND_BAD_CHANNEL_ERR);
-        return;
-    }
-    mix_cmd m;
-    if (!translate(trap_arg(1), &m) || m.kind == MIX_NULL) { /* nothing to queue */
-        trap_return(0);
-        return;
-    }
+/* Queues m on channel i, a step of the replay (whether the queue was
+   full). Returns an OSErr. */
+static int16_t queue(int i, mix_cmd m) {
     catch_up();
     replay_step();
     bool full = replay_playing() && replay_take(REPLAY_SOUND_FULL, NULL);
@@ -481,7 +479,22 @@ static void h_snd_do_command(void) {
         ok = !full;
     else if (!ok)
         replay_log(REPLAY_SOUND_FULL, NULL);
-    trap_return(ok ? 0 : (uint32_t)SND_QUEUE_FULL_ERR);
+    return ok ? 0 : SND_QUEUE_FULL_ERR;
+}
+
+/* SndDoCommand(chan, const SndCommand *cmd, Boolean noWait) */
+static void h_snd_do_command(void) {
+    int i = find(trap_arg(0));
+    if (i < 0) {
+        trap_return((uint32_t)SND_BAD_CHANNEL_ERR);
+        return;
+    }
+    mix_cmd m;
+    if (!translate(trap_arg(1), &m) || m.kind == MIX_NULL) { /* nothing to queue */
+        trap_return(0);
+        return;
+    }
+    trap_return((uint32_t)(int32_t)queue(i, m));
 }
 
 static void h_snd_do_immediate(void) {
@@ -530,7 +543,83 @@ static void h_snd_channel_status(void) {
     trap_return(0);
 }
 
+/* Where an 'snd ' resource's sampled sound header is, from the start of
+   its data: the offset its first soundCmd or bufferCmd with the data
+   pointer flag gives, in a format 1 or 2 resource. -1 if it has none. */
+#define SND_DATA_POINTER_FLAG 0x8000
+static int32_t header_offset(uint32_t h) {
+    if (!mm_is_handle(h))
+        return -1;
+    uint32_t len = mm_handle_size(h), p = gm_r32(h), at;
+    if (len < 4)
+        return -1;
+    uint16_t format = gm_r16(p);
+    if (format == 1) {
+        at = 4 + 6u * gm_r16(p + 2); /* past the modifiers */
+    } else if (format == 2) {
+        at = 4;
+    } else {
+        return -1;
+    }
+    if (at + 2 > len)
+        return -1;
+    uint32_t n = gm_r16(p + at);
+    for (uint32_t k = 0; k < n && at + 2 + 8 * (k + 1) <= len; k++) {
+        uint32_t c = p + at + 2 + 8 * k;
+        uint16_t cmd = gm_r16(c);
+        uint32_t off = gm_r32(c + 4);
+        if ((cmd & SND_DATA_POINTER_FLAG) &&
+            ((cmd & ~SND_DATA_POINTER_FLAG) == SND_SOUND_CMD || (cmd & ~SND_DATA_POINTER_FLAG) == SND_BUFFER_CMD) &&
+            off < len)
+            return (int32_t)off;
+    }
+    return -1;
+}
+
+/* GetSoundHeaderOffset(SndListHandle, long *offset) */
+static void h_get_sound_header_offset(void) {
+    int32_t off = header_offset(trap_arg(0));
+    gm_w32(trap_arg(1), off < 0 ? 0 : (uint32_t)off);
+    trap_return(off < 0 ? (uint32_t)SND_BAD_FORMAT_ERR : 0);
+}
+
+/* SndPlay(SndChannelPtr chan, SndListHandle, Boolean async): queues the
+   resource's sound on chan, or with none on a channel of SndPlay's own,
+   where one sound follows another. It never waits for the sound to end, so
+   a synchronous play returns at once. */
+static void h_snd_play(void) {
+    uint32_t chan = trap_arg(0), h = trap_arg(1);
+    int32_t off = header_offset(h);
+    if (off < 0) {
+        log_msg("sound: SndPlay of 0x%08x, which has no sampled sound (ignored)", h);
+        trap_return((uint32_t)SND_BAD_FORMAT_ERR);
+        return;
+    }
+    if (!chan) {
+        if (!SND.play_chan)
+            SND.play_chan = open_channel("SndPlay", 0, 0);
+        chan = SND.play_chan;
+    }
+    int i = find(chan);
+    if (i < 0) {
+        trap_return((uint32_t)SND_BAD_CHANNEL_ERR);
+        return;
+    }
+    mix_cmd m = {.kind = MIX_BUFFER, .sound = copy_sound(gm_r32(h) + (uint32_t)off)};
+    if (!m.sound) {
+        trap_return(0);
+        return;
+    }
+    trap_return((uint32_t)(int32_t)queue(i, m));
+}
+
+/* SndSoundManagerVersion() -> NumVersion: 3.6, final. */
+static void h_snd_sound_manager_version(void) { trap_return(0x03608000u); }
+
 void sound_register(void) {
+    trap_register("GetSoundHeaderOffset", h_get_sound_header_offset);
+    trap_register("SndPlay", h_snd_play);
+    trap_register("SndSoundManagerVersion", h_snd_sound_manager_version);
     trap_register("NewSndCallBackUPP", h_new_snd_callback_upp);
     trap_register("SndNewChannel", h_snd_new_channel);
     trap_register("SndDisposeChannel", h_snd_dispose_channel);
