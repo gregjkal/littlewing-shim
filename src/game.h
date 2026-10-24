@@ -9,7 +9,9 @@
    calls, so they differ only in names. Jinni Zeala (1.2.2, an older build
    of the engine) makes 120 of those and 3 more. MONSTER FAIR and Mad
    Daedalus (1.1.9) are Mac OS X bundles with Mach-O programs; Mad Daedalus
-   plays its sound through CoreAudio and wants a 1024x768 display. Adding a
+   plays its sound through CoreAudio and wants a 1024x768 display. Angel
+   Egg (3.0.1) is a Mach-O bundle too, a classic Toolbox program built with
+   CodeWarrior, and plays in a 1024x768 window. Adding a
    game is a row in game.c (the picker lays out two to PICKER_MAX games). */
 typedef enum {
     GAME_PEF_FOLDER,   /* a folder holding a PEF program with a resource fork */

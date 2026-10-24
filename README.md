@@ -1,9 +1,10 @@
 # littlewing-shim
 
-Runs five PowerPC Mac pinball games by LittleWing natively on Apple Silicon:
+Runs six PowerPC Mac pinball games by LittleWing natively on Apple Silicon:
 *Loony Labyrinth 3.0.1* and *Crystal Caliburn 3.0.1* (2003, Carbon programs for
 Mac OS 9 and X), *Jinni Zeala 1.2.2* (2004, an older build of the same engine),
-*MONSTER FAIR 1.2.5* and *Mad Daedalus 1.1.9* (2010, Mac OS X applications). It
+*MONSTER FAIR 1.2.5* and *Mad Daedalus 1.1.9* (2010, Mac OS X applications),
+and *Angel Egg 3.0.1* (the 1996 table, as a 2005 Mac OS X application). It
 emulates their CPU (Unicorn) and reimplements the Mac OS calls they make in C.
 This repo contains no game files: you need your own copies of the games. The
 one exception is `hd-art/`, enlarged art made from the game's pictures (see HD
@@ -39,16 +40,18 @@ file:
 | Jinni Zeala | `/Applications/Jinni Zeala` | `JINNI ZEALA 1.2.2` | the Mac version, 1.2.2 |
 | MONSTER FAIR | `/Applications/MONSTER FAIR.app` | `Contents/MacOS/MONSTER FAIR` | the Mac OS X version, 1.2.5 (the only version supported) |
 | Mad Daedalus | `/Applications/Mad Daedalus.app` | `Contents/MacOS/Mad Daedalus` | the Mac OS X version, 1.1.9 |
+| Angel Egg | `/Applications/Angel Egg.app` | `Contents/MacOS/Angel Egg` | the Mac OS X version, 3.0.1 |
 
 To get a game, download it from LittleWing's [download
 page](http://www.littlewingpinball.com/doc/en/downloads/index.html), open the
 disk image, and drag the game onto the Applications shortcut next to it: the
 game's folder for Loony Labyrinth, Crystal Caliburn and Jinni Zeala, the app
-itself for MONSTER FAIR and Mad Daedalus. Keep its name. To keep the games
-together, put them in a folder of their own in Applications instead, such as
-`/Applications/LittleWing Games/Loony Labyrinth`; any folder name works, one
-level down. A game directly in Applications is played over a copy in a
-folder. Neither app runs on Apple Silicon by itself; LittleWing.app runs them.
+itself for MONSTER FAIR, Mad Daedalus and Angel Egg. Keep its name. To keep
+the games together, put them in a folder of their own in Applications instead,
+such as `/Applications/LittleWing Games/Loony Labyrinth`; any folder name
+works, one level down. A game directly in Applications is played over a copy
+in a folder. None of these apps runs on Apple Silicon by itself;
+LittleWing.app runs them.
 
 Download `LittleWing-<version>.zip` from
 [Releases](https://github.com/gregjkal/littlewing-shim/releases), unzip it,
@@ -85,7 +88,7 @@ LOONY_GAME=crystal-caliburn ./build-release/loony   # that game, from its usual 
 ```
 
 `LOONY_GAME` takes `loony-labyrinth`, `crystal-caliburn`, `monster-fair`,
-`jinni-zeala` or `mad-daedalus`.
+`jinni-zeala`, `mad-daedalus` or `angel-egg`.
 
 Until it is registered, each game first shows two windows: the shareware screen
 (Play Demo, Buy Now, Enter Key-Code, Quit) and the key list. Click a button, or
@@ -99,7 +102,9 @@ publicly on [archive.org](https://archive.org/details/littlewing-pinball/).
 The game then plays its opening and a self-playing demo. All the games use
 the same keys by default (MONSTER FAIR and Jinni Zeala add X and . to nudge
 the table's left and right sides, and in Jinni Zeala, which has no demo to
-stop, and in Mad Daedalus, the first Esc opens the menu):
+stop, and in Mad Daedalus, the first Esc opens the menu). Angel Egg keeps
+its menus in a menu bar it hides, so Cmd-N (its New Game) starts a game, and
+Esc pauses it:
 
 | Key | Does |
 |---|---|
@@ -123,8 +128,8 @@ level. The slider follows how loudness is heard, not the signal, so 50% is
 Each game's preferences (options, keys, the high-score table and the license)
 are saved when it quits (and at any exit but a crash), in
 `~/Library/Application Support/littlewing-shim/<game>/prefs.plist`, where `<game>`
-is `loony-labyrinth`, `crystal-caliburn`, `monster-fair`, `jinni-zeala` or
-`mad-daedalus`. Any
+is `loony-labyrinth`, `crystal-caliburn`, `monster-fair`, `jinni-zeala`,
+`mad-daedalus` or `angel-egg`. Any
 file a game writes goes to its own folder there, never into the game's folder
 or app.
 Delete a game's folder to start it over. The picker's last game and the volume
@@ -170,7 +175,7 @@ upscaler, or redrawn by hand, can replace the generated file. `LOONY_HD_SCALE`
   blur together. That file is left out of `hd-art/loony-labyrinth`, so the
   score display keeps the original font.
 - **Other games:** art for another game goes in `hd-art/<game id>`
-  (`crystal-caliburn`, `monster-fair`, `jinni-zeala`, `mad-daedalus`), and the app uses it
+  (`crystal-caliburn`, `monster-fair`, `jinni-zeala`, `mad-daedalus`, `angel-egg`), and the app uses it
   from then on.
 
 ## Giving it to someone
@@ -327,13 +332,15 @@ The original game files are only ever read, never modified. The emulated screen
 is the size each game expects: 800x600 for the classic games, 1024x768 at
 16 bits for MONSTER FAIR, which takes over the whole (emulated) display, and
 1024x768 at 32 bits for Mad Daedalus, which plays at the display's own size
-(its DESKTOP SCREEN option) and whose table is drawn for 768 lines. The host
+(its DESKTOP SCREEN option) and whose table is drawn for 768 lines, as is
+Angel Egg's, which sizes its window to the 1024x768 screen. The host
 window keeps its size and scales it to fit.
 
 Tests that need a game's files skip when it isn't installed (`SKIP_UNLESS_GAME`,
-`SKIP_UNLESS_CC`, `SKIP_UNLESS_MF`, `SKIP_UNLESS_JZ` and `SKIP_UNLESS_MD` in
-`tests/test.h`). `LOONY_GAME_DIR`, `LOONY_CC_DIR`, `LOONY_MF_APP`, `LOONY_JZ_DIR`
-and `LOONY_MD_APP` point them at copies elsewhere. The tests
+`SKIP_UNLESS_CC`, `SKIP_UNLESS_MF`, `SKIP_UNLESS_JZ`, `SKIP_UNLESS_MD` and
+`SKIP_UNLESS_AE` in `tests/test.h`). `LOONY_GAME_DIR`, `LOONY_CC_DIR`,
+`LOONY_MF_APP`, `LOONY_JZ_DIR`, `LOONY_MD_APP` and `LOONY_AE_APP` point them at
+copies elsewhere. The tests
 that register take the address and key code from the environment and skip
 without them: `LOONY_TEST_EMAIL` and `LOONY_TEST_KEY` (Loony Labyrinth), and
 `LOONY_TEST_MF_EMAIL` and `LOONY_TEST_MF_KEY` (MONSTER FAIR; the public key in

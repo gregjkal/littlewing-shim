@@ -31,8 +31,10 @@ void misc_set_exit_hook(void (*fn)(void));
 _Noreturn void misc_exit(const char *why, int status);
 
 /* What crt1 does when a Mac OS X program's main returns: exit(status),
-   logged as "main returned <status>" before the exit hook runs. */
-_Noreturn void misc_main_returned(int32_t status);
+   logged as "main returned <status>" before the exit hook runs. When
+   status means nothing (a CodeWarrior program's void main leaves whatever
+   is in r3), the exit status is 0, and the log still has the value. */
+_Noreturn void misc_main_returned(int32_t status, bool meaningless);
 
 /* Seconds since 1970 (UTC). On the virtual clock, the same calendar as
    GetDateTime: 2003-01-01 00:00:00 plus the virtual time. */

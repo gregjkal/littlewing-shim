@@ -6,7 +6,8 @@
 #include "events.h"
 
 /* Dialog Manager: Alert, StopAlert and ParamText; GetNewDialog,
-   ModalDialog, GetDialogItem, GetDialogItemText and DisposeDialog.
+   DrawDialog, ModalDialog, GetDialogItem, GetDialogItemText and
+   DisposeDialog.
 
    Dialogs are drawn straight onto the emulated screen from their ALRT, DLOG
    and DITL resources, plainly and with the 8x8 font (font.h): a framed white
