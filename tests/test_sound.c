@@ -42,6 +42,16 @@ static void setup(void) {
     emit_callback();
 }
 
+/* For tests that queue sounds and then render the mixer themselves. On the
+   real clock, each Sound Manager call first renders the frames due by now
+   (catch_up), so on a slow machine a later call can play a queued sound
+   away before render reads it. The fixed clock stands still between calls. */
+static void setup_fixed_clock(void) {
+    setenv("LOONY_FIXED_CLOCK", "1", 1);
+    setup();
+    unsetenv("LOONY_FIXED_CLOCK");
+}
+
 /* A standard 8-bit header (encode 0) of frames of silence at rate Hz, the
    samples following the header. */
 static uint32_t std_header(uint32_t frames, uint32_t rate) {
@@ -84,7 +94,7 @@ static void sleep_s(double s) {
 static void render(int16_t *out, uint32_t frames) { mix_render(out, frames); }
 
 TEST(sound_buffers_are_copied_when_queued) {
-    setup();
+    setup_fixed_clock();
     uint32_t chan = new_channel();
     uint32_t h = std_header(4, MIX_RATE);
     gm_w8(h + 22, 0xC0); /* +64 of 128: 0x4000 */
@@ -98,7 +108,7 @@ TEST(sound_buffers_are_copied_when_queued) {
 }
 
 TEST(sound_extended_headers_play_16_bit_stereo) {
-    setup();
+    setup_fixed_clock();
     uint32_t chan = new_channel();
     uint32_t h = scratch(64 + 8);
     gm_w32(h + 4, 2); /* channels */
@@ -303,7 +313,7 @@ static uint32_t snd_resource(uint16_t format, uint32_t frames, uint32_t rate, ui
 }
 
 TEST(sound_snd_resources_play_with_sndplay) {
-    setup();
+    setup_fixed_clock();
     uint32_t off = scratch(4);
     uint32_t one = snd_resource(1, 4, MIX_RATE, 0xC0), two = snd_resource(2, 4, MIX_RATE, 0xC0);
     CHECK_EQ(call_import("GetSoundHeaderOffset", 2, one, off), 0);
@@ -323,7 +333,7 @@ TEST(sound_snd_resources_play_with_sndplay) {
 }
 
 TEST(sound_sndplay_without_a_channel_plays_on_its_own) {
-    setup();
+    setup_fixed_clock();
     CHECK_EQ(call_import("SndPlay", 3, 0u, snd_resource(2, 4, MIX_RATE, 0xC0), 0u), 0);
     CHECK_EQ(call_import("SndPlay", 3, 0u, snd_resource(2, 4, MIX_RATE, 0x40), 0u), 0);
     int16_t out[16];
