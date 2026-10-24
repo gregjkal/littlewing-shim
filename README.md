@@ -54,7 +54,7 @@ Download `LittleWing-<version>.zip` from
 [Releases](https://github.com/gregjkal/littlewing-shim/releases), unzip it,
 and move `LittleWing.app` to `/Applications` (or anywhere); or build it as
 above and copy `build-release/LittleWing.app`. Double-click it. With two to
-five games installed, it opens on a picker showing each game's title picture
+seven games installed, it opens on a picker showing each game's title picture
 (MONSTER FAIR's, Jinni Zeala's and Mad Daedalus's cards show their icons): the arrow keys (or
 the mouse) choose, and Return (or a click) plays. It starts on the last game
 played. With one game installed, it plays that game. Choosing QUIT in a game's
