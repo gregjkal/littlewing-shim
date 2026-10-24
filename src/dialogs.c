@@ -847,6 +847,14 @@ static void h_get_dialog_item_text(void) {
         memcpy(gm_ptr(out + 1, n), gm_ptr(gm_r32(h), n), n);
 }
 
+/* DrawDialog(DialogRef): draws the box and every item again. An invisible
+   DLOG stays hidden until ModalDialog shows it. */
+static void h_draw_dialog(void) {
+    dialog *d = need_dialog("DrawDialog", trap_arg(0), KIND_DLOG);
+    if (d->shown)
+        draw_all(d);
+}
+
 static void h_dispose_dialog(void) {
     dialog *d = need_dialog("DisposeDialog", trap_arg(0), KIND_DLOG);
     close_dialog(d);
@@ -1374,6 +1382,7 @@ void dialogs_register(void) {
     trap_register("ModalDialog", h_modal_dialog);
     trap_register("GetDialogItem", h_get_dialog_item);
     trap_register("GetDialogItemText", h_get_dialog_item_text);
+    trap_register("DrawDialog", h_draw_dialog);
     trap_register("DisposeDialog", h_dispose_dialog);
     trap_register("CreateNibReference", h_create_nib_reference);
     trap_register("DisposeNibReference", h_dispose_nib_reference);
