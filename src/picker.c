@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "blit.h"
 #include "cgimage.h"
@@ -44,6 +45,14 @@
 /* Five cards: the same size, two rows of three columns, the second row
    centered under the first. */
 #define CARD5_GAP 56
+/* Seven cards: smaller again, a row of four over a row of three; a name
+   wider than its column goes on two lines. */
+#define ART7_W 176
+#define ART7_H 132
+#define CARD7_GAP 24
+#define CARD7_ROW 200
+#define NAME7_TOP0 252
+#define NAME_LEADING 4 /* between a two-line name's lines */
 #define ICON_SIZE 128 /* icns 128's largest image, it32 */
 
 static const qd_rgb BLACK = {0, 0, 0}, GOLD = {0xFFFF, 0xCCCC, 0x3333}, DARK = {0x3333, 0x3333, 0x3333},
@@ -51,18 +60,20 @@ static const qd_rgb BLACK = {0, 0, 0}, GOLD = {0xFFFF, 0xCCCC, 0x3333}, DARK = {
                     GRAY = {0x8888, 0x8888, 0x8888};
 
 /* Cards in a row: all of them, except four, which take two rows of two,
-   and five, two rows of three. */
-static int columns(int n) { return n == 4 ? 2 : n == 5 ? 3 : n; }
+   five and six, two rows of three, and seven, a row of four over three. */
+static int columns(int n) { return n == 4 ? 2 : n == 5 || n == 6 ? 3 : n == 7 ? 4 : n; }
 
 /* Where card i's art goes: two cards side by side, three smaller ones, or
-   four or five in two rows, each row centered. */
+   four to seven in two rows, each row centered. */
 static qd_rect card(int n, int i) {
     if (n >= 4) {
-        int cols = columns(n), gap = n == 4 ? CARD4_GAP : CARD5_GAP, row = i / cols;
+        int cols = columns(n), row = i / cols;
+        int w = n == 7 ? ART7_W : ART4_W, h = n == 7 ? ART7_H : ART4_H;
+        int gap = n == 4 ? CARD4_GAP : n == 7 ? CARD7_GAP : CARD5_GAP;
         int in_row = n - row * cols < cols ? n - row * cols : cols;
-        int left = (PICKER_W - in_row * ART4_W - (in_row - 1) * gap) / 2 + i % cols * (ART4_W + gap);
-        int top = CARD4_TOP0 + row * CARD4_ROW;
-        return (qd_rect){(int16_t)top, (int16_t)left, (int16_t)(top + ART4_H), (int16_t)(left + ART4_W)};
+        int left = (PICKER_W - in_row * w - (in_row - 1) * gap) / 2 + i % cols * (w + gap);
+        int top = CARD4_TOP0 + row * (n == 7 ? CARD7_ROW : CARD4_ROW);
+        return (qd_rect){(int16_t)top, (int16_t)left, (int16_t)(top + h), (int16_t)(left + w)};
     }
     if (n == 3) {
         int left = CARD3_LEFT0 + i * (ART3_W + CARD3_GAP);
@@ -73,7 +84,29 @@ static qd_rect card(int n, int i) {
 }
 
 static int name_top(int n, int i) {
+    if (n == 7)
+        return NAME7_TOP0 + i / columns(n) * CARD7_ROW;
     return n >= 4 ? NAME4_TOP0 + i / columns(n) * CARD4_ROW : n == 3 ? NAME3_TOP : NAME_TOP;
+}
+
+/* The widest a name may be before it takes two lines: a column, one card
+   and the gap beside it. */
+static int name_room(int n) {
+    qd_rect a = card(n, 0), b = card(n, 1);
+    return b.left - a.left;
+}
+
+/* Where name (scale 2) breaks into two lines under a column room pixels
+   wide: the last space that leaves the first line fitting, or 0 if it
+   fits on one. */
+static size_t name_break(const char *name, int room) {
+    size_t n = strlen(name), at = 0;
+    if ((int)n * FONT_W * 2 <= room)
+        return 0;
+    for (size_t k = 1; k < n; k++)
+        if (name[k] == ' ' && ((int)k * FONT_W * 2 <= room || !at))
+            at = k;
+    return at;
 }
 
 static qd_pixels pixels(uint8_t *base, int w, int h) {
@@ -141,6 +174,12 @@ void picker_draw(const picker_entry *e, int n, int selected, uint8_t *screen) {
         for (const char *p = e[i].game->title; *p && k + 1 < sizeof name; p++)
             name[k++] = (char)toupper((unsigned char)*p);
         name[k] = '\0';
+        size_t cut = name_break(name, name_room(n));
+        if (cut) {
+            name[cut] = '\0';
+            draw_text(&s, left + w / 2, name_top(n, i) + 2 * FONT_H + NAME_LEADING, name + cut + 1, 2,
+                      i == selected ? WHITE : GRAY);
+        }
         draw_text(&s, left + w / 2, name_top(n, i), name, 2, i == selected ? WHITE : GRAY);
     }
     draw_text(&s, PICKER_W / 2, HINT_TOP, "RETURN TO PLAY - CMD-Q TO QUIT", 2, GRAY);
@@ -149,7 +188,8 @@ void picker_draw(const picker_entry *e, int n, int selected, uint8_t *screen) {
 int picker_hit(int n, int x, int y) {
     for (int i = 0; i < n && i < PICKER_MAX; i++) {
         qd_rect c = card(n, i);
-        if (x >= c.left - BORDER && x < c.right + BORDER && y >= c.top - BORDER && y < name_top(n, i) + 2 * FONT_H)
+        int bottom = name_top(n, i) + 2 * FONT_H + (n == 7 ? 2 * FONT_H + NAME_LEADING : 0);
+        if (x >= c.left - BORDER && x < c.right + BORDER && y >= c.top - BORDER && y < bottom)
             return i;
     }
     return -1;
@@ -298,6 +338,21 @@ bool picker_load_icon(const char *png_path, uint8_t *art, char *err, size_t errl
     return ok;
 }
 
+bool picker_load_bundle_art(const char *app, uint8_t *art, char *err, size_t errlen) {
+    char path[PATH_MAX];
+    snprintf(path, sizeof path, "%s/Contents/Resources/appl.png", app);
+    if (access(path, F_OK) == 0)
+        return picker_load_icon(path, art, err, errlen);
+    snprintf(path, sizeof path, "%s/Contents/Resources/app.icns", app);
+    size_t len = 0;
+    uint8_t *icns = read_file(path, &len);
+    bool ok = icns && picker_load_icns(icns, len, art);
+    if (!ok)
+        snprintf(err, errlen, "%s has neither appl.png nor an app.icns with a 128x128 icon", app);
+    free(icns);
+    return ok;
+}
+
 static struct {
     int n, selected;
     bool choose, quit, dirty;
@@ -346,11 +401,8 @@ const game_info *picker_run(const game_info *const *games, int n) {
         char dir[PATH_MAX], path[PATH_MAX + 64], err[512];
         game_folder(games[i], dir, sizeof dir);
         bool bundle = games[i]->kind == GAME_MACHO_BUNDLE;
-        if (bundle)
-            snprintf(path, sizeof path, "%s/Contents/Resources/appl.png", dir);
-        else
-            snprintf(path, sizeof path, "%s/%s", dir, games[i]->exe);
-        bool loaded = e[i].art && (bundle ? picker_load_icon(path, e[i].art, err, sizeof err)
+        snprintf(path, sizeof path, "%s/%s", dir, games[i]->exe);
+        bool loaded = e[i].art && (bundle ? picker_load_bundle_art(dir, e[i].art, err, sizeof err)
                                           : picker_load_art(path, e[i].art, err, sizeof err));
         if (!loaded) {
             log_msg("picker: %s", e[i].art ? err : "out of memory");
