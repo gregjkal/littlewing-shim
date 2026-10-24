@@ -25,6 +25,9 @@ static const game_info games[] = {
      GAME_MACHO_BUNDLE, 1024, 768},
     {"angel-egg", "Angel Egg", "Angel Egg.app", "Contents/MacOS/Angel Egg", GAME_MACHO_BUNDLE, 1024,
      768},
+    /* It takes the screen at 1024x768 itself (BeginFullScreen). */
+    {"golden-logres", "Golden Logres", "Golden Logres.app", "Contents/MacOS/Golden Logres",
+     GAME_MACHO_BUNDLE, 1024, 768},
 };
 #define NGAMES (sizeof games / sizeof games[0])
 

@@ -466,6 +466,24 @@ TEST(picker_art_for_mad_daedalus_is_its_icon) {
     CHECK_STR(got, "4561d7ee"); /* the icon shown in the five-game picker */
 }
 
+/* Golden Logres is a bundle without appl.png: its card is the 128x128
+   image in its app.icns. */
+TEST(picker_art_for_golden_logres_is_its_icon) {
+    SKIP_UNLESS_GL();
+    char err[512] = "";
+    uint8_t *art = malloc(PICKER_ART_W * PICKER_ART_H * 4);
+    bool ok = picker_load_bundle_art(test_gl_app(), art, err, sizeof err);
+    const uint8_t *corner = art + ((size_t)5 * PICKER_ART_W + 5) * 4;
+    bool around_is_card = corner[1] == 0x22 && corner[2] == 0x22 && corner[3] == 0x22;
+    char got[16];
+    snprintf(got, sizeof got, "%08x", fnv1a32(art, PICKER_ART_W * PICKER_ART_H * 4));
+    free(art);
+    CHECK(ok);
+    CHECK_STR(err, "");
+    CHECK(around_is_card);
+    CHECK_STR(got, "e7fd1c8b"); /* the icon shown in the seven-game picker */
+}
+
 TEST(picker_art_comes_from_the_games_title_picture) {
     SKIP_UNLESS_GAME();
     uint8_t *art = malloc(PICKER_ART_W * PICKER_ART_H * 4);

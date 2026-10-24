@@ -33,15 +33,16 @@ static void restore_apps_dir(void) {
         unsetenv("LOONY_APPS_DIR");
 }
 
-TEST(game_table_knows_six_games) {
-    CHECK_EQ(game_count(), 6);
+TEST(game_table_knows_seven_games) {
+    CHECK_EQ(game_count(), 7);
     CHECK_STR(game_at(0)->id, "loony-labyrinth");
     CHECK_STR(game_at(1)->id, "crystal-caliburn");
     CHECK_STR(game_at(2)->id, "monster-fair");
     CHECK_STR(game_at(3)->id, "jinni-zeala");
     CHECK_STR(game_at(4)->id, "mad-daedalus");
     CHECK_STR(game_at(5)->id, "angel-egg");
-    CHECK(game_at(6) == NULL);
+    CHECK_STR(game_at(6)->id, "golden-logres");
+    CHECK(game_at(7) == NULL);
     CHECK_EQ(game_at(0)->kind, GAME_PEF_FOLDER);
     CHECK_EQ(game_at(1)->kind, GAME_PEF_FOLDER);
     const game_info *jz = game_by_id("jinni-zeala");
@@ -68,6 +69,13 @@ TEST(game_table_knows_six_games) {
     CHECK_STR(ae->exe, "Contents/MacOS/Angel Egg");
     CHECK_EQ(ae->screen_width, 1024);
     CHECK_EQ(ae->screen_height, 768);
+    const game_info *gl = game_by_id("golden-logres");
+    CHECK_EQ(gl->kind, GAME_MACHO_BUNDLE);
+    CHECK_STR(gl->title, "Golden Logres");
+    CHECK_STR(gl->folder_name, "Golden Logres.app");
+    CHECK_STR(gl->exe, "Contents/MacOS/Golden Logres");
+    CHECK_EQ(gl->screen_width, 1024);
+    CHECK_EQ(gl->screen_height, 768);
     CHECK_EQ(mf->screen_width, 800);
     CHECK_EQ(mf->screen_height, 600);
     const game_info *cc = game_by_id("crystal-caliburn");

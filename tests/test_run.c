@@ -2678,6 +2678,59 @@ TEST(run_angel_egg_quits_on_the_quit_apple_event) {
     CHECK(!strstr(out, "didn't quit"));
 }
 
+static void run_golden_logres_headless(void *unused) {
+    (void)unused;
+    setenv("LOONY_FIXED_CLOCK", "1", 1);
+    setenv("LOONY_EXIT_AFTER", "600", 1);
+    setenv("LOONY_SCREENSHOT", shot, 1);
+    run_loony((void *)test_gl_app());
+}
+
+/* Golden Logres 3.0.4, a CodeWarrior program, answers its two demo alerts
+   (Play Demo, then OK), takes the screen at 1024x768 and by tick 600
+   tells its story. */
+TEST(run_golden_logres_plays_its_opening_headless) {
+    SKIP_UNLESS_GL();
+    tmp_name(shot, sizeof shot, "run");
+    char out[32768];
+    test_tmp_dir(run_data, sizeof run_data);
+    int status = test_run_child(run_golden_logres_headless, NULL, out, sizeof out);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    size_t len = 0;
+    uint8_t *png = read_file(shot, &len);
+    unlink(shot);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "playing Golden Logres from");
+    CHECK_CONTAINS(out, "Contents/MacOS/Golden Logres: 420 imports, main at 0x2e5d4, 17 initializers");
+    CHECK_CONTAINS(out, "loony: Alert 901 (answering item 1): Play Demo");
+    CHECK_CONTAINS(out, "loony: Alert 900 (answering item 1): OK");
+    CHECK_CONTAINS(out, "loony: exiting after 600 ticks (LOONY_EXIT_AFTER)");
+    CHECK(!strstr(out, "not supported"));
+    CHECK(png != NULL);
+    CHECK(len > 33);
+    CHECK_EQ(rd_be32(png + 16), 1024);
+    CHECK_EQ(rd_be32(png + 20), 768);
+    char got[16];
+    snprintf(got, sizeof got, "%08x", fnv1a32(png, len));
+    free(png);
+    CHECK_STR(got, "7ed83e89"); /* the story's first picture, fading in */
+}
+
+/* Golden Logres's Quit is in the application menu Mac OS X gives it, so
+   Cmd-Q reaches it as the quit Apple Event (the script's quit), after
+   which its main returns. */
+TEST(run_golden_logres_quits_on_the_quit_apple_event) {
+    SKIP_UNLESS_GL();
+    char out[32768];
+    int status = run_script_in(test_gl_app(), "700 down esc\n704 up esc\n820 down esc\n824 up esc\n1000 quit\n",
+                               NULL, NULL, 0, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: sending the quit Apple Event");
+    CHECK_CONTAINS(out, "loony: main returned 0");
+    CHECK(!strstr(out, "didn't quit"));
+}
+
 TEST(run_reports_missing_game_folder) {
     char out[4096];
     int status = test_run_child(run_loony, (void *)"/nonexistent/loony", out, sizeof out);
@@ -3030,6 +3083,47 @@ TEST(run_the_picker_shows_five_games_and_starts_mad_daedalus) {
     CHECK_STR(got, "4aa50c83");
 }
 
+/* Seven games: a row of four over a row of three, Golden Logres's card its
+   app.icns icon. Picked, it starts from its bundle. */
+TEST(run_the_picker_shows_seven_games_and_starts_golden_logres) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_CC();
+    SKIP_UNLESS_MF();
+    SKIP_UNLESS_JZ();
+    SKIP_UNLESS_MD();
+    SKIP_UNLESS_AE();
+    SKIP_UNLESS_GL();
+    test_tmp_dir(apps_dir, sizeof apps_dir);
+    CHECK(both_games() && link_game("MONSTER FAIR.app", test_mf_app()) && link_game("Jinni Zeala", test_jz_dir()) &&
+          link_game("Mad Daedalus.app", test_md_app()) && link_game("Angel Egg.app", test_ae_app()) &&
+          link_game("Golden Logres.app", test_gl_app()));
+    test_tmp_dir(run_data, sizeof run_data);
+    tmp_name(pick_shot, sizeof pick_shot, "picker");
+    char out[32768];
+    /* Esc twice ends the story and the title: it reads no events until then. */
+    int status = run_picker_with("golden-logres", "700 down esc\n704 up esc\n820 down esc\n824 up esc\n1000 quit\n",
+                                 out, sizeof out);
+    size_t len = 0;
+    uint8_t *png = read_file(pick_shot, &len);
+    char got[16];
+    snprintf(got, sizeof got, "%08x", png ? fnv1a32(png, len) : 0);
+    free(png);
+    unlink(pick_shot);
+    pick_shot[0] = '\0';
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    test_remove_tree(apps_dir);
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "picker: can't")); /* every card's art loaded */
+    CHECK(!strstr(out, "picker: /"));
+    CHECK_CONTAINS(out, "loony: picker: golden-logres");
+    CHECK_CONTAINS(out, "loony: playing Golden Logres from ");
+    CHECK_CONTAINS(out, "loony: sending the quit Apple Event");
+    CHECK_CONTAINS(out, "loony: main returned 0");
+    CHECK(!strstr(out, "back to the picker"));
+    CHECK_STR(got, "2e5ea7c3");
+}
+
 /* Review Focus 1: the picker remembers the last game in the save root,
    and each game's preferences land in its own folder. */
 static void run_picker_home(void *unused) {
@@ -3234,41 +3328,57 @@ TEST(run_the_app_bundle_is_self_contained_and_plays) {
    Recorded on 2026-10-02 after the user approved Plan 6's build. */
 #define REGRESSION_TICKS 10800
 
-/* How a game starts: the keys, then the tick of the first plunger. */
+/* How a game starts: the keys, then the tick of the first plunger, then
+   the ticks from which Cmd-N starts another game (0 for none). */
 typedef struct {
     const char *keys;
     int play_from;
+    int again[2];
 } regression_start;
 
 /* The classic games: Esc ends the demo, Esc opens the menu, Return twice. */
 static const regression_start classic_start = {
     "1720 down esc\n1724 up esc\n1800 down esc\n1804 up esc\n"
     "1900 down return\n1906 up return\n2000 down return\n2006 up return\n",
-    2100};
+    2100, {0}};
 
 /* MONSTER FAIR: before its table plays by itself, one Esc opens the menu;
    Return picks NEW GAME, then 1 PLAYER. */
 static const regression_start mf_start = {
-    "2200 down esc\n2204 up esc\n2320 down return\n2326 up return\n2440 down return\n2446 up return\n", 2600};
+    "2200 down esc\n2204 up esc\n2320 down return\n2326 up return\n2440 down return\n2446 up return\n", 2600, {0}};
 
 /* Jinni Zeala: no demo to end, so one Esc opens the menu; Return picks
    NEW GAME, then 1 PLAYER. */
 static const regression_start jz_start = {
-    "1720 down esc\n1724 up esc\n1900 down return\n1906 up return\n2000 down return\n2006 up return\n", 2100};
+    "1720 down esc\n1724 up esc\n1900 down return\n1906 up return\n2000 down return\n2006 up return\n", 2100, {0}};
 
 /* Angel Egg: after its title, Cmd-N is Operation > New Game. */
-static const regression_start ae_start = {"900 down lcmd\n902 down n\n906 up n\n908 up lcmd\n", 1200};
+static const regression_start ae_start = {"900 down lcmd\n902 down n\n906 up n\n908 up lcmd\n", 1200, {0}};
 
 /* Mad Daedalus: one Esc opens the menu over the table; Return picks NEW
    GAME, then 1 PLAYER. */
 static const regression_start md_start = {
-    "620 down esc\n624 up esc\n1250 down return\n1256 up return\n1500 down return\n1506 up return\n", 2000};
+    "620 down esc\n624 up esc\n1250 down return\n1256 up return\n1500 down return\n1506 up return\n", 2000, {0}};
+
+/* Golden Logres: Esc ends the story, Esc the title, Cmd-N starts a game.
+   The demo ends a game after 60 seconds of ball in play, so Cmd-N starts
+   another after the first one's GAME OVER. */
+static const regression_start gl_start = {
+    "700 down esc\n704 up esc\n820 down esc\n824 up esc\n"
+    "950 down lcmd\n952 down n\n958 up n\n960 up lcmd\n",
+    1250,
+    {8000, 0}};
 
 static void write_regression_script(const char *path, const regression_start *start, char shots[3][1024]) {
     FILE *f = fopen(path, "w");
     fputs(start->keys, f);
-    int shot = 0;
+    int shot = 0, again = 0;
     for (int t = start->play_from; t < REGRESSION_TICKS - 200;) {
+        if (again < 2 && start->again[again] && t >= start->again[again]) {
+            fprintf(f, "%d down lcmd\n%d down n\n%d up n\n%d up lcmd\n", t, t + 2, t + 8, t + 10);
+            t += 150;
+            again++;
+        }
         fprintf(f, "%d down return\n%d up return\n", t, t + 80); /* the plunger */
         t += 120;
         for (int i = 0; i < 12; i++, t += 25)
@@ -3440,6 +3550,25 @@ SLOW_TEST(run_three_minutes_of_angel_egg_match_the_recording) {
        Minute 3: the demo time ran out; the attract display shows the high
        scores, and the sound stopped with it. */
     CHECK_STR(got, "13540246 05c8953e 3e47a0bd 91f706c2");
+}
+
+/* Three minutes of Golden Logres, started with Cmd-N, with the same
+   plunger, flippers and nudges. */
+SLOW_TEST(run_three_minutes_of_golden_logres_match_the_recording) {
+    SKIP_UNLESS_GL();
+    uint32_t h[3], wh;
+    size_t len;
+    char out[32768];
+    int status = play_regression(test_gl_app(), &gl_start, h, &wh, &len, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "runtime error"));
+    CHECK_EQ(len, 44 + (size_t)REGRESSION_TICKS * 44100 / 60 * 4);
+    char got[64];
+    snprintf(got, sizeof got, "%08x %08x %08x %08x", h[0], h[1], h[2], wh);
+    /* Frames at minutes 1, 2 and 3, then the recording. Minute 1: ball 1,
+       its Camelot bonus, 37 seconds of demo time left. Minute 2: ball 3,
+       TIME UP. Minute 3: a second game, ball 1, 27 seconds left. */
+    CHECK_STR(got, "a163e2bf efa67f8e 2759c976 c266ff4e");
 }
 
 /* Edits the snapshot section of the recording at path in place: edit gets
