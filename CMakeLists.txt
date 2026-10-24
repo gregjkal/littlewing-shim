@@ -31,7 +31,7 @@ list(REMOVE_ITEM CORE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.c)
 add_library(loony_core STATIC ${CORE_SOURCES})
 target_include_directories(loony_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(loony_core PUBLIC PkgConfig::UNICORN PkgConfig::SDL3 "-framework CoreFoundation"
-                      "-framework CoreGraphics" "-framework ImageIO" "-framework AppKit"
+                      "-framework CoreGraphics" "-framework CoreText" "-framework ImageIO" "-framework AppKit"
                       "-framework AVFoundation" "-framework CoreMedia" "-framework CoreVideo"
                       "-framework Accelerate" "-framework UniformTypeIdentifiers" z)
 
