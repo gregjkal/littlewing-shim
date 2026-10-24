@@ -22,6 +22,7 @@
 
 #define SND_QUEUE_FULL_ERR (-203)
 #define SND_BAD_CHANNEL_ERR (-205)
+#define SND_BAD_FORMAT_ERR (-206)
 
 /* Drops every channel. Rendering is clock-driven until sound_start_output. */
 void sound_init(void);
@@ -90,5 +91,7 @@ double sound_render_seconds(void);
 double sound_monitor_queued_seconds(void);
 
 /* Registers NewSndCallBackUPP, SndNewChannel, SndDisposeChannel,
-   SndDoCommand, SndDoImmediate and SndChannelStatus. */
+   SndDoCommand, SndDoImmediate, SndChannelStatus, SndPlay (an 'snd '
+   resource's sampled sound, never waited for; with no channel, on one of
+   its own), GetSoundHeaderOffset and SndSoundManagerVersion. */
 void sound_register(void);

@@ -14,7 +14,7 @@
 
 static const char *const names[] = {
     "NewSndCallBackUPP", "SndNewChannel", "SndDisposeChannel", "SndDoCommand", "SndDoImmediate",
-    "SndChannelStatus",
+    "SndChannelStatus", "SndPlay", "GetSoundHeaderOffset", "SndSoundManagerVersion",
 };
 
 #define CB      (GUEST_IMAGE_BASE + 0x200)
@@ -277,4 +277,58 @@ TEST(sound_source_stays_its_lead_behind_after_a_stall) {
     sound_pump();
     CHECK_EQ(source_frames, before);
     sound_set_source(NULL);
+}
+
+/* A format 1 'snd ' resource in a handle: one modifier, then a bufferCmd
+   whose data pointer is the offset of a standard header of frames samples
+   of value at rate Hz. */
+static uint32_t snd_resource(uint16_t format, uint32_t frames, uint32_t rate, uint8_t value) {
+    uint32_t pre = format == 1 ? 4 + 6 + 2 + 8 : 4 + 2 + 8;
+    uint32_t h = mm_new_handle(pre + 22 + frames, true), p = gm_r32(h);
+    gm_w16(p, format);
+    uint32_t at = 4;
+    if (format == 1) {
+        gm_w16(p + 2, 1);
+        gm_w16(p + 4, 5); /* sampledSynth */
+        at = 10;
+    }
+    gm_w16(p + at, 1);
+    gm_w16(p + at + 2, 0x8000 | SND_BUFFER_CMD);
+    gm_w32(p + at + 6, pre);
+    uint32_t hdr = p + pre;
+    gm_w32(hdr + 4, frames);
+    gm_w32(hdr + 8, rate << 16);
+    memset(gm_ptr(hdr + 22, frames), value, frames);
+    return h;
+}
+
+TEST(sound_snd_resources_play_with_sndplay) {
+    setup();
+    uint32_t off = scratch(4);
+    uint32_t one = snd_resource(1, 4, MIX_RATE, 0xC0), two = snd_resource(2, 4, MIX_RATE, 0xC0);
+    CHECK_EQ(call_import("GetSoundHeaderOffset", 2, one, off), 0);
+    CHECK_EQ(gm_r32(off), 20);
+    CHECK_EQ(call_import("GetSoundHeaderOffset", 2, two, off), 0);
+    CHECK_EQ(gm_r32(off), 14);
+    uint32_t junk = mm_new_handle(4, true);
+    gm_w16(gm_r32(junk), 3);
+    CHECK_EQ((int16_t)call_import("GetSoundHeaderOffset", 2, junk, off), SND_BAD_FORMAT_ERR);
+    CHECK_EQ((int16_t)call_import("SndPlay", 3, 0u, junk, 0u), SND_BAD_FORMAT_ERR);
+
+    uint32_t chan = new_channel();
+    CHECK_EQ(call_import("SndPlay", 3, chan, one, 1u), 0);
+    int16_t out[8];
+    render(out, 4);
+    CHECK_EQ((uint16_t)out[0], 0x4000);
+}
+
+TEST(sound_sndplay_without_a_channel_plays_on_its_own) {
+    setup();
+    CHECK_EQ(call_import("SndPlay", 3, 0u, snd_resource(2, 4, MIX_RATE, 0xC0), 0u), 0);
+    CHECK_EQ(call_import("SndPlay", 3, 0u, snd_resource(2, 4, MIX_RATE, 0x40), 0u), 0);
+    int16_t out[16];
+    render(out, 8); /* one after the other */
+    CHECK_EQ((uint16_t)out[0], 0x4000);
+    CHECK_EQ(out[8], -0x4000);
+    CHECK_EQ(call_import("SndSoundManagerVersion", 0), 0x03608000u);
 }
