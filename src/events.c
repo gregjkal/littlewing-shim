@@ -1142,7 +1142,10 @@ static void h_still_down(void) {
     trap_return(E.mouse_down && !waiting);
 }
 
-/* GetKeys(KeyMap): 16 bytes, key code k in byte k / 8, bit k % 8. */
+/* GetKeys(KeyMap): 16 bytes, key code k in byte k / 8, bit k % 8, on every
+   Mac. Read as big-endian words that puts a key elsewhere than bit k % 32 of
+   word k / 32: Golden Logres tests Escape (0x35) as 0x2000 in word 1, and
+   its key settings hold each key as its bit number in those words. */
 static void h_get_keys(void) {
     poll_input();
     uint32_t out = trap_arg(0);

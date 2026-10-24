@@ -186,23 +186,46 @@ TEST(macho_load_finds_main_after_start) {
     free(buf);
 
     CHECK(!load_built(&(mb_opts){.no_exit_call = true}, &img, err, sizeof err, &buf));
-    CHECK_CONTAINS(err, "can't find main");
+    CHECK_CONTAINS(err, "_start never calls exit");
     free(buf);
 }
 
-/* CodeWarrior's runtime links MSL's exit in: main is the call before
-   _start's last, whether exit is imported (Angel Egg) or not (Golden Logres). */
+/* CodeWarrior's runtime (Golden Logres, Angel Egg) imports only __exit and
+   links MSL's exit in: main is the call before _start's last, whether
+   _start ends at the next function's mflr r0 or at a trap. */
 TEST(macho_load_finds_main_before_a_linked_exit) {
-    for (int imported = 0; imported < 2; imported++) {
+    for (int trap = 0; trap < 2; trap++) {
         loaded_image img;
         char err[256] = "";
         uint8_t *buf;
-        CHECK(load_built(&(mb_opts){.linked_exit = true, .no_exit_import = !imported}, &img, err,
-                         sizeof err, &buf));
+        CHECK(load_built(
+            &(mb_opts){.linked_exit = true, .trap_ends_start = trap, .no_exit_import = true}, &img,
+            err, sizeof err, &buf));
         CHECK_EQ(img.main_addr, MB_MAIN);
         image_free(&img);
         free(buf);
     }
+}
+
+/* With an exit stub, _start must call it: a program that imports exit and
+   never calls it is not guessed at. */
+TEST(macho_load_refuses_a_start_it_cant_read) {
+    loaded_image img;
+    char err[256] = "";
+    uint8_t *buf;
+    CHECK(!load_built(&(mb_opts){.linked_exit = true}, &img, err, sizeof err, &buf));
+    CHECK_CONTAINS(err, "_start never calls exit");
+    free(buf);
+
+    CHECK(!load_built(&(mb_opts){.no_exit_call = true, .no_exit_import = true}, &img, err,
+                      sizeof err, &buf));
+    CHECK_CONTAINS(err, "_start makes fewer than two calls");
+    free(buf);
+
+    CHECK(!load_built(&(mb_opts){.linked_exit = true, .start_runs_on = true, .no_exit_import = true},
+                      &img, err, sizeof err, &buf));
+    CHECK_CONTAINS(err, "can't find the end of _start");
+    free(buf);
 }
 
 TEST(macho_load_lists_static_initializers) {

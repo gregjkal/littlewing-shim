@@ -140,6 +140,7 @@ TEST(classic_events_follow_the_mouse_once_the_game_asks) {
     CHECK(e.modifiers & 0x0080);
 }
 
+/* Key code k is bit k % 8 of byte k / 8. */
 TEST(classic_events_get_keys_maps_key_codes_to_bits) {
     setup();
     events_post_key(SDL_SCANCODE_Z, true, false);      /* key code 0x06 */
@@ -155,6 +156,11 @@ TEST(classic_events_get_keys_maps_key_codes_to_bits) {
     events_post_key(SDL_SCANCODE_Z, false, false);
     call_import("GetKeys", 1, km);
     CHECK_EQ(gm_r8(km), 0);
+    /* Escape where Golden Logres looks for it, 0x2000 in big-endian word 1 */
+    events_post_key(SDL_SCANCODE_LSHIFT, false, false);
+    events_post_key(SDL_SCANCODE_ESCAPE, true, false); /* 0x35 */
+    call_import("GetKeys", 1, km);
+    CHECK_EQ(gm_r32(km + 4), 0x2000u);
 }
 
 /* A timer proc that adds 1 to COUNTER. */
