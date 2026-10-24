@@ -19,7 +19,7 @@
 
 /* Seconds from the Mac epoch (1904-01-01) to the Unix epoch (1970-01-01). */
 #define MAC_EPOCH_OFFSET 2082844800u
-#define MAX_AE_HANDLERS 16
+#define MAX_AE_HANDLERS 64 /* PowerPlant installs one per aedt entry: Golden Logres has 37 */
 
 static struct {
     struct timespec start;
