@@ -58,11 +58,6 @@ void recordings_forget(void) {
     memset(&C, 0, sizeof C);
 }
 
-static bool ends_with(const char *s, const char *end) {
-    size_t n = strlen(s), m = strlen(end);
-    return n >= m && strcmp(s + n - m, end) == 0;
-}
-
 /* The start and the game in that second from name, "<game_id>-<date>-<time>
    [-<n>][-marked].lwreplay" (replay.h); false for a name not like that. */
 static bool start_in_name(const char *name, const char *game_id, time_t *start, int *second) {

@@ -11,22 +11,22 @@ void test_register(const char *name, test_fn fn, bool slow);
 void test_fail(const char *file, int line, const char *msg);
 void test_skip(const char *reason);
 
-/* Game folder: $LOONY_GAME_DIR, or /Applications/Loony Labyrinth. */
+/* Game folder: $LOONY_GAME_DIR, or where the app finds it (game_folder). */
 const char *test_game_dir(void);
 const char *test_game_exe_path(void);
 bool test_game_present(void);
-/* Crystal Caliburn's folder: $LOONY_CC_DIR, or /Applications/Crystal Caliburn. */
+/* Crystal Caliburn's folder: $LOONY_CC_DIR, or where the app finds it. */
 const char *test_cc_dir(void);
 bool test_cc_present(void);
-/* MONSTER FAIR's bundle: $LOONY_MF_APP, or /Applications/MONSTER FAIR.app. */
+/* MONSTER FAIR's bundle: $LOONY_MF_APP, or where the app finds it. */
 const char *test_mf_app(void);
 const char *test_mf_exe_path(void);
 bool test_mf_present(void);
-/* Jinni Zeala's folder: $LOONY_JZ_DIR, or /Applications/Jinni Zeala. */
+/* Jinni Zeala's folder: $LOONY_JZ_DIR, or where the app finds it. */
 const char *test_jz_dir(void);
 const char *test_jz_exe_path(void);
 bool test_jz_present(void);
-/* Mad Daedalus's bundle: $LOONY_MD_APP, or /Applications/Mad Daedalus.app. */
+/* Mad Daedalus's bundle: $LOONY_MD_APP, or where the app finds it. */
 const char *test_md_app(void);
 const char *test_md_exe_path(void);
 bool test_md_present(void);

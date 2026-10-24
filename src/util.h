@@ -34,6 +34,9 @@ double wall_seconds(void);
 /* Whether a and b name the same file: false if either can't be found. */
 bool same_file(const char *a, const char *b);
 
+/* Whether s ends with end. */
+bool ends_with(const char *s, const char *end);
+
 /* A Mac four-character code, e.g. FOURCC('P','I','C','T'). */
 #define FOURCC(a, b, c, d) \
     (((uint32_t)(uint8_t)(a) << 24) | ((uint32_t)(uint8_t)(b) << 16) | \

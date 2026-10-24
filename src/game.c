@@ -89,14 +89,41 @@ const char *game_apps_dir(void) {
     return d && *d ? d : "/Applications";
 }
 
-void game_folder(const game_info *g, char *out, size_t cap) {
-    snprintf(out, cap, "%s/%s", game_apps_dir(), g->folder_name);
-}
-
 static bool has_program(const char *dir, const game_info *g) {
     char path[PATH_MAX];
     snprintf(path, sizeof path, "%s/%s", dir, g->exe);
     return access(path, R_OK) == 0;
+}
+
+/* Fills out with g's folder and says whether its program is there. The
+   first folder by name wins, so the same disk always gives the same answer. */
+static bool find_folder(const game_info *g, char *out, size_t cap) {
+    const char *apps = game_apps_dir();
+    snprintf(out, cap, "%s/%s", apps, g->folder_name);
+    if (has_program(out, g))
+        return true;
+    DIR *d = opendir(apps);
+    if (!d)
+        return false;
+    char best[NAME_MAX + 1] = "";
+    struct dirent *ent;
+    while ((ent = readdir(d))) {
+        const char *name = ent->d_name;
+        if (name[0] == '.' || ends_with(name, ".app") || (*best && strcmp(name, best) >= 0))
+            continue;
+        char dir[PATH_MAX];
+        snprintf(dir, sizeof dir, "%s/%s/%s", apps, name, g->folder_name);
+        if (has_program(dir, g))
+            snprintf(best, sizeof best, "%s", name);
+    }
+    closedir(d);
+    if (*best)
+        snprintf(out, cap, "%s/%s/%s", apps, best, g->folder_name);
+    return *best;
+}
+
+void game_folder(const game_info *g, char *out, size_t cap) {
+    find_folder(g, out, cap);
 }
 
 const game_info *game_in_folder(const char *dir) {
@@ -110,8 +137,7 @@ int game_installed(const game_info **out, int cap) {
     int n = 0;
     for (size_t i = 0; i < NGAMES; i++) {
         char dir[PATH_MAX];
-        game_folder(&games[i], dir, sizeof dir);
-        if (has_program(dir, &games[i]) && n < cap)
+        if (find_folder(&games[i], dir, sizeof dir) && n < cap)
             out[n++] = &games[i];
     }
     return n;

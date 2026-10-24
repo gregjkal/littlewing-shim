@@ -10,6 +10,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "game.h"
+
 #define MAX_TESTS 1024
 
 static struct {
@@ -41,9 +43,18 @@ void test_skip(const char *reason) {
     cur_skipped = true;
 }
 
+/* $var, or where the app would look for the game with this id. */
+static const char *game_dir(const char *var, const char *id, char *buf, size_t cap) {
+    const char *d = getenv(var);
+    if (d && *d)
+        return d;
+    game_folder(game_by_id(id), buf, cap);
+    return buf;
+}
+
 const char *test_game_dir(void) {
-    const char *d = getenv("LOONY_GAME_DIR");
-    return d && *d ? d : "/Applications/Loony Labyrinth";
+    static char dir[1024];
+    return game_dir("LOONY_GAME_DIR", "loony-labyrinth", dir, sizeof dir);
 }
 
 const char *test_game_exe_path(void) {
@@ -57,8 +68,8 @@ bool test_game_present(void) {
 }
 
 const char *test_cc_dir(void) {
-    const char *d = getenv("LOONY_CC_DIR");
-    return d && *d ? d : "/Applications/Crystal Caliburn";
+    static char dir[1024];
+    return game_dir("LOONY_CC_DIR", "crystal-caliburn", dir, sizeof dir);
 }
 
 bool test_cc_present(void) {
@@ -68,8 +79,8 @@ bool test_cc_present(void) {
 }
 
 const char *test_mf_app(void) {
-    const char *d = getenv("LOONY_MF_APP");
-    return d && *d ? d : "/Applications/MONSTER FAIR.app";
+    static char dir[1024];
+    return game_dir("LOONY_MF_APP", "monster-fair", dir, sizeof dir);
 }
 
 const char *test_mf_exe_path(void) {
@@ -83,8 +94,8 @@ bool test_mf_present(void) {
 }
 
 const char *test_jz_dir(void) {
-    const char *d = getenv("LOONY_JZ_DIR");
-    return d && *d ? d : "/Applications/Jinni Zeala";
+    static char dir[1024];
+    return game_dir("LOONY_JZ_DIR", "jinni-zeala", dir, sizeof dir);
 }
 
 const char *test_jz_exe_path(void) {
@@ -98,8 +109,8 @@ bool test_jz_present(void) {
 }
 
 const char *test_md_app(void) {
-    const char *d = getenv("LOONY_MD_APP");
-    return d && *d ? d : "/Applications/Mad Daedalus.app";
+    static char dir[1024];
+    return game_dir("LOONY_MD_APP", "mad-daedalus", dir, sizeof dir);
 }
 
 const char *test_md_exe_path(void) {
