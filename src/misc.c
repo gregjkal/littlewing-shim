@@ -12,6 +12,8 @@
 #include "cf.h"
 #include "cpu.h"
 #include "guest_mem.h"
+#include "memmgr.h"
+#include "rsrc.h"
 #include "snapshot.h"
 #include "replay.h"
 #include "trap.h"
@@ -399,6 +401,21 @@ static void h_block_move_data(void) {
 /* ---- cursor, menus, keyboard ---- */
 
 static void h_init_cursor(void) { M.cursor_level = 0; }
+
+/* GetCCursor(short id) -> CCrsrHandle: a copy of the crsr resource, or NULL
+   with none. The host draws the pointer, so SetCCursor changes nothing on
+   screen, as SetThemeCursor doesn't. */
+#define TYPE_CRSR 0x63727372u /* 'crsr' */
+
+static void h_get_ccursor(void) {
+    rsrc_entry *e = rsrc_find(TYPE_CRSR, (int16_t)trap_arg(0));
+    uint32_t h = e ? mm_new_handle(e->len, false) : 0;
+    if (h)
+        memcpy(gm_ptr(gm_r32(h), e->len), rsrc_data(e), e->len);
+    trap_return(h);
+}
+
+static void h_set_ccursor(void) {}
 static void h_hide_cursor(void) { M.cursor_level--; }
 static void h_show_cursor(void) { misc_show_cursor(); }
 static void h_set_theme_cursor(void) { trap_return(0); }
@@ -590,6 +607,8 @@ void misc_register(void) {
     trap_register("c2pstrcpy", h_c2pstrcpy);
     trap_register("BlockMoveData", h_block_move_data);
     trap_register("InitCursor", h_init_cursor);
+    trap_register("GetCCursor", h_get_ccursor);
+    trap_register("SetCCursor", h_set_ccursor);
     trap_register("HideCursor", h_hide_cursor);
     trap_register("ShowCursor", h_show_cursor);
     trap_register("SetThemeCursor", h_set_theme_cursor);

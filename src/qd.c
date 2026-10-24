@@ -23,6 +23,7 @@ typedef struct {
     uint32_t addr;
     port_kind kind;
     bool visible;
+    uint32_t order; /* when it was made: the newest window is in front */
 } port_info;
 
 static struct {
@@ -37,6 +38,8 @@ static struct {
     qd_window_fn window_hook;
     bool direct;          /* qd_set_direct_drawing */
     bool window_sized;    /* CreateNewWindow has sized the screen */
+    uint32_t next_order;
+    uint32_t gray_rgn;    /* GetGrayRgn's, made the first time */
     uint32_t rand_seed;   /* QuickDraw's randSeed, for Random */
 } Q;
 
@@ -236,7 +239,7 @@ static uint32_t new_port(uint32_t pm_h, qd_rect port_rect, port_kind kind) {
     gm_w16(p + PORT_TX_MODE, 1); /* srcOr */
     gm_w32(p + PORT_FG_COLOR, 33); /* blackColor */
     gm_w32(p + PORT_BK_COLOR, 30); /* whiteColor */
-    Q.ports[Q.nports++] = (port_info){p, kind, kind != KIND_GWORLD};
+    Q.ports[Q.nports++] = (port_info){p, kind, kind != KIND_GWORLD, ++Q.next_order};
     return p;
 }
 
@@ -668,6 +671,95 @@ static void h_hide_window(void) {
     window_changed(trap_arg(0), QD_WINDOW_HIDDEN, 0);
 }
 
+/* ---- the window list: windows in front of those made before them ---- */
+
+#define WINDOW_CLASS_ALL 0xFFFFFFFFu /* kAllWindowClasses */
+#define WINDOW_CLASS_DOCUMENT 6      /* what every window here is */
+#define PART_IN_DESK 0
+#define PART_IN_CONTENT 3
+
+/* The window behind w (0 for the front one), or 0 at the back. */
+static uint32_t window_behind(uint32_t w) {
+    uint32_t limit = w ? find_port(w)->order : UINT32_MAX, best = 0, best_order = 0;
+    for (int i = 0; i < Q.nports; i++) {
+        const port_info *p = &Q.ports[i];
+        if (p->kind == KIND_WINDOW && p->order < limit && p->order > best_order)
+            best = p->addr, best_order = p->order;
+    }
+    return best;
+}
+
+static uint32_t front_visible_window(void) {
+    uint32_t w = window_behind(0);
+    while (w && !find_port(w)->visible)
+        w = window_behind(w);
+    return w;
+}
+
+static port_info *need_window(const char *call, uint32_t w) {
+    port_info *p = find_port(w);
+    if (!p || p->kind != KIND_WINDOW)
+        trap_crash("%s: 0x%08x is not a window", call, w);
+    return p;
+}
+
+static void h_get_window_list(void) { trap_return(window_behind(0)); }
+static void h_front_window(void) { trap_return(front_visible_window()); }
+static void h_get_next_window(void) { trap_return(window_behind(need_window("GetNextWindow", trap_arg(0))->addr)); }
+
+/* GetFrontWindowOfClass(WindowClass, Boolean mustBeVisible) */
+static void h_get_front_window_of_class(void) {
+    uint32_t cls = trap_arg(0);
+    bool visible = trap_arg(1) & 0xFF;
+    if (cls != WINDOW_CLASS_ALL && cls != WINDOW_CLASS_DOCUMENT) {
+        trap_return(0);
+        return;
+    }
+    trap_return(visible ? front_visible_window() : window_behind(0));
+}
+
+static void h_is_window_visible(void) { trap_return(need_window("IsWindowVisible", trap_arg(0))->visible); }
+
+static void h_is_valid_window_ptr(void) {
+    const port_info *p = find_port(trap_arg(0));
+    trap_return(p && p->kind == KIND_WINDOW);
+}
+
+/* A window's port is the window. */
+static void h_get_window_from_port(void) { trap_return(need_window("GetWindowFromPort", trap_arg(0))->addr); }
+
+/* FindWindow(Point, WindowRef *) -> WindowPartCode: in the content of the
+   front visible window holding the point (global coordinates, which a
+   window's port shares: windows sit at the screen's origin), or on the
+   desk. The menu bar is hidden and 0 lines tall. */
+static void h_find_window(void) {
+    uint32_t pt = trap_arg(0), out = trap_arg(1);
+    int v = (int16_t)(pt >> 16), h = (int16_t)(pt & 0xFFFF);
+    uint32_t found = 0;
+    for (uint32_t w = window_behind(0); w && !found; w = window_behind(w)) {
+        qd_rect r = qd_read_rect(w + PORT_RECT);
+        if (find_port(w)->visible && v >= r.top && v < r.bottom && h >= r.left && h < r.right)
+            found = w;
+    }
+    if (out)
+        gm_w32(out, found);
+    trap_return(found ? PART_IN_CONTENT : PART_IN_DESK);
+}
+
+/* GetGrayRgn: the desktop, which is the screen. The same handle every
+   time, as on a Mac, where it is the system's. */
+static void h_get_gray_rgn(void) {
+    qd_rect screen = qd_read_rect(gm_r32(Q.screen_pm) + PM_BOUNDS);
+    if (!Q.gray_rgn && !(Q.gray_rgn = rgn_new_handle(screen)))
+        trap_crash("GetGrayRgn: out of guest memory");
+    rgn r; /* the screen may have changed size since */
+    rgn_init(&r);
+    rgn_set_rect(&r, screen);
+    rgn_write_for("GetGrayRgn", Q.gray_rgn, &r);
+    rgn_free(&r);
+    trap_return(Q.gray_rgn);
+}
+
 /* DisposeWindow(WindowRef): its event handlers go with it. */
 static void h_dispose_window(void) {
     uint32_t w = trap_arg(0);
@@ -964,6 +1056,17 @@ void qd_register(void) {
     trap_register("SetClip", h_set_clip);
     trap_register("GetClip", h_get_clip);
     trap_register("GetPortVisibleRegion", h_get_port_visible_region);
+    trap_register("GetWindowList", h_get_window_list);
+    trap_register("FrontWindow", h_front_window);
+    trap_register("FrontNonFloatingWindow", h_front_window);
+    trap_register("ActiveNonFloatingWindow", h_front_window);
+    trap_register("GetNextWindow", h_get_next_window);
+    trap_register("GetFrontWindowOfClass", h_get_front_window_of_class);
+    trap_register("IsWindowVisible", h_is_window_visible);
+    trap_register("IsValidWindowPtr", h_is_valid_window_ptr);
+    trap_register("GetWindowFromPort", h_get_window_from_port);
+    trap_register("FindWindow", h_find_window);
+    trap_register("GetGrayRgn", h_get_gray_rgn);
     trap_register("RGBForeColor", h_rgb_fore_color);
     trap_register("PaintRect", h_paint_rect);
     trap_register("CopyBits", h_copy_bits);
