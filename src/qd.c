@@ -9,6 +9,7 @@
 #include "snapshot.h"
 #include "memmgr.h"
 #include "pict.h"
+#include "region.h"
 #include "rsrc.h"
 #include "trap.h"
 #include "util.h"
@@ -112,13 +113,7 @@ static uint32_t new_rgn(qd_rect r) {
     return h;
 }
 
-/* The bounding box of a region, which must be rectangular. */
-static qd_rect rgn_rect(const char *call, uint32_t rgn) {
-    uint32_t p = gm_r32(rgn);
-    if (gm_r16(p) != 10)
-        trap_crash("%s: non-rectangular regions are not supported", call);
-    return qd_read_rect(p + 2);
-}
+static bool rgn_handle_is_rect(uint32_t h) { return gm_r16(gm_r32(h)) == RGN_HEADER; }
 
 static uint32_t row_bytes_for(int width, int depth) {
     return (uint32_t)((width * depth + 31) / 32 * 4);
@@ -260,9 +255,37 @@ static bool is_screen_bits(uint32_t bits) {
     return gm_r32(bits + PM_BASE_ADDR) == gm_r32(gm_r32(Q.screen_pm) + PM_BASE_ADDR);
 }
 
-/* The current port's clip rectangle intersected with its portRect. */
-static qd_rect port_clip(const char *call, uint32_t port) {
-    return rect_sect(qd_read_rect(port + PORT_RECT), rgn_rect(call, gm_r32(port + PORT_CLIP_RGN)));
+/* Calls fn with each rectangle drawing is clipped to: base, within the
+   region clip_rgn unless it is 0, and within mask unless it is 0. A
+   rectangular clip and no mask, the common case, is one call. */
+typedef void (*clip_fn)(qd_rect clip, void *ctx);
+
+static void each_clip(const char *call, qd_rect base, uint32_t clip_rgn, uint32_t mask, clip_fn fn,
+                      void *ctx) {
+    if (!mask && (!clip_rgn || rgn_handle_is_rect(clip_rgn))) {
+        fn(clip_rgn ? rect_sect(base, qd_read_rect(gm_r32(clip_rgn) + 2)) : base, ctx);
+        return;
+    }
+    rgn r, other;
+    rgn_init(&r);
+    rgn_set_rect(&r, base);
+    if (clip_rgn) {
+        rgn_read_for(call, clip_rgn, &other);
+        rgn_combine(&r, &other, RGN_SECT, &r);
+        rgn_free(&other);
+    }
+    if (mask) {
+        rgn_read_for(call, mask, &other);
+        rgn_combine(&r, &other, RGN_SECT, &r);
+        rgn_free(&other);
+    }
+    rgn_each_rect(&r, fn, ctx);
+    rgn_free(&r);
+}
+
+/* Drawing into port: its portRect, within its clip region. */
+static void each_port_clip(const char *call, uint32_t port, uint32_t mask, clip_fn fn, void *ctx) {
+    each_clip(call, qd_read_rect(port + PORT_RECT), gm_r32(port + PORT_CLIP_RGN), mask, fn, ctx);
 }
 
 /* ---- the screen ---- */
@@ -690,43 +713,101 @@ static void h_clip_rect(void) {
     qd_write_rect(gm_r32(rgn) + 2, qd_read_rect(trap_arg(0)));
 }
 
+/* Copies region from into region to, for call. */
+static void copy_rgn(const char *call, uint32_t from, uint32_t to) {
+    rgn r;
+    rgn_read_for(call, from, &r);
+    if (!mm_is_handle(to))
+        trap_crash("%s: 0x%08x is not a region", call, to);
+    rgn_write_for(call, to, &r);
+    rgn_free(&r);
+}
+
+/* SetClip(RgnHandle): the port keeps its own copy. */
+static void h_set_clip(void) { copy_rgn("SetClip", trap_arg(0), gm_r32(Q.cur_port + PORT_CLIP_RGN)); }
+
+/* GetClip(RgnHandle): a copy of the port's. */
+static void h_get_clip(void) { copy_rgn("GetClip", gm_r32(Q.cur_port + PORT_CLIP_RGN), trap_arg(0)); }
+
+/* GetPortVisibleRegion(CGrafPtr, RgnHandle) returns the RgnHandle. */
+static void h_get_port_visible_region(void) {
+    copy_rgn("GetPortVisibleRegion", gm_r32(trap_arg(0) + PORT_VIS_RGN), trap_arg(1));
+    trap_return(trap_arg(1));
+}
+
 static void h_rgb_fore_color(void) {
     qd_rgb c = read_rgb(trap_arg(0));
     write_rgb(Q.cur_port + PORT_RGB_FG, c);
 }
 
-static void h_paint_rect(void) {
-    qd_rect r = qd_read_rect(trap_arg(0));
+typedef struct {
     qd_pixels px;
+    qd_rect r;
+    qd_rgb color;
+} fill_job;
+
+static void fill_clipped(qd_rect clip, void *ctx) {
+    fill_job *j = ctx;
+    qd_fill(&j->px, j->r, clip, j->color);
+}
+
+static void h_paint_rect(void) {
+    fill_job j = {.r = qd_read_rect(trap_arg(0)), .color = read_rgb(Q.cur_port + PORT_RGB_FG)};
     qd_palette pal;
     uint32_t bits = port_pixmap(Q.cur_port);
-    qd_bits("PaintRect", bits, &px, &pal);
-    qd_fill(&px, r, port_clip("PaintRect", Q.cur_port), read_rgb(Q.cur_port + PORT_RGB_FG));
+    qd_bits("PaintRect", bits, &j.px, &pal);
+    each_port_clip("PaintRect", Q.cur_port, 0, fill_clipped, &j);
     if (is_screen_bits(bits))
         Q.dirty = true;
 }
 
-/* CopyBits(srcBits, dstBits, srcRect, dstRect, mode, maskRgn) */
-static void h_copy_bits(void) {
-    uint32_t src_bits = trap_arg(0), dst_bits = trap_arg(1);
-    int mode = (int16_t)trap_arg(4);
-    if (trap_arg(5))
-        trap_crash("CopyBits: mask regions are not supported");
+typedef struct {
     qd_pixels src, dst;
-    qd_palette src_pal, dst_pal;
-    qd_bits("CopyBits", src_bits, &src, &src_pal);
-    qd_bits("CopyBits", dst_bits, &dst, &dst_pal);
-    qd_rect clip = dst.bounds;
-    if (dst_bits == port_pixmap(Q.cur_port))
-        clip = port_clip("CopyBits", Q.cur_port);
+    qd_rect sr, dr;
+    int mode;
+    qd_rgb fg, bk;
+} copy_job;
+
+static void copy_clipped(qd_rect clip, void *ctx) {
+    copy_job *j = ctx;
     char err[128];
-    qd_rect sr = qd_read_rect(trap_arg(2)), dr = qd_read_rect(trap_arg(3));
-    if (!qd_blit(&src, sr, &dst, dr, clip, mode, read_rgb(Q.cur_port + PORT_RGB_FG),
-                 read_rgb(Q.cur_port + PORT_RGB_BK), err, sizeof err))
+    if (!qd_blit(&j->src, j->sr, &j->dst, j->dr, clip, j->mode, j->fg, j->bk, err, sizeof err))
         trap_crash("CopyBits: %s", err);
-    hd_copy(&src, sr, &dst, dr, clip);
+    hd_copy(&j->src, j->sr, &j->dst, j->dr, clip);
+}
+
+/* CopyBits(srcBits, dstBits, srcRect, dstRect, mode, maskRgn): the mask is
+   in the destination's coordinates. */
+static void h_copy_bits(void) {
+    uint32_t src_bits = trap_arg(0), dst_bits = trap_arg(1), mask = trap_arg(5);
+    copy_job j = {.sr = qd_read_rect(trap_arg(2)), .dr = qd_read_rect(trap_arg(3)),
+                  .mode = (int16_t)trap_arg(4), .fg = read_rgb(Q.cur_port + PORT_RGB_FG),
+                  .bk = read_rgb(Q.cur_port + PORT_RGB_BK)};
+    qd_palette src_pal, dst_pal;
+    qd_bits("CopyBits", src_bits, &j.src, &src_pal);
+    qd_bits("CopyBits", dst_bits, &j.dst, &dst_pal);
+    if (dst_bits == port_pixmap(Q.cur_port))
+        each_port_clip("CopyBits", Q.cur_port, mask, copy_clipped, &j);
+    else
+        each_clip("CopyBits", j.dst.bounds, 0, mask, copy_clipped, &j);
     if (is_screen_bits(dst_bits))
         Q.dirty = true;
+}
+
+typedef struct {
+    const uint8_t *data;
+    uint32_t len;
+    qd_rect dst;
+    qd_pixels px;
+    qd_rgb fg, bk;
+} picture_job;
+
+static void picture_clipped(qd_rect clip, void *ctx) {
+    picture_job *j = ctx;
+    char err[128];
+    if (!pict_draw(j->data, j->len, j->dst, &j->px, clip, j->fg, j->bk, err, sizeof err))
+        trap_crash("DrawPicture: %s", err);
+    hd_picture(j->data, j->len, j->dst, &j->px, clip);
 }
 
 static void h_draw_picture(void) {
@@ -735,16 +816,13 @@ static void h_draw_picture(void) {
         trap_crash("DrawPicture: 0x%08x is not a handle", pic);
     uint32_t len = mm_handle_size(pic);
     const uint8_t *data = gm_ptr(gm_r32(pic), len);
-    qd_pixels px;
+    picture_job j = {.data = data, .len = len, .dst = qd_read_rect(trap_arg(1)),
+                     .fg = read_rgb(Q.cur_port + PORT_RGB_FG),
+                     .bk = read_rgb(Q.cur_port + PORT_RGB_BK)};
     qd_palette pal;
     uint32_t bits = port_pixmap(Q.cur_port);
-    qd_bits("DrawPicture", bits, &px, &pal);
-    char err[128];
-    qd_rect dst = qd_read_rect(trap_arg(1)), clip = port_clip("DrawPicture", Q.cur_port);
-    if (!pict_draw(data, len, dst, &px, clip, read_rgb(Q.cur_port + PORT_RGB_FG),
-                   read_rgb(Q.cur_port + PORT_RGB_BK), err, sizeof err))
-        trap_crash("DrawPicture: %s", err);
-    hd_picture(data, len, dst, &px, clip);
+    qd_bits("DrawPicture", bits, &j.px, &pal);
+    each_port_clip("DrawPicture", Q.cur_port, 0, picture_clipped, &j);
     if (is_screen_bits(bits))
         Q.dirty = true;
 }
@@ -812,6 +890,9 @@ void qd_register(void) {
     trap_register("BeginFullScreen", h_begin_full_screen);
     trap_register("EndFullScreen", h_end_full_screen);
     trap_register("ClipRect", h_clip_rect);
+    trap_register("SetClip", h_set_clip);
+    trap_register("GetClip", h_get_clip);
+    trap_register("GetPortVisibleRegion", h_get_port_visible_region);
     trap_register("RGBForeColor", h_rgb_fore_color);
     trap_register("PaintRect", h_paint_rect);
     trap_register("CopyBits", h_copy_bits);

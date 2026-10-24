@@ -35,6 +35,7 @@
 #include "play.h"
 #include "qd.h"
 #include "recordings.h"
+#include "region.h"
 #include "replay.h"
 #include "rsrc.h"
 #include "script.h"
@@ -505,6 +506,7 @@ int main(int argc, char **argv) {
     ae_register();
     cf_register();
     qd_register();
+    region_register();
     dialogs_register();
     cgimage_register();
     cgdisplay_register();
