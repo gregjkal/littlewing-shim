@@ -429,6 +429,7 @@ int main(int argc, char **argv) {
             atexit(save_prefs_at_exit);
     }
     qd_init(game->screen_width, game->screen_height, macho ? 32 : 8);
+    qd_pad_gworld_rows(strcmp(game->id, "angel-egg") == 0);
     dialogs_init();
     cgimage_init();
     cgdisplay_init();
