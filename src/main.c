@@ -435,7 +435,15 @@ int main(int argc, char **argv) {
     }
     if (!replay_start(game->id, buf, len, have_data ? data_dir : NULL, err, sizeof err))
         return startup_error("%s", err);
-    if (files_init(dir, have_data ? data_dir : NULL)) {
+    bool saving = files_init(dir, have_data ? data_dir : NULL);
+    if (macho) { /* the folder the program is in, where a Carbon program's relative paths start */
+        char exe_dir[PATH_MAX];
+        snprintf(exe_dir, sizeof exe_dir, "%s", game->exe);
+        char *slash = strrchr(exe_dir, '/');
+        *(slash ? slash : exe_dir) = '\0';
+        files_set_default_dir(exe_dir);
+    }
+    if (saving) {
         char prefs[PATH_MAX + 16];
         snprintf(prefs, sizeof prefs, "%s/prefs.plist", data_dir);
         cf_load_prefs(prefs);
