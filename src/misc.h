@@ -64,7 +64,8 @@ double misc_seconds(void);
    recording or a replay (replay.h), reading the clock is a step. */
 double misc_last_seconds(void);
 
-/* False while HideCursor has hidden the cursor (until InitCursor). */
+/* False while HideCursor has hidden the cursor (until as many ShowCursor
+   calls, or InitCursor). */
 bool misc_cursor_visible(void);
 
 /* What CGDisplayHideCursor and CGDisplayShowCursor do: hide the cursor
@@ -105,6 +106,6 @@ void misc_num2dec(int style, int digits, double x, misc_decimal *out);
 
 /* Registers Gestalt, time, string, cursor, Apple Event, Internet Config,
    LSOpenCFURLRef, KeyScript and the text input source calls (which change
-   nothing), GetMBarHeight, BlockMoveData, num2dec and ExitToShell
-   imports. */
+   nothing), GetMBarHeight, BlockMoveData, num2dec, Fix2X, Long2Fix and
+   ExitToShell imports. */
 void misc_register(void);

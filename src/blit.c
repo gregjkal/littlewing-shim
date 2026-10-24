@@ -156,6 +156,32 @@ static void put_px(const qd_pixels *p, int x, int y, uint32_t v) {
 }
 
 uint32_t qd_get_pixel(const qd_pixels *p, int x, int y) { return get_px(p, x, y); }
+bool qd_fill_pattern(const qd_pixels *dst, qd_rect r, qd_rect clip, const uint8_t pat[8], int mode,
+                     qd_rgb fg, qd_rgb bg) {
+    if (mode >= 0 && mode < QD_PAT_COPY)
+        mode += QD_PAT_COPY;
+    if (mode < QD_PAT_COPY || mode > QD_NOT_PAT_BIC)
+        return false;
+    bool flip = mode >= QD_NOT_PAT_COPY;
+    int op = (mode - QD_PAT_COPY) & 3;
+    uint32_t vf = qd_pixel_for(fg, dst->depth, dst->pal), vb = qd_pixel_for(bg, dst->depth, dst->pal);
+    uint32_t all = dst->depth == 32 ? 0xFFFFFFu : dst->depth == 16 ? 0x7FFFu : (1u << dst->depth) - 1;
+    qd_rect area = rect_sect(rect_sect(r, clip), dst->bounds);
+    for (int y = area.top; y < area.bottom; y++) {
+        uint8_t row = pat[(y - dst->bounds.top) & 7];
+        for (int x = area.left; x < area.right; x++) {
+            bool on = ((row >> (7 - ((x - dst->bounds.left) & 7))) & 1) != flip;
+            switch (op) {
+            case 0: put_px(dst, x, y, on ? vf : vb); break;
+            case 1: if (on) put_px(dst, x, y, vf); break;
+            case 2: if (on) put_px(dst, x, y, get_px(dst, x, y) ^ all); break;
+            default: if (on) put_px(dst, x, y, vb); break;
+            }
+        }
+    }
+    return true;
+}
+
 void qd_set_pixel(const qd_pixels *p, int x, int y, uint32_t v) { put_px(p, x, y, v); }
 qd_rgb qd_color_of(uint32_t v, int depth, const qd_palette *pal) { return rgb_of(v, depth, pal); }
 
@@ -167,6 +193,8 @@ static bool same_palette(const qd_palette *a, const qd_palette *b) {
 
 bool qd_blit(const qd_pixels *src, qd_rect sr, const qd_pixels *dst, qd_rect dr, qd_rect clip,
              int mode, qd_rgb fg, qd_rgb bg, char *err, size_t errlen) {
+    if (mode == (QD_SRC_COPY | QD_DITHER_COPY))
+        mode = QD_SRC_COPY;
     if (mode != QD_SRC_COPY)
         return fail(err, errlen, "transfer mode %d is not supported", mode);
     if (rect_empty(sr) || rect_empty(dr))
