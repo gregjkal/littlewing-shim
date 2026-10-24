@@ -167,6 +167,8 @@ static bool same_palette(const qd_palette *a, const qd_palette *b) {
 
 bool qd_blit(const qd_pixels *src, qd_rect sr, const qd_pixels *dst, qd_rect dr, qd_rect clip,
              int mode, qd_rgb fg, qd_rgb bg, char *err, size_t errlen) {
+    if (mode == (QD_SRC_COPY | QD_DITHER_COPY))
+        mode = QD_SRC_COPY;
     if (mode != QD_SRC_COPY)
         return fail(err, errlen, "transfer mode %d is not supported", mode);
     if (rect_empty(sr) || rect_empty(dr))

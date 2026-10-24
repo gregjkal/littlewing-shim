@@ -8,7 +8,7 @@
 static const char *const names[] = {
     "NewPtr", "NewPtrClear", "DisposePtr", "GetPtrSize", "SetPtrSize", "NewHandleClear",
     "DisposeHandle", "GetHandleSize", "RecoverHandle", "HLock", "HUnlock", "HPurge",
-    "HNoPurge", "MoveHHi", "HGetState", "HSetState", "MemError",
+    "HNoPurge", "MoveHHi", "HGetState", "HSetState", "MemError", "ReserveMem",
 };
 
 static void setup(void) {
@@ -158,4 +158,11 @@ TEST(mmcall_clobbered_header_with_wrapping_size_crashes) {
     int status = test_run_child(child_clobbered_header, &cap, out, sizeof out);
     CHECK_EQ(status, 2);
     CHECK_CONTAINS(out, "is corrupt");
+}
+
+TEST(mmcall_reserve_mem_succeeds) {
+    setup();
+    call_import("NewPtr", 1, 0x7FFFFFFFu);
+    call_import("ReserveMem", 1, 4096u);
+    CHECK_EQ(mem_error(), 0);
 }

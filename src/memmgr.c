@@ -380,6 +380,9 @@ static void h_hset_state(void) {
 
 static void h_mem_error(void) { ret_err(last_error); }
 
+/* ReserveMem(Size): the heap has room enough, and nothing moves. */
+static void h_reserve_mem(void) { last_error = MM_NO_ERR; }
+
 void mm_register(void) {
     trap_register("NewPtr", h_new_ptr);
     trap_register("NewPtrClear", h_new_ptr_clear);
@@ -400,4 +403,5 @@ void mm_register(void) {
     trap_register("HGetState", h_hget_state);
     trap_register("HSetState", h_hset_state);
     trap_register("MemError", h_mem_error);
+    trap_register("ReserveMem", h_reserve_mem);
 }
