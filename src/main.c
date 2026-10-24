@@ -44,9 +44,7 @@
 #include "util.h"
 #include "watch.h"
 
-/* A local build can define this, in a file of its own, to change a game's
-   code after it loads. Releases have only this one, which does nothing. */
-__attribute__((weak)) void local_patch_hook(const char *game_id) { (void)game_id; }
+void local_patch_hook(const char *game_id);
 
 /* Launched as the app (from Finder or `open`), there is no terminal: the
    log goes to ~/Library/Logs/littlewing-shim/loony.log (the one before it is kept
