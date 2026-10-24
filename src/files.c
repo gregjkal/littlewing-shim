@@ -6,9 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
 #include "guest_mem.h"
+#include "memmgr.h"
 #include "snapshot.h"
 #include "trap.h"
 #include "util.h"
@@ -53,6 +55,7 @@ static struct {
     int ndirs;
     open_file files[MAX_FILES];
     char refs[MAX_REFS][REL_CAP]; /* what each FSRef names, relative to the game folder */
+    char default_dir[REL_CAP];    /* the default directory (dirID 0), relative to the game folder */
     int nrefs;
     bool warned_no_data;
 } F;
@@ -256,6 +259,7 @@ static void snap_walk(snapshot_walker *w) {
         snapshot_check(w, safe_rel(F.dirs[i], sizeof F.dirs[i]), "folder %d", i);
     for (int i = 0; i < F.nrefs; i++)
         snapshot_check(w, safe_rel(F.refs[i], sizeof F.refs[i]), "reference %d", i);
+    snapshot_check(w, safe_rel(F.default_dir, sizeof F.default_dir), "the default directory");
     for (int i = 0; i < MAX_FILES; i++) {
         open_file *o = &F.files[i];
         int64_t mark = !snapshot_loading(w) && o->f ? (int64_t)ftell(o->f) : -1;
@@ -274,6 +278,12 @@ static void snap_walk(snapshot_walker *w) {
     }
 }
 SNAPSHOT_STATE_WALK(F, snap_walk)
+
+void files_set_default_dir(const char *rel) {
+    if (!safe_rel(rel, strlen(rel) + 1) || strlen(rel) >= sizeof F.default_dir)
+        fatal("the default directory %s isn't a folder inside the game's", rel);
+    snprintf(F.default_dir, sizeof F.default_dir, "%s", rel);
+}
 
 /* Where rel is on the host: in the data folder if it's there (returns
    true), otherwise in the game folder, whether or not it exists. */
@@ -308,7 +318,7 @@ static void h_fs_make_fsspec(void) {
     if (vref != 0 && vref != FILES_VREFNUM)
         trap_crash("FSMakeFSSpec: unknown volume %d", vref);
     if (dir == 0)
-        dir = FILES_ROOT_DIRID;
+        dir = dir_id(F.default_dir);
     const char *base = dir_path(dir);
     if (!base)
         trap_crash("FSMakeFSSpec: unknown directory ID %u", dir);
@@ -536,50 +546,137 @@ static open_file *file_of(int16_t ref) {
     return &F.files[slot];
 }
 
+/* Copies src, from where it is open, to a new file at dst. Returns
+   whether it all arrived. */
+static bool copy_stream(FILE *src, const char *dst) {
+    FILE *out = fopen(dst, "wb");
+    bool ok = out != NULL;
+    char buf[65536];
+    size_t n;
+    while (ok && (n = fread(buf, 1, sizeof buf, src)) > 0)
+        ok = fwrite(buf, 1, n, out) == n;
+    ok = ok && !ferror(src);
+    if (out && fclose(out) != 0)
+        ok = false;
+    return ok;
+}
+
+/* Copies rel from the game folder to the data folder, its data fork and
+   its resource fork, unless it is there already. The copy is made under a
+   temporary name and renamed when complete, so a failed copy never hides
+   the original. Returns an OSErr. */
+static int16_t copy_to_data(const char *call, const char *rel) {
+    if (!F.data_dir[0])
+        return no_data_dir(call);
+    char src[PATH_CAP], dst[PATH_CAP], tmp[PATH_CAP + 8], parent[PATH_CAP];
+    under(F.game_dir, rel, src, sizeof src);
+    under(F.data_dir, rel, dst, sizeof dst);
+    if (exists(dst, false))
+        return 0;
+    snprintf(tmp, sizeof tmp, "%s.tmp", dst);
+    snprintf(parent, sizeof parent, "%s", dst);
+    *strrchr(parent, '/') = '\0';
+    char src_fork[PATH_CAP + 16], tmp_fork[PATH_CAP + 24];
+    snprintf(src_fork, sizeof src_fork, "%s/..namedfork/rsrc", src);
+    snprintf(tmp_fork, sizeof tmp_fork, "%s/..namedfork/rsrc", tmp);
+    FILE *in = fopen(src, "rb");
+    bool ok = in && make_dirs(parent) && copy_stream(in, tmp);
+    if (in)
+        fclose(in);
+    FILE *fork = ok ? fopen(src_fork, "rb") : NULL;
+    if (fork) {
+        fseek(fork, 0, SEEK_END);
+        long fork_len = ftell(fork);
+        fseek(fork, 0, SEEK_SET);
+        ok = fork_len == 0 || copy_stream(fork, tmp_fork);
+        fclose(fork);
+    }
+    ok = ok && rename(tmp, dst) == 0;
+    if (!ok) {
+        log_msg("%s: can't copy %s to %s: %s", call, src, dst, strerror(errno));
+        remove(tmp);
+        return FILES_IO_ERR;
+    }
+    return 0;
+}
+
 /* Makes an open file writable: copies a game-folder file into the data
    folder (unless another open file already did) and reopens the copy at the
-   same mark. The copy is made under a temporary name and renamed when
-   complete, so a failed copy never hides the original. Returns an OSErr. */
+   same mark. Returns an OSErr. */
 static int16_t make_writable(const char *call, open_file *o) {
     if (!o->writable)
         return FILES_WR_PERM_ERR;
     if (o->in_data)
         return 0;
-    if (!F.data_dir[0])
-        return no_data_dir(call);
-    char src[PATH_CAP], dst[PATH_CAP], tmp[PATH_CAP + 8], parent[PATH_CAP];
-    under(F.game_dir, o->rel, src, sizeof src);
+    int16_t err = copy_to_data(call, o->rel);
+    if (err)
+        return err;
+    char dst[PATH_CAP];
     under(F.data_dir, o->rel, dst, sizeof dst);
-    snprintf(tmp, sizeof tmp, "%s.tmp", dst);
-    snprintf(parent, sizeof parent, "%s", dst);
-    *strrchr(parent, '/') = '\0';
     long mark = ftell(o->f);
-    bool ok = true;
-    if (!exists(dst, false)) {
-        FILE *out = make_dirs(parent) ? fopen(tmp, "wb") : NULL;
-        ok = out != NULL;
-        fseek(o->f, 0, SEEK_SET);
-        char buf[65536];
-        size_t n;
-        while (ok && (n = fread(buf, 1, sizeof buf, o->f)) > 0)
-            ok = fwrite(buf, 1, n, out) == n;
-        ok = ok && !ferror(o->f);
-        if (out && fclose(out) != 0)
-            ok = false;
-        ok = ok && rename(tmp, dst) == 0;
-        if (!ok)
-            remove(tmp);
-    }
-    FILE *f = ok ? fopen(dst, "r+b") : NULL;
+    FILE *f = fopen(dst, "r+b");
     if (!f) {
-        log_msg("%s: can't copy %s to %s: %s", call, src, dst, strerror(errno));
-        fseek(o->f, mark, SEEK_SET);
+        log_msg("%s: can't open %s: %s", call, dst, strerror(errno));
         return FILES_IO_ERR;
     }
     fclose(o->f);
     o->f = f;
     o->in_data = true;
     fseek(f, mark, SEEK_SET);
+    return 0;
+}
+
+/* ---- resource forks, for rsrc.c ---- */
+
+void files_spec_rel(uint32_t spec, char *out, size_t cap) { spec_rel_path(spec, out, cap); }
+
+int16_t files_read_rsrc_fork(const char *rel, uint8_t **out, size_t *len) {
+    *out = NULL;
+    *len = 0;
+    char path[PATH_CAP], fork[PATH_CAP + 16];
+    locate(rel, false, path, sizeof path);
+    if (!exists(path, false))
+        return FILES_FNF_ERR;
+    snprintf(fork, sizeof fork, "%s/..namedfork/rsrc", path);
+    struct stat st;
+    if (stat(fork, &st) != 0 || st.st_size == 0)
+        return 0;
+    *out = read_file(fork, len);
+    if (!*out) {
+        log_msg("can't read %s: %s", fork, strerror(errno));
+        return FILES_IO_ERR;
+    }
+    return 0;
+}
+
+int16_t files_write_rsrc_fork(const char *rel, const uint8_t *data, size_t len) {
+    if (!F.data_dir[0])
+        return no_data_dir("the Resource Manager");
+    char path[PATH_CAP], fork[PATH_CAP + 16];
+    under(F.game_dir, rel, path, sizeof path);
+    int16_t err = 0;
+    if (exists(path, false))
+        err = copy_to_data("the Resource Manager", rel);
+    under(F.data_dir, rel, path, sizeof path);
+    if (!err && !exists(path, false)) {
+        char parent[PATH_CAP];
+        snprintf(parent, sizeof parent, "%s", path);
+        *strrchr(parent, '/') = '\0';
+        FILE *f = make_dirs(parent) ? fopen(path, "wb") : NULL;
+        if (!f || fclose(f) != 0)
+            err = FILES_IO_ERR;
+    }
+    if (err)
+        return err;
+    snprintf(fork, sizeof fork, "%s/..namedfork/rsrc", path);
+    FILE *f = fopen(fork, "wb");
+    bool ok = f && fwrite(data, 1, len, f) == len;
+    if (f && fclose(f) != 0)
+        ok = false;
+    if (!ok) {
+        log_msg("can't write %s: %s", fork, strerror(errno));
+        return FILES_IO_ERR;
+    }
     return 0;
 }
 
@@ -773,6 +870,114 @@ static void h_fs_close(void) {
     trap_return(failed ? (uint32_t)FILES_IO_ERR : 0);
 }
 
+/* FSRead(short refNum, long *count, void *buffer) -> OSErr: from the mark. */
+static void h_fs_read(void) {
+    open_file *o = file_of((int16_t)trap_arg(0));
+    uint32_t count_p = trap_arg(1);
+    if (!o) {
+        trap_return((uint32_t)FILES_RF_NUM_ERR);
+        return;
+    }
+    int32_t want = (int32_t)gm_r32(count_p);
+    int16_t err = want < 0 ? FILES_PARAM_ERR : 0;
+    size_t got = 0;
+    if (!err && want > 0) {
+        fseek(o->f, 0, SEEK_CUR);
+        got = fread(gm_ptr(trap_arg(2), (uint32_t)want), 1, (size_t)want, o->f);
+        if (got < (size_t)want)
+            err = FILES_EOF_ERR;
+    }
+    gm_w32(count_p, (uint32_t)got);
+    trap_return((uint32_t)(int32_t)err);
+}
+
+/* The FindFolder types the shim knows. */
+#define FOLDER_PREFERENCES 0x70726566u /* 'pref' */
+
+/* FindFolder(short vRefNum, OSType folderType, Boolean createFolder,
+   short *foundVRefNum, long *foundDirID) -> OSErr. The Preferences
+   folder is the game folder, whose files the data folder overlays, so
+   what the game saves there lands in its save folder. Other folders
+   aren't found. */
+static void h_find_folder(void) {
+    uint32_t type = trap_arg(1);
+    if (type != FOLDER_PREFERENCES) {
+        log_msg("FindFolder: no folder of type '%c%c%c%c'", (char)(type >> 24), (char)(type >> 16),
+                (char)(type >> 8), (char)type);
+        trap_return((uint32_t)FILES_FNF_ERR);
+        return;
+    }
+    gm_w16(trap_arg(3), (uint16_t)FILES_VREFNUM);
+    gm_w32(trap_arg(4), FILES_ROOT_DIRID);
+    trap_return(0);
+}
+
+/* FSpGetFInfo(const FSSpec *spec, FInfo *info) -> OSErr: the type,
+   creator, flags and place from the file's Finder info (zeros where it
+   has none). */
+#define FINFO_SIZE 16
+static void h_fsp_get_finfo(void) {
+    char rel[REL_CAP], path[PATH_CAP];
+    spec_rel_path(trap_arg(0), rel, sizeof rel);
+    locate(rel, false, path, sizeof path);
+    if (!exists(path, false)) {
+        trap_return((uint32_t)FILES_FNF_ERR);
+        return;
+    }
+    uint8_t info[32] = {0};
+    getxattr(path, XATTR_FINDERINFO_NAME, info, sizeof info, 0, 0);
+    memcpy(gm_ptr(trap_arg(1), FINFO_SIZE), info, FINFO_SIZE);
+    trap_return(0);
+}
+
+/* ResolveAliasFile(FSSpec *target, Boolean resolveAliasChains, Boolean
+   *targetIsFolder, Boolean *wasAliased) -> OSErr. The fake volume holds no
+   aliases, so the target is what it names. */
+static void h_resolve_alias_file(void) {
+    uint32_t spec = trap_arg(0);
+    uint32_t dir = gm_r32(spec + 2);
+    if (!dir_path(dir))
+        trap_crash("ResolveAliasFile: unknown directory ID %u", dir);
+    char mac[256], utf[REL_CAP], rel[REL_CAP], path[PATH_CAP];
+    gm_read_pstr(spec + 6, mac);
+    files_mac_to_utf8(mac, utf, sizeof utf);
+    join(dir_path(dir), utf, rel, sizeof rel);
+    bool folder = is_dir(rel);
+    locate(rel, false, path, sizeof path);
+    gm_w8(trap_arg(2), folder);
+    gm_w8(trap_arg(3), 0);
+    trap_return(folder || exists(path, false) ? 0 : (uint32_t)FILES_FNF_ERR);
+}
+
+/* NewAlias(const FSSpec *fromFile, const FSSpec *target, AliasHandle
+   *alias) -> OSErr. An AliasRecord's userType and aliasSize, then the
+   target's FSSpec: nothing on the fake volume reads one back, and the
+   game keeps it as it is. */
+#define ALIAS_HEADER 6
+static void h_new_alias(void) {
+    uint32_t size = ALIAS_HEADER + FSSPEC_SIZE;
+    uint32_t h = mm_new_handle(size, true);
+    if (!h) {
+        gm_w32(trap_arg(2), 0);
+        trap_return((uint32_t)MM_MEM_FULL_ERR);
+        return;
+    }
+    uint32_t p = gm_r32(h);
+    gm_w16(p + 4, (uint16_t)size);
+    memcpy(gm_ptr(p + ALIAS_HEADER, FSSPEC_SIZE), gm_ptr(trap_arg(1), FSSPEC_SIZE), FSSPEC_SIZE);
+    gm_w32(trap_arg(2), h);
+    trap_return(0);
+}
+
+/* FlushVol(ConstStr63Param volName, short vRefNum) -> OSErr: every write
+   is in the host's hands already. */
+static void h_flush_vol(void) {
+    for (int i = 0; i < MAX_FILES; i++)
+        if (F.files[i].f)
+            fflush(F.files[i].f);
+    trap_return(0);
+}
+
 void files_register(void) {
     trap_register("FSMakeFSSpec", h_fs_make_fsspec);
     trap_register("FSpCreate", h_fsp_create);
@@ -792,4 +997,10 @@ void files_register(void) {
     trap_register("FSGetForkPosition", h_fs_get_fork_position);
     trap_register("FSSetForkPosition", h_fs_set_fork_position);
     trap_register("FSCloseFork", h_fs_close);
+    trap_register("FSRead", h_fs_read);
+    trap_register("FindFolder", h_find_folder);
+    trap_register("FSpGetFInfo", h_fsp_get_finfo);
+    trap_register("ResolveAliasFile", h_resolve_alias_file);
+    trap_register("NewAlias", h_new_alias);
+    trap_register("FlushVol", h_flush_vol);
 }

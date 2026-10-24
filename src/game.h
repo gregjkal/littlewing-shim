@@ -36,7 +36,11 @@ const game_info *game_by_id(const char *id);
 /* Where games are installed: $LOONY_APPS_DIR (for tests), or /Applications. */
 const char *game_apps_dir(void);
 
-/* The game's folder: <game_apps_dir()>/<folder_name>. */
+/* The game's folder: <game_apps_dir()>/<folder_name> if its program is
+   there, or else the first folder one level down, by name, that holds it
+   (/Applications/LittleWing/Loony Labyrinth). Apps and hidden folders aren't
+   looked in. If neither has it, <game_apps_dir()>/<folder_name>, for
+   messages that say where to put it. */
 void game_folder(const game_info *g, char *out, size_t cap);
 
 /* The first game, in table order, whose program is readable in dir, or NULL. */

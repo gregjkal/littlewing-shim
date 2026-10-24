@@ -208,7 +208,7 @@ TEST(snapshot_puts_a_guest_back_in_place_in_the_run_loop) {
 static const char *const owners[] = {"cf.c C",      "files.c F",  "mixer.c X",  "dialogs.c G",
                                      "cgimage.c G", "rsrc.c R",   "events.c E", "replay.c R",
                                      "misc.c M",    "qd.c Q",     "cgdisplay.c G", "libc.c L",
-                                     "coreaudio.c CA"};
+                                     "coreaudio.c CA", "ae.c A"};
 
 static bool is_owner(const char *file, const char *name) {
     char tag[128];
