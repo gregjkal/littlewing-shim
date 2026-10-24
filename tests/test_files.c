@@ -3,16 +3,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
 #include "files.h"
 #include "harness.h"
+#include "memmgr.h"
 #include "util.h"
 
 static const char *const names[] = {
     "FSMakeFSSpec", "FSpOpenDF", "PBReadSync", "GetEOF", "SetFPos", "GetFPos", "FSClose",
     "FSpCreate", "FSWrite", "SetEOF", "PBFlushFileSync", "FSPathMakeRef", "FSGetDataForkName",
     "FSOpenFork", "FSGetForkSize", "FSGetForkPosition", "FSSetForkPosition", "FSCloseFork",
+    "FSRead", "FindFolder", "FSpGetFInfo", "ResolveAliasFile", "NewAlias", "FlushVol",
 };
 
 static char dir[1024], data[1100];
@@ -624,4 +627,89 @@ TEST(files_old_data_root_stays_with_loony_data_dir) {
     CHECK(!moved);
     CHECK(save_is(home, "loony-shim", "loony-shim"));
     test_remove_tree(home);
+}
+
+TEST(files_fsread_reads_from_the_mark) {
+    setup();
+    uint32_t spec = scratch(FSSPEC_SIZE), ref = scratch(2), count = scratch(4), buf = scratch(16);
+    CHECK_EQ(make_spec(":LL Data:effect.bin", spec), 0);
+    CHECK_EQ(call_import("FSpOpenDF", 3, spec, 1u, ref), 0);
+    uint32_t r = gm_r16(ref);
+    gm_w32(count, 5);
+    CHECK_EQ(call_import("FSRead", 3, r, count, buf), 0);
+    CHECK_EQ(gm_r32(count), 5);
+    CHECK(memcmp(gm_ptr(buf, 5), "hello", 5) == 0);
+    gm_w32(count, 16);
+    CHECK_EQ((int16_t)call_import("FSRead", 3, r, count, buf), FILES_EOF_ERR);
+    CHECK_EQ(gm_r32(count), 6);
+    CHECK(memcmp(gm_ptr(buf, 6), " world", 6) == 0);
+    CHECK_EQ((int16_t)call_import("FSRead", 3, 999u, count, buf), FILES_RF_NUM_ERR);
+    CHECK_EQ(call_import("FlushVol", 2, 0u, 0u), 0);
+    teardown();
+}
+
+TEST(files_the_preferences_folder_is_the_overlaid_game_folder) {
+    setup();
+    uint32_t vref = scratch(2), dir_id = scratch(4);
+    CHECK_EQ(call_import("FindFolder", 5, 0xFFFF8000u, FOURCC('p', 'r', 'e', 'f'), 1u, vref, dir_id), 0);
+    CHECK_EQ((int16_t)gm_r16(vref), FILES_VREFNUM);
+    CHECK_EQ(gm_r32(dir_id), FILES_ROOT_DIRID);
+    CHECK_EQ((int16_t)call_import("FindFolder", 5, 0xFFFF8000u, FOURCC('t', 'e', 'm', 'p'), 1u, vref,
+                                  dir_id),
+             FILES_FNF_ERR);
+    teardown();
+}
+
+TEST(files_finder_info_and_aliases) {
+    setup();
+    char p[1200];
+    snprintf(p, sizeof p, "%s/Caf\xc3\xa9", dir);
+    uint8_t finfo[32] = {'R', 't', 'T', 'b', 'f', 'A', 'E', 'g', 0x01, 0x00};
+    CHECK_EQ(setxattr(p, XATTR_FINDERINFO_NAME, finfo, sizeof finfo, 0, 0), 0);
+    uint32_t spec = scratch(FSSPEC_SIZE), info = scratch(16);
+    CHECK_EQ(make_spec("Caf\x8e", spec), 0);
+    CHECK_EQ(call_import("FSpGetFInfo", 2, spec, info), 0);
+    CHECK_EQ(gm_r32(info), FOURCC('R', 't', 'T', 'b'));
+    CHECK_EQ(gm_r32(info + 4), FOURCC('f', 'A', 'E', 'g'));
+    CHECK_EQ(gm_r16(info + 8), 0x0100);
+    CHECK_EQ(make_spec(":LL Data:effect.bin", spec), 0);
+    CHECK_EQ(call_import("FSpGetFInfo", 2, spec, info), 0);
+    CHECK_EQ(gm_r32(info), 0); /* no Finder info */
+
+    uint32_t folder = scratch(1), aliased = scratch(1);
+    gm_w8(aliased, 1);
+    CHECK_EQ(call_import("ResolveAliasFile", 4, spec, 1u, folder, aliased), 0);
+    CHECK_EQ(gm_r8(folder), 0);
+    CHECK_EQ(gm_r8(aliased), 0);
+    make_spec("LL Data", spec); /* a folder: fnfErr here, but the spec is filled in */
+    CHECK_EQ(call_import("ResolveAliasFile", 4, spec, 1u, folder, aliased), 0);
+    CHECK_EQ(gm_r8(folder), 1);
+    CHECK_EQ(make_spec("nope", spec), FILES_FNF_ERR);
+    CHECK_EQ((int16_t)call_import("ResolveAliasFile", 4, spec, 1u, folder, aliased), FILES_FNF_ERR);
+    CHECK_EQ((int16_t)call_import("FSpGetFInfo", 2, spec, info), FILES_FNF_ERR);
+
+    mm_init();
+    uint32_t out = scratch(4);
+    CHECK_EQ(make_spec("Caf\x8e", spec), 0);
+    CHECK_EQ(call_import("NewAlias", 3, 0u, spec, out), 0);
+    uint32_t h = gm_r32(out);
+    CHECK(mm_is_handle(h));
+    CHECK_EQ(gm_r16(gm_r32(h) + 4), mm_handle_size(h));
+    CHECK(memcmp(gm_ptr(gm_r32(h) + 6, FSSPEC_SIZE), gm_ptr(spec, FSSPEC_SIZE), FSSPEC_SIZE) == 0);
+    teardown();
+}
+
+TEST(files_the_default_directory_can_be_the_programs_folder) {
+    setup();
+    uint32_t spec = scratch(FSSPEC_SIZE);
+    CHECK_EQ(make_spec(":effect.bin", spec), FILES_FNF_ERR);
+    files_set_default_dir("LL Data");
+    CHECK_EQ(make_spec(":effect.bin", spec), 0);
+    uint32_t ref = scratch(2);
+    CHECK_EQ(call_import("FSpOpenDF", 3, spec, 1u, ref), 0);
+    CHECK_EQ(make_spec("::Caf\x8e", spec), 0); /* up to the game folder */
+    CHECK_EQ(gm_r32(spec + 2), FILES_ROOT_DIRID);
+    files_init(dir, data);
+    CHECK_EQ(make_spec("Caf\x8e", spec), 0); /* the game folder again */
+    teardown();
 }
