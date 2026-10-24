@@ -2652,6 +2652,32 @@ TEST(run_angel_egg_plays_its_opening_headless) {
     CHECK_EQ(h, 0x8440172Fu); /* the table, its backglass reading ANGEL EGG, EGG ANGEL */
 }
 
+/* Angel Egg's own Quit, Cmd-Q in its File menu, at its attract mode: its
+   void main returns (it has no ExitToShell) whatever is in r3, so the run
+   exits with 0, with no quit Apple Event. The late quit ends a run whose
+   Cmd-Q went astray. */
+TEST(run_angel_egg_quits_from_its_own_menu) {
+    SKIP_UNLESS_AE();
+    char out[32768];
+    int status = run_script_in(test_ae_app(), "1200 down lcmd\n1202 down q\n1206 up q\n1208 up lcmd\n2400 quit\n",
+                               NULL, NULL, 0, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: main returned ");
+    CHECK(!strstr(out, "quit Apple Event"));
+}
+
+/* Cmd-Q (the script's quit) at its attract mode: the quit Apple Event, and
+   its main returns. */
+TEST(run_angel_egg_quits_on_the_quit_apple_event) {
+    SKIP_UNLESS_AE();
+    char out[32768];
+    int status = run_script_in(test_ae_app(), "1200 quit\n", NULL, NULL, 0, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "sending the quit Apple Event");
+    CHECK_CONTAINS(out, "loony: main returned ");
+    CHECK(!strstr(out, "didn't quit"));
+}
+
 TEST(run_reports_missing_game_folder) {
     char out[4096];
     int status = test_run_child(run_loony, (void *)"/nonexistent/loony", out, sizeof out);

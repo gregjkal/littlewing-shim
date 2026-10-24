@@ -537,7 +537,7 @@ int main(int argc, char **argv) {
             status = guest_call(img.main_addr, 4, args);
         else /* replays are Loony Labyrinth's, so this game never seeks: status stays 0 */
             seek_reenter();
-        misc_main_returned((int32_t)status); /* runs back_to_picker, the exit hook */
+        misc_main_returned((int32_t)status, img.main_void); /* runs back_to_picker, the exit hook */
     }
 
     int32_t app_id = image_find_import(&img, "kCFPreferencesCurrentApplication");

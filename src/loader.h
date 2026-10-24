@@ -20,6 +20,8 @@ typedef struct {
     uint32_t nnames;        /* imports, then (Mach-O) the synthetic ones */
     const char **names;     /* for trap_init; import i traps at GUEST_TRAP_ADDR(i) */
     uint32_t main_addr;     /* Mach-O: main's code address */
+    bool main_void;         /* Mach-O: main's caller is MSL's exit, linked in (CodeWarrior),
+                               and its main may be void: what it returns means nothing */
     uint32_t header_addr;   /* Mach-O: where its header is mapped (the segment at file offset 0) */
     uint32_t ninit;         /* Mach-O: __mod_init_func entries, in order */
     uint32_t *init_addrs;
