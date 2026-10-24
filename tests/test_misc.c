@@ -14,7 +14,7 @@
 
 static const char *const names[] = {
     "Gestalt", "TickCount", "Microseconds", "Delay", "GetDateTime", "ReadLocation",
-    "NumToString", "p2cstrcpy", "c2pstrcpy", "BlockMoveData", "InitCursor", "HideCursor",
+    "NumToString", "p2cstrcpy", "c2pstrcpy", "BlockMoveData", "InitCursor", "HideCursor", "ShowCursor",
     "SetThemeCursor", "KeyScript", "GetMBarHeight", "NewAEEventHandlerUPP",
     "AEInstallEventHandler", "ICStart", "ICStop", "ExitToShell", "ICLaunchURL", "num2dec",
     "LSOpenCFURLRef", "SetTextServiceLanguage", "TISCopyCurrentASCIICapableKeyboardInputSource",
@@ -165,6 +165,15 @@ TEST(misc_cursor_visibility) {
     CHECK(!misc_cursor_visible());
     call_import("InitCursor", 0);
     CHECK(misc_cursor_visible());
+    call_import("HideCursor", 0);
+    call_import("HideCursor", 0);
+    call_import("ShowCursor", 0);
+    CHECK(!misc_cursor_visible());
+    call_import("ShowCursor", 0);
+    CHECK(misc_cursor_visible());
+    call_import("ShowCursor", 0); /* never past visible */
+    call_import("HideCursor", 0);
+    CHECK(!misc_cursor_visible());
 }
 
 TEST(misc_trivial_calls) {

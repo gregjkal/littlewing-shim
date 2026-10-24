@@ -64,7 +64,8 @@ double misc_seconds(void);
    recording or a replay (replay.h), reading the clock is a step. */
 double misc_last_seconds(void);
 
-/* False while HideCursor has hidden the cursor (until InitCursor). */
+/* False while HideCursor has hidden the cursor (until as many ShowCursor
+   calls, or InitCursor). */
 bool misc_cursor_visible(void);
 
 /* What CGDisplayHideCursor and CGDisplayShowCursor do: hide the cursor
