@@ -1,6 +1,7 @@
 #include "test.h"
 
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "game.h"
@@ -78,8 +79,69 @@ TEST(game_folders_are_under_the_apps_dir) {
     setenv("LOONY_APPS_DIR", "/tmp/apps", 1);
     game_folder(game_at(0), out, sizeof out);
     restore_apps_dir();
-    CHECK_STR(def, "/Applications/Crystal Caliburn");
+    /* This Mac may keep it in a folder under /Applications. */
+    CHECK(strncmp(def, "/Applications/", 14) == 0);
+    CHECK(strlen(def) >= 17 && strcmp(def + strlen(def) - 17, "/Crystal Caliburn") == 0);
     CHECK_STR(out, "/tmp/apps/Loony Labyrinth");
+}
+
+/* Makes <apps>/<sub>/Loony Labyrinth with its program; sub may be "". */
+static void put_loony(const char *apps, const char *sub) {
+    char dir[1200];
+    snprintf(dir, sizeof dir, "%s/%s%sLoony Labyrinth", apps, sub, *sub ? "/" : "");
+    make_dirs(dir);
+    touch(dir, "LOONY LABYRINTH 3.0.1");
+}
+
+TEST(game_folder_looks_one_folder_down) {
+    char apps[1024], found[1200], want[1200];
+    test_tmp_dir(apps, sizeof apps);
+    set_apps_dir(apps);
+    const game_info *ll = game_by_id("loony-labyrinth");
+    put_loony(apps, "Pinball");
+    game_folder(ll, found, sizeof found);
+    const game_info *g[4];
+    int n = game_installed(g, 4);
+    restore_apps_dir();
+    test_remove_tree(apps);
+    snprintf(want, sizeof want, "%s/Pinball/Loony Labyrinth", apps);
+    CHECK_STR(found, want);
+    CHECK_EQ(n, 1);
+    CHECK_STR(g[0]->id, "loony-labyrinth");
+}
+
+TEST(game_folder_prefers_the_apps_dir_then_the_first_folder_by_name) {
+    char apps[1024], first[1200], top[1200], want[1200];
+    test_tmp_dir(apps, sizeof apps);
+    set_apps_dir(apps);
+    const game_info *ll = game_by_id("loony-labyrinth");
+    put_loony(apps, "Zed");
+    put_loony(apps, "Games");
+    game_folder(ll, first, sizeof first);
+    put_loony(apps, "");
+    game_folder(ll, top, sizeof top);
+    restore_apps_dir();
+    test_remove_tree(apps);
+    snprintf(want, sizeof want, "%s/Games/Loony Labyrinth", apps);
+    CHECK_STR(first, want);
+    snprintf(want, sizeof want, "%s/Loony Labyrinth", apps);
+    CHECK_STR(top, want);
+}
+
+TEST(game_folder_skips_apps_and_hidden_folders) {
+    char apps[1024], found[1200], want[1200];
+    test_tmp_dir(apps, sizeof apps);
+    set_apps_dir(apps);
+    put_loony(apps, "Other.app");
+    put_loony(apps, ".hidden");
+    game_folder(game_by_id("loony-labyrinth"), found, sizeof found);
+    const game_info *g[4];
+    int n = game_installed(g, 4);
+    restore_apps_dir();
+    test_remove_tree(apps);
+    snprintf(want, sizeof want, "%s/Loony Labyrinth", apps);
+    CHECK_STR(found, want); /* where to put it */
+    CHECK_EQ(n, 0);
 }
 
 TEST(game_in_folder_finds_the_program_that_is_there) {
