@@ -19,7 +19,9 @@ static const char *const names[] = {
     "GetEntryColor", "DisposePalette", "CreateNewWindow", "ChangeWindowAttributes",
     "SetWindowTitleWithCFString", "SetClip", "GetClip", "GetPortVisibleRegion", "NewRgn",
     "RectRgn", "UnionRgn", "GetRegionBounds", "GetDeviceList", "GetNextDevice", "GetMaxDevice",
-    "TestDeviceAttribute",
+    "TestDeviceAttribute", "GetWindowList", "FrontWindow", "GetNextWindow",
+    "GetFrontWindowOfClass", "IsWindowVisible", "IsValidWindowPtr", "GetWindowFromPort",
+    "FindWindow", "GetGrayRgn",
 };
 
 static void setup(void) {
@@ -466,4 +468,36 @@ TEST(qd_set_depth_on_no_device_sets_the_main_screens) {
     CHECK_EQ(call_import("SetDepth", 4, 0u, 16u, 1u, 1u), 0);
     uint32_t gd = call_import("GetMainDevice", 0);
     CHECK_EQ(gm_r16(gm_r32(gm_r32(gm_r32(gd) + GD_PMAP)) + PM_PIXEL_SIZE), 16);
+}
+
+/* The newest window is in front; FrontWindow wants a visible one. */
+TEST(qd_the_window_list_puts_the_newest_in_front) {
+    setup();
+    uint32_t a = qd_new_window(800, 600), b = qd_new_window(400, 300);
+    CHECK_EQ(call_import("GetWindowList", 0), b);
+    CHECK_EQ(call_import("GetNextWindow", 1, b), a);
+    CHECK_EQ(call_import("GetNextWindow", 1, a), 0);
+    CHECK_EQ(call_import("FrontWindow", 0), 0); /* both hidden */
+    call_import("ShowWindow", 1, a);
+    CHECK_EQ(call_import("FrontWindow", 0), a);
+    CHECK_EQ(call_import("IsWindowVisible", 1, a), 1);
+    CHECK_EQ(call_import("IsWindowVisible", 1, b), 0);
+    CHECK_EQ(call_import("GetFrontWindowOfClass", 2, 6u, 1u), a);  /* kDocumentWindowClass */
+    CHECK_EQ(call_import("GetFrontWindowOfClass", 2, 6u, 0u), b);
+    CHECK_EQ(call_import("GetFrontWindowOfClass", 2, 1u, 0u), 0);  /* kAlertWindowClass */
+    CHECK_EQ(call_import("IsValidWindowPtr", 1, a), 1);
+    CHECK_EQ(call_import("IsValidWindowPtr", 1, new_gworld(8, 4, 4)), 0);
+    CHECK_EQ(call_import("GetWindowFromPort", 1, a), a);
+
+    uint32_t out = scratch(4);
+    CHECK_EQ(call_import("FindWindow", 2, (uint32_t)100 << 16 | 200, out), 3); /* inContent */
+    CHECK_EQ(gm_r32(out), a);
+    CHECK_EQ(call_import("FindWindow", 2, (uint32_t)700 << 16 | 200, out), 0); /* inDesk */
+    CHECK_EQ(gm_r32(out), 0);
+
+    uint32_t gray = call_import("GetGrayRgn", 0), r = scratch(8);
+    CHECK_EQ(call_import("GetGrayRgn", 0), gray);
+    call_import("GetRegionBounds", 2, gray, r);
+    CHECK_EQ(qd_read_rect(r).bottom, 600);
+    CHECK_EQ(qd_read_rect(r).right, 800);
 }
