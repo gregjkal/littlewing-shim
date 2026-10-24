@@ -400,6 +400,7 @@ static void h_block_move_data(void) {
 
 static void h_init_cursor(void) { M.cursor_level = 0; }
 static void h_hide_cursor(void) { M.cursor_level--; }
+static void h_show_cursor(void) { misc_show_cursor(); }
 static void h_set_theme_cursor(void) { trap_return(0); }
 static void h_key_script(void) {}
 /* The keyboard's input source is the host's: these change nothing. */
@@ -576,6 +577,7 @@ void misc_register(void) {
     trap_register("BlockMoveData", h_block_move_data);
     trap_register("InitCursor", h_init_cursor);
     trap_register("HideCursor", h_hide_cursor);
+    trap_register("ShowCursor", h_show_cursor);
     trap_register("SetThemeCursor", h_set_theme_cursor);
     trap_register("KeyScript", h_key_script);
     trap_register("GetMBarHeight", h_get_mbar_height);
