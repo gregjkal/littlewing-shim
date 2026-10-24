@@ -4,18 +4,21 @@
 #include <stdlib.h>
 #include <time.h>
 
+#include "asm.h"
 #include "cf.h"
 #include "cpu.h"
 #include "harness.h"
 #include "misc.h"
+#include "ppc.h"
+#include "trap.h"
 
 static const char *const names[] = {
     "Gestalt", "TickCount", "Microseconds", "Delay", "GetDateTime", "ReadLocation",
-    "NumToString", "p2cstrcpy", "c2pstrcpy", "BlockMoveData", "InitCursor", "HideCursor",
+    "NumToString", "p2cstrcpy", "c2pstrcpy", "BlockMoveData", "InitCursor", "HideCursor", "ShowCursor",
     "SetThemeCursor", "KeyScript", "GetMBarHeight", "NewAEEventHandlerUPP",
     "AEInstallEventHandler", "ICStart", "ICStop", "ExitToShell", "ICLaunchURL", "num2dec",
     "LSOpenCFURLRef", "SetTextServiceLanguage", "TISCopyCurrentASCIICapableKeyboardInputSource",
-    "TISSelectInputSource", "SetA5", "SetCurrentA5",
+    "TISSelectInputSource", "SetA5", "SetCurrentA5", "Fix2X", "Long2Fix",
 };
 
 static void setup(void) {
@@ -162,6 +165,15 @@ TEST(misc_cursor_visibility) {
     CHECK(!misc_cursor_visible());
     call_import("InitCursor", 0);
     CHECK(misc_cursor_visible());
+    call_import("HideCursor", 0);
+    call_import("HideCursor", 0);
+    call_import("ShowCursor", 0);
+    CHECK(!misc_cursor_visible());
+    call_import("ShowCursor", 0);
+    CHECK(misc_cursor_visible());
+    call_import("ShowCursor", 0); /* never past visible */
+    call_import("HideCursor", 0);
+    CHECK(!misc_cursor_visible());
 }
 
 TEST(misc_trivial_calls) {
@@ -439,4 +451,35 @@ TEST(misc_set_a5_changes_nothing_and_returns_zero) {
     CHECK_EQ(call_import("SetCurrentA5", 0), 0);
     CHECK_EQ(call_import("SetA5", 1, 0x1234u), 0);
     CHECK_EQ(call_import("SetCurrentA5", 0), 0);
+}
+
+/* Fix2X(f) as the game calls it: guest_call puts the registers back, so
+   guest code (through a transition vector) stores the f1 it returns. */
+static double fix2x(uint32_t f) {
+    uint32_t t = GUEST_TRAP_ADDR(trap_find("Fix2X")), out = scratch(8), code = scratch(64);
+    const uint32_t words[] = {
+        PPC_MFLR_R0, PPC_SAVE_LR, PPC_PUSH64, ppc_lis(12, t >> 16), ppc_ori(12, 12, t & 0xFFFF),
+        0x7D8903A6, /* mtctr r12 */
+        PPC_BCTRL, ppc_lis(4, out >> 16), ppc_ori(4, 4, out & 0xFFFF),
+        0xD8240000, /* stfd f1,0(r4) */
+        PPC_POP64, PPC_LOAD_LR, PPC_MTLR_R0, PPC_BLR,
+    };
+    put_words(code, words, sizeof words / sizeof words[0]);
+    uint32_t tv = scratch(8);
+    gm_w32(tv, code);
+    guest_call(tv, 1, &f);
+    uint64_t bits = (uint64_t)gm_r32(out) << 32 | gm_r32(out + 4);
+    double d;
+    memcpy(&d, &bits, 8);
+    return d;
+}
+
+TEST(misc_fixed_point) {
+    setup();
+    CHECK(fix2x(0x00018000u) == 1.5);
+    CHECK(fix2x(0xFFFF0000u) == -1.0);
+    CHECK_EQ(call_import("Long2Fix", 1, 3u), 0x00030000u);
+    CHECK_EQ(call_import("Long2Fix", 1, (uint32_t)-2), 0xFFFE0000u);
+    CHECK_EQ(call_import("Long2Fix", 1, 40000u), 0x7FFFFFFFu);
+    CHECK_EQ(call_import("Long2Fix", 1, (uint32_t)-40000), 0x80000000u);
 }

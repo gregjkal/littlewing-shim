@@ -1,7 +1,9 @@
 #include "test.h"
 
 #include <SDL3/SDL_scancode.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 
 #include "game.h"
 #include "picker.h"
@@ -197,6 +199,73 @@ TEST(picker_keys_move_across_and_between_rows_of_five) {
     CHECK_EQ(picker_hit(5, 100, 400), -1);      /* beside the short row */
 }
 
+/* Seven games by title, for the layouts past the games in the table. */
+static const game_info seven[7] = {
+    {.title = "Loony Labyrinth"}, {.title = "Crystal Caliburn"}, {.title = "Jinni Zeala"},
+    {.title = "MONSTER FAIR"},    {.title = "Mad Daedalus"},     {.title = "Golden Logres"},
+    {.title = "Angel Egg"}};
+
+TEST(picker_draws_six_cards_in_two_rows_of_three) {
+    picker_entry e[6];
+    for (int i = 0; i < 6; i++)
+        e[i] = (picker_entry){&seven[i], NULL};
+    e[5].art = solid_art(0, 0, 0xFF);
+    picker_draw(e, 6, 5, screen);
+    free(e[5].art);
+    CHECK_EQ(px(8 + 100, 108 + 80)[1], 0x22);   /* the first, where it is with five */
+    CHECK_EQ(px(148 + 100, 324 + 80)[1], 0);    /* no longer a short row */
+    CHECK_EQ(px(8 + 100, 324 + 80)[1], 0x22);   /* the fourth, under the first */
+    CHECK_EQ(px(568 + 100, 324 + 80)[3], 0xFF); /* the sixth card's art */
+    CHECK_EQ(px(568 - 2, 400)[1], 0xFF);        /* gold border: the sixth is selected */
+    bool choose = false;
+    CHECK_EQ(picker_key(6, 2, SDL_SCANCODE_DOWN, &choose), 5);
+    CHECK_EQ(picker_key(6, 5, SDL_SCANCODE_UP, &choose), 2);
+    CHECK_EQ(picker_hit(6, 568 + 5, 324 + 5), 5);
+}
+
+TEST(picker_draws_seven_cards_in_rows_of_four_and_three) {
+    picker_entry e[7];
+    for (int i = 0; i < 7; i++)
+        e[i] = (picker_entry){&seven[i], NULL};
+    e[0].art = solid_art(0xFF, 0, 0);
+    e[6].art = solid_art(0, 0, 0xFF);
+    picker_draw(e, 7, 6, screen);
+    free(e[0].art);
+    free(e[6].art);
+    CHECK_EQ(px(12, 108)[1], 0xFF);               /* the first card's art, reduced */
+    CHECK_EQ(px(12 + 175, 108 + 131)[1], 0xFF);
+    CHECK_EQ(px(612 + 175, 108 + 131)[1], 0x22);  /* the fourth ends the first row */
+    CHECK_EQ(px(112 + 100, 308 + 80)[1], 0x22);   /* the fifth, the second row centered */
+    CHECK_EQ(px(512 + 100, 308 + 80)[3], 0xFF);   /* the seventh card's art */
+    CHECK_EQ(px(512 - 2, 400)[1], 0xFF);          /* gold border: the seventh is selected */
+    CHECK_EQ(px(200, 200)[1], 0);                 /* black between the columns */
+    CHECK_EQ(px(50, 400)[1], 0);                  /* and beside the short row */
+    /* MAD DAEDALUS (192 pixels) fits its 200-pixel column on one line, so
+       nothing is drawn on a second; GOLDEN LOGRES (208) takes two. */
+    bool second_line_md = false, second_line_gl = false;
+    for (int y = 472; y < 488; y++)
+        for (int x = 112; x < 112 + 176; x++)
+            second_line_md |= px(x, y)[1] != 0;
+    for (int y = 472; y < 488; y++)
+        for (int x = 312; x < 312 + 176; x++)
+            second_line_gl |= px(x, y)[1] != 0;
+    CHECK(!second_line_md);
+    CHECK(second_line_gl);
+}
+
+TEST(picker_keys_move_across_and_between_rows_of_seven) {
+    bool choose = false;
+    CHECK_EQ(picker_key(7, 3, SDL_SCANCODE_RIGHT, &choose), 4); /* on to the next row */
+    CHECK_EQ(picker_key(7, 0, SDL_SCANCODE_DOWN, &choose), 4);
+    CHECK_EQ(picker_key(7, 2, SDL_SCANCODE_DOWN, &choose), 6);
+    CHECK_EQ(picker_key(7, 3, SDL_SCANCODE_DOWN, &choose), 6); /* nothing below: the last card */
+    CHECK_EQ(picker_key(7, 6, SDL_SCANCODE_UP, &choose), 2);
+    CHECK(!choose);
+    CHECK_EQ(picker_hit(7, 612 + 175, 108 + 131), 3);
+    CHECK_EQ(picker_hit(7, 312 + 88, 480), 5); /* a name's second line counts */
+    CHECK_EQ(picker_hit(7, 50, 400), -1);       /* beside the short row */
+}
+
 /* A 128x128 icon, its left half opaque red and its right half clear. */
 static void write_icon(const char *path, int size) {
     uint8_t *rgba = calloc((size_t)size * (size_t)size, 4);
@@ -328,6 +397,35 @@ TEST(picker_refuses_a_damaged_icns) {
     CHECK(!cut_short);
     CHECK(!tiny_element);
     CHECK(!overlong);
+}
+
+/* A bundle without appl.png gets its card from app.icns; one with
+   neither is refused. */
+TEST(picker_draws_a_bundle_card_from_its_app_icns) {
+    static uint8_t icns[64 * 1024];
+    char dir[1024], res[1100], path[1200], err[512] = "", none_err[512] = "";
+    test_tmp_dir(dir, sizeof dir);
+    snprintf(res, sizeof res, "%s/Contents", dir);
+    mkdir(res, 0700);
+    snprintf(res, sizeof res, "%s/Contents/Resources", dir);
+    mkdir(res, 0700);
+    uint8_t *art = malloc(PICKER_ART_W * PICKER_ART_H * 4);
+    bool none = picker_load_bundle_art(dir, art, none_err, sizeof none_err);
+    snprintf(path, sizeof path, "%s/app.icns", res);
+    size_t len = build_icns(icns, 0, true);
+    FILE *f = fopen(path, "wb");
+    fwrite(icns, 1, len, f);
+    fclose(f);
+    bool ok = picker_load_bundle_art(dir, art, err, sizeof err);
+    test_remove_tree(dir);
+    const uint8_t *in_left = art + ((size_t)144 * PICKER_ART_W + 128 + 10) * 4;
+    bool red = in_left[1] == 0xFF && in_left[2] == 0 && in_left[3] == 0;
+    free(art);
+    CHECK(!none);
+    CHECK_CONTAINS(none_err, "neither appl.png nor an app.icns");
+    CHECK(ok);
+    CHECK_STR(err, "");
+    CHECK(red);
 }
 
 /* Jinni Zeala has no PICT 800: its card is its icns 128 icon, centered. */

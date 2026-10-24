@@ -18,7 +18,7 @@ static const char *const names[] = {
     "EndFullScreen", "ClipRect", "RGBForeColor", "PaintRect", "CopyBits", "DrawPicture",
     "GetEntryColor", "DisposePalette", "CreateNewWindow", "ChangeWindowAttributes",
     "SetWindowTitleWithCFString", "SetClip", "GetClip", "GetPortVisibleRegion", "NewRgn",
-    "RectRgn", "UnionRgn", "GetRegionBounds",
+    "RectRgn", "UnionRgn", "GetRegionBounds", "Index2Color", "Color2Index", "Random",
 };
 
 static void setup(void) {
@@ -143,6 +143,31 @@ static void child_copy_bits_mask(void *unused) {
     uint32_t gw = new_gworld(8, 4, 4);
     uint32_t bits = call_import("GetPortBitMapForCopyBits", 1, gw);
     call_import("CopyBits", 6, bits, bits, rect(0, 0, 1, 1), rect(0, 0, 1, 1), 0u, 0x1234u);
+}
+
+TEST(qd_copy_bits_dither_copy_is_src_copy) {
+    setup();
+    uint32_t src = new_gworld(8, 4, 1), dst = new_gworld(16, 4, 1);
+    gm_w8(base_of(src) + 1, 255); /* black */
+    call_import("SetGWorld", 2, dst, 0u);
+    uint32_t sb = call_import("GetPortBitMapForCopyBits", 1, src);
+    uint32_t db = call_import("GetPortBitMapForCopyBits", 1, dst);
+    call_import("CopyBits", 6, sb, db, rect(0, 0, 1, 4), rect(0, 0, 1, 4), 64u, 0u);
+    uint32_t b = base_of(dst);
+    CHECK_EQ(gm_r16(b), 0x7FFF);
+    CHECK_EQ(gm_r16(b + 2), 0);
+}
+
+TEST(qd_gworld_rows_padded_as_system_7_1_did) {
+    setup();
+    qd_pad_gworld_rows(true);
+    uint32_t a = new_gworld(8, 384, 2), b = new_gworld(16, 17, 1);
+    qd_pad_gworld_rows(false);
+    uint32_t c = new_gworld(8, 384, 2);
+    CHECK_EQ(gm_r16(gm_r32(call_import("GetGWorldPixMap", 1, a)) + PM_ROW_BYTES), 0x8000 | 400);
+    CHECK_EQ(gm_r16(gm_r32(call_import("GetGWorldPixMap", 1, b)) + PM_ROW_BYTES), 0x8000 | 64);
+    CHECK_EQ(gm_r16(gm_r32(call_import("GetGWorldPixMap", 1, c)) + PM_ROW_BYTES), 0x8000 | 384);
+    CHECK_EQ(mm_ptr_size(base_of(a)), 400 * 2);
 }
 
 TEST(qd_copy_bits_with_a_mask_that_isnt_a_region_crashes) {
@@ -319,6 +344,38 @@ TEST(qd_get_ctable_standard_tables) {
     CHECK_EQ(pal.c[0].r, 0xFFFF);
     CHECK_EQ(pal.c[255].r, 0);
     CHECK_EQ(call_import("GetCTable", 1, 99u), 0);
+}
+
+TEST(qd_get_ctable_gray_tables) {
+    setup();
+    qd_palette pal;
+    qd_read_ctab(call_import("GetCTable", 1, 40u), &pal);
+    CHECK_EQ(pal.n, 256);
+    CHECK_EQ(pal.c[0].r, 0xFFFF);
+    CHECK_EQ(pal.c[255].b, 0);
+    CHECK_EQ(pal.c[128].g, 0xFFFF * 127 / 255);
+    uint32_t one = call_import("GetCTable", 1, 33u);
+    CHECK_EQ(gm_r16(gm_r32(one) + 6), 1); /* ctSize: 2 entries */
+    qd_read_ctab(one, &pal);
+    CHECK_EQ(pal.c[0].r, 0xFFFF);
+    CHECK_EQ(pal.c[1].r, 0);
+}
+
+TEST(qd_index2color_and_color2index_use_the_current_port) {
+    setup();
+    call_import("SetGWorld", 2, new_gworld(8, 4, 1), 0u);
+    uint32_t c = scratch(6);
+    call_import("Index2Color", 2, 255u, c);
+    CHECK_EQ(gm_r16(c) | gm_r16(c + 2) | gm_r16(c + 4), 0);
+    CHECK_EQ(call_import("Color2Index", 1, rgb(0xFFFF, 0xFFFF, 0xFFFF)), 0);
+    CHECK_EQ(call_import("Color2Index", 1, rgb(0x0100, 0, 0)), 255); /* nearest: black */
+}
+
+TEST(qd_random_follows_quickdraws_sequence) {
+    setup();
+    CHECK_EQ((int16_t)call_import("Random", 0), 16807);
+    CHECK_EQ((int16_t)call_import("Random", 0), 15089);
+    CHECK_EQ((int16_t)call_import("Random", 0), -21287);
 }
 
 TEST(qd_update_gworld_with_the_same_size_is_a_no_op) {
