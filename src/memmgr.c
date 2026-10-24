@@ -425,6 +425,11 @@ static void h_max_block(void) {
     trap_return(mm_largest_free());
 }
 
+static void h_free_mem(void) {
+    last_error = MM_NO_ERR;
+    trap_return(mm_free_bytes());
+}
+
 /* Master pointers come with each handle, and the heap never asks the game
    to free memory, so its grow zone procedure is kept but never called;
    GZSaveHnd only means something inside one. */
@@ -461,6 +466,7 @@ void mm_register(void) {
     trap_register("HLockHi", h_hlock_hi);
     trap_register("TempNewHandle", h_temp_new_handle);
     trap_register("MaxBlock", h_max_block);
+    trap_register("FreeMem", h_free_mem);
     trap_register("MoreMasterPointers", h_more_master_pointers);
     trap_register("NewGrowZoneUPP", h_new_grow_zone_upp);
     trap_register("DisposeGrowZoneUPP", h_dispose_grow_zone_upp);
