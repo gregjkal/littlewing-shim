@@ -57,6 +57,26 @@ bool qd_blit(const qd_pixels *src, qd_rect src_rect, const qd_pixels *dst, qd_re
 /* Fills r (clipped to clip and dst's bounds) with color c. */
 void qd_fill(const qd_pixels *dst, qd_rect r, qd_rect clip, qd_rgb c);
 
+/* The pattern transfer modes. A source mode (0 to 7) means its pattern mode. */
+enum {
+    QD_PAT_COPY = 8,
+    QD_PAT_OR,
+    QD_PAT_XOR,
+    QD_PAT_BIC,
+    QD_NOT_PAT_COPY,
+    QD_NOT_PAT_OR,
+    QD_NOT_PAT_XOR,
+    QD_NOT_PAT_BIC,
+};
+
+/* Fills r (clipped to clip and dst's bounds) with the 8x8 pattern pat, in
+   mode: where a pattern bit is 1, patCopy and patOr draw fg, patBic draws
+   bg and patXor inverts the pixel; patCopy draws bg where it is 0, and the
+   not modes swap the bits. The pattern is aligned to dst's bounds. False
+   for a mode that isn't a pattern mode. */
+bool qd_fill_pattern(const qd_pixels *dst, qd_rect r, qd_rect clip, const uint8_t pat[8], int mode,
+                     qd_rgb fg, qd_rgb bg);
+
 /* One pixel's value at (x, y), which must be inside p's bounds; storing one;
    and the color of a pixel value. */
 uint32_t qd_get_pixel(const qd_pixels *p, int x, int y);

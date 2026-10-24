@@ -65,9 +65,9 @@ void qd_write_rect(uint32_t a, qd_rect r) {
     gm_w16(a + 6, (uint16_t)r.right);
 }
 
-static qd_rgb read_rgb(uint32_t a) { return (qd_rgb){gm_r16(a), gm_r16(a + 2), gm_r16(a + 4)}; }
+qd_rgb qd_read_rgb(uint32_t a) { return (qd_rgb){gm_r16(a), gm_r16(a + 2), gm_r16(a + 4)}; }
 
-static void write_rgb(uint32_t a, qd_rgb c) {
+void qd_write_rgb(uint32_t a, qd_rgb c) {
     gm_w16(a, c.r);
     gm_w16(a + 2, c.g);
     gm_w16(a + 4, c.b);
@@ -84,7 +84,7 @@ void qd_read_ctab(uint32_t ctab, qd_palette *pal) {
     for (uint32_t i = 0; i < n; i++) {
         uint32_t e = t + CTAB_HEADER + 8 * i;
         uint32_t v = (flags & 0x8000) ? i : (gm_r16(e) & 0xFFu);
-        pal->c[v] = read_rgb(e + 2);
+        pal->c[v] = qd_read_rgb(e + 2);
     }
 }
 
@@ -99,7 +99,7 @@ uint32_t qd_new_ctab(const qd_palette *pal) {
     for (int i = 0; i < pal->n; i++) {
         uint32_t e = t + CTAB_HEADER + 8u * (uint32_t)i;
         gm_w16(e, (uint16_t)i);
-        write_rgb(e + 2, pal->c[i]);
+        qd_write_rgb(e + 2, pal->c[i]);
     }
     return h;
 }
@@ -229,8 +229,8 @@ static uint32_t new_port(uint32_t pm_h, qd_rect port_rect, port_kind kind) {
     qd_write_rect(p + PORT_RECT, port_rect);
     gm_w32(p + PORT_VIS_RGN, new_rgn(port_rect));
     gm_w32(p + PORT_CLIP_RGN, new_rgn(WIDE_OPEN));
-    write_rgb(p + PORT_RGB_FG, (qd_rgb){0, 0, 0});
-    write_rgb(p + PORT_RGB_BK, (qd_rgb){0xFFFF, 0xFFFF, 0xFFFF});
+    qd_write_rgb(p + PORT_RGB_FG, (qd_rgb){0, 0, 0});
+    qd_write_rgb(p + PORT_RGB_BK, (qd_rgb){0xFFFF, 0xFFFF, 0xFFFF});
     gm_w16(p + PORT_PN_SIZE, 1);
     gm_w16(p + PORT_PN_SIZE + 2, 1);
     gm_w32(p + PORT_FG_COLOR, 33); /* blackColor */
@@ -243,6 +243,10 @@ static void dispose_port(port_info *info) {
     uint32_t p = info->addr;
     mm_dispose_handle(gm_r32(p + PORT_VIS_RGN));
     mm_dispose_handle(gm_r32(p + PORT_CLIP_RGN));
+    if (gm_r32(p + PORT_BK_PIXPAT))
+        mm_dispose_handle(gm_r32(p + PORT_BK_PIXPAT));
+    if (gm_r32(p + PORT_PN_PIXPAT))
+        mm_dispose_handle(gm_r32(p + PORT_PN_PIXPAT));
     mm_dispose_ptr(p);
     *info = Q.ports[--Q.nports];
     if (Q.cur_port == p)
@@ -286,6 +290,28 @@ static void each_clip(const char *call, qd_rect base, uint32_t clip_rgn, uint32_
 /* Drawing into port: its portRect, within its clip region. */
 static void each_port_clip(const char *call, uint32_t port, uint32_t mask, clip_fn fn, void *ctx) {
     each_clip(call, qd_read_rect(port + PORT_RECT), gm_r32(port + PORT_CLIP_RGN), mask, fn, ctx);
+}
+
+typedef struct {
+    const qd_pixels *px;
+    qd_draw_fn fn;
+    void *ctx;
+} draw_job;
+
+static void draw_clipped(qd_rect clip, void *ctx) {
+    draw_job *j = ctx;
+    j->fn(j->px, clip, j->ctx);
+}
+
+void qd_draw(const char *call, uint32_t mask, qd_draw_fn fn, void *ctx) {
+    qd_pixels px;
+    qd_palette pal;
+    uint32_t bits = port_pixmap(Q.cur_port);
+    qd_bits(call, bits, &px, &pal);
+    draw_job j = {&px, fn, ctx};
+    each_port_clip(call, Q.cur_port, mask, draw_clipped, &j);
+    if (is_screen_bits(bits))
+        Q.dirty = true;
 }
 
 /* ---- the screen ---- */
@@ -418,14 +444,14 @@ static void h_index2color(void) {
     qd_palette pal;
     current_palette("Index2Color", &pal);
     uint32_t i = trap_arg(0);
-    write_rgb(trap_arg(1), i < (uint32_t)pal.n ? pal.c[i] : (qd_rgb){0, 0, 0});
+    qd_write_rgb(trap_arg(1), i < (uint32_t)pal.n ? pal.c[i] : (qd_rgb){0, 0, 0});
 }
 
 /* Color2Index(const RGBColor *rgb) -> long: the nearest entry. */
 static void h_color2index(void) {
     qd_palette pal;
     current_palette("Color2Index", &pal);
-    trap_return(qd_pixel_for(read_rgb(trap_arg(0)), 8, &pal)); /* any indexed depth: the nearest */
+    trap_return(qd_pixel_for(qd_read_rgb(trap_arg(0)), 8, &pal)); /* any indexed depth: the nearest */
 }
 
 /* Random() -> short: QuickDraw's generator, randSeed times 16807 modulo
@@ -569,6 +595,13 @@ static void h_get_gworld(void) {
 }
 
 /* ---- guest calls: ports and windows ---- */
+
+static void h_get_port(void) { gm_w32(trap_arg(0), Q.cur_port); }
+
+static void h_set_port(void) {
+    need_port("SetPort", trap_arg(0));
+    Q.cur_port = trap_arg(0);
+}
 
 static void h_set_port_window_port(void) {
     uint32_t w = trap_arg(0);
@@ -717,7 +750,7 @@ static void h_begin_full_screen(void) {
     qd_pixels px;
     qd_palette pal;
     qd_screen(&px, &pal);
-    qd_fill(&px, b, b, erase ? read_rgb(erase) : (qd_rgb){0, 0, 0});
+    qd_fill(&px, b, b, erase ? qd_read_rgb(erase) : (qd_rgb){0, 0, 0});
     Q.dirty = true;
     if (out)
         gm_w32(out, win);
@@ -767,8 +800,8 @@ static void h_get_port_visible_region(void) {
 }
 
 static void h_rgb_fore_color(void) {
-    qd_rgb c = read_rgb(trap_arg(0));
-    write_rgb(Q.cur_port + PORT_RGB_FG, c);
+    qd_rgb c = qd_read_rgb(trap_arg(0));
+    qd_write_rgb(Q.cur_port + PORT_RGB_FG, c);
 }
 
 typedef struct {
@@ -783,7 +816,7 @@ static void fill_clipped(qd_rect clip, void *ctx) {
 }
 
 static void h_paint_rect(void) {
-    fill_job j = {.r = qd_read_rect(trap_arg(0)), .color = read_rgb(Q.cur_port + PORT_RGB_FG)};
+    fill_job j = {.r = qd_read_rect(trap_arg(0)), .color = qd_read_rgb(Q.cur_port + PORT_RGB_FG)};
     qd_palette pal;
     uint32_t bits = port_pixmap(Q.cur_port);
     qd_bits("PaintRect", bits, &j.px, &pal);
@@ -812,8 +845,8 @@ static void copy_clipped(qd_rect clip, void *ctx) {
 static void h_copy_bits(void) {
     uint32_t src_bits = trap_arg(0), dst_bits = trap_arg(1), mask = trap_arg(5);
     copy_job j = {.sr = qd_read_rect(trap_arg(2)), .dr = qd_read_rect(trap_arg(3)),
-                  .mode = (int16_t)trap_arg(4), .fg = read_rgb(Q.cur_port + PORT_RGB_FG),
-                  .bk = read_rgb(Q.cur_port + PORT_RGB_BK)};
+                  .mode = (int16_t)trap_arg(4), .fg = qd_read_rgb(Q.cur_port + PORT_RGB_FG),
+                  .bk = qd_read_rgb(Q.cur_port + PORT_RGB_BK)};
     qd_palette src_pal, dst_pal;
     qd_bits("CopyBits", src_bits, &j.src, &src_pal);
     qd_bits("CopyBits", dst_bits, &j.dst, &dst_pal);
@@ -848,8 +881,8 @@ static void h_draw_picture(void) {
     uint32_t len = mm_handle_size(pic);
     const uint8_t *data = gm_ptr(gm_r32(pic), len);
     picture_job j = {.data = data, .len = len, .dst = qd_read_rect(trap_arg(1)),
-                     .fg = read_rgb(Q.cur_port + PORT_RGB_FG),
-                     .bk = read_rgb(Q.cur_port + PORT_RGB_BK)};
+                     .fg = qd_read_rgb(Q.cur_port + PORT_RGB_FG),
+                     .bk = qd_read_rgb(Q.cur_port + PORT_RGB_BK)};
     qd_palette pal;
     uint32_t bits = port_pixmap(Q.cur_port);
     qd_bits("DrawPicture", bits, &j.px, &pal);
@@ -874,7 +907,7 @@ static void h_get_entry_color(void) {
     uint32_t p = gm_r32(pal), n = gm_r16(p);
     if (i < 0 || (uint32_t)i >= n || PALETTE_INFO + COLOR_INFO_SIZE * (uint32_t)(i + 1) > mm_handle_size(pal))
         trap_crash("GetEntryColor: entry %d is outside the palette (%u entries)", i, n);
-    write_rgb(out, read_rgb(p + PALETTE_INFO + COLOR_INFO_SIZE * (uint32_t)i));
+    qd_write_rgb(out, qd_read_rgb(p + PALETTE_INFO + COLOR_INFO_SIZE * (uint32_t)i));
 }
 
 static void h_dispose_palette(void) {
@@ -907,6 +940,8 @@ void qd_register(void) {
     trap_register("GetPixBaseAddr", h_get_pix_base_addr);
     trap_register("SetGWorld", h_set_gworld);
     trap_register("GetGWorld", h_get_gworld);
+    trap_register("GetPort", h_get_port);
+    trap_register("SetPort", h_set_port);
     trap_register("SetPortWindowPort", h_set_port_window_port);
     trap_register("GetWindowPort", h_get_window_port);
     trap_register("GetPortBounds", h_get_port_bounds);
