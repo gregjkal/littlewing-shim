@@ -6,6 +6,7 @@
 #include "harness.h"
 #include "memmgr.h"
 #include "qd.h"
+#include "region.h"
 #include "rsrc.h"
 
 static const char *const names[] = {
@@ -16,7 +17,8 @@ static const char *const names[] = {
     "ShowWindow", "HideWindow", "InvalWindowRect", "QDFlushPortBuffer", "BeginFullScreen",
     "EndFullScreen", "ClipRect", "RGBForeColor", "PaintRect", "CopyBits", "DrawPicture",
     "GetEntryColor", "DisposePalette", "CreateNewWindow", "ChangeWindowAttributes",
-    "SetWindowTitleWithCFString", "Index2Color", "Color2Index", "Random",
+    "SetWindowTitleWithCFString", "SetClip", "GetClip", "GetPortVisibleRegion", "NewRgn",
+    "RectRgn", "UnionRgn", "GetRegionBounds", "Index2Color", "Color2Index", "Random",
 };
 
 static void setup(void) {
@@ -24,6 +26,7 @@ static void setup(void) {
     mm_init();
     qd_init(800, 600, 8);
     qd_register();
+    region_register();
 }
 
 static uint32_t rect(int top, int left, int bottom, int right) {
@@ -167,10 +170,68 @@ TEST(qd_gworld_rows_padded_as_system_7_1_did) {
     CHECK_EQ(mm_ptr_size(base_of(a)), 400 * 2);
 }
 
-TEST(qd_copy_bits_with_a_mask_region_crashes) {
+TEST(qd_copy_bits_with_a_mask_that_isnt_a_region_crashes) {
     char out[16384];
     CHECK_EQ(test_run_child(child_copy_bits_mask, NULL, out, sizeof out), 2);
-    CHECK_CONTAINS(out, "CopyBits: mask regions are not supported");
+    CHECK_CONTAINS(out, "CopyBits: 0x00001234 is not a region");
+}
+
+/* An L: rows 0-1 columns 0-1, and row 1 columns 0-3. */
+static uint32_t l_shape(void) {
+    uint32_t a = call_import("NewRgn", 0), b = call_import("NewRgn", 0);
+    call_import("RectRgn", 2, a, rect(0, 0, 2, 2));
+    call_import("RectRgn", 2, b, rect(1, 0, 2, 4));
+    call_import("UnionRgn", 3, a, b, a);
+    return a;
+}
+
+TEST(qd_paint_rect_clips_to_a_shaped_clip_region) {
+    setup();
+    uint32_t gw = new_gworld(16, 4, 2);
+    call_import("SetGWorld", 2, gw, 0u);
+    call_import("RGBForeColor", 1, rgb(0xFFFF, 0, 0));
+    call_import("SetClip", 1, l_shape());
+    call_import("PaintRect", 1, rect(0, 0, 2, 4));
+    uint32_t b = base_of(gw), row = 8;
+    CHECK_EQ(gm_r16(b), 0x7C00);
+    CHECK_EQ(gm_r16(b + 2), 0x7C00);
+    CHECK_EQ(gm_r16(b + 4), 0); /* outside the L */
+    CHECK_EQ(gm_r16(b + 6), 0);
+    for (uint32_t x = 0; x < 4; x++)
+        CHECK_EQ(gm_r16(b + row + 2 * x), 0x7C00);
+
+    uint32_t back = call_import("NewRgn", 0), r = scratch(8);
+    call_import("GetClip", 1, back);
+    call_import("GetRegionBounds", 2, back, r);
+    CHECK_EQ(qd_read_rect(r).right, 4);
+    CHECK_EQ(gm_r16(gm_r32(back)), gm_r16(gm_r32(l_shape()))); /* the same packed size */
+}
+
+TEST(qd_copy_bits_draws_through_a_mask_region) {
+    setup();
+    uint32_t src = new_gworld(8, 4, 2), dst = new_gworld(8, 4, 2);
+    for (uint32_t i = 0; i < 4; i++)
+        gm_w8(base_of(src) + i, 255), gm_w8(base_of(src) + 4 + i, 255);
+    call_import("SetGWorld", 2, dst, 0u);
+    uint32_t sb = call_import("GetPortBitMapForCopyBits", 1, src);
+    uint32_t db = call_import("GetPortBitMapForCopyBits", 1, dst);
+    call_import("CopyBits", 6, sb, db, rect(0, 0, 2, 4), rect(0, 0, 2, 4), 0u, l_shape());
+    uint32_t d = base_of(dst);
+    CHECK_EQ(gm_r8(d), 255);
+    CHECK_EQ(gm_r8(d + 1), 255);
+    CHECK_EQ(gm_r8(d + 2), 0); /* masked off */
+    CHECK_EQ(gm_r8(d + 3), 0);
+    CHECK_EQ(gm_r8(d + 4 + 3), 255);
+}
+
+TEST(qd_get_port_visible_region_copies_the_ports) {
+    setup();
+    uint32_t gw = new_gworld(8, 20, 10);
+    uint32_t vis = call_import("NewRgn", 0), r = scratch(8);
+    CHECK_EQ(call_import("GetPortVisibleRegion", 2, gw, vis), vis);
+    call_import("GetRegionBounds", 2, vis, r);
+    CHECK_EQ(qd_read_rect(r).bottom, 10);
+    CHECK_EQ(qd_read_rect(r).right, 20);
 }
 
 TEST(qd_set_depth_recreates_the_screen) {

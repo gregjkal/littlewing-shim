@@ -7,7 +7,9 @@
 /* QuickDraw subset. The structures the game can see live in guest memory in
    their original big-endian layout (Inside Macintosh: Imaging With
    QuickDraw): Rects, PixMaps (in handles), CGrafPorts, the main GDevice and
-   color tables. A WindowRef is the address of the window's CGrafPort. */
+   color tables. A WindowRef is the address of the window's CGrafPort.
+   Drawing is clipped to the port's portRect and clip region, which may be
+   any shape (region.h), and CopyBits to its mask region too. */
 
 /* Rect: top, left, bottom, right (int16 each). */
 #define RECT_SIZE 8
