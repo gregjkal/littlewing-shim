@@ -51,6 +51,7 @@
 #define PORT_TX_FACE   70 /* a Style byte */
 #define PORT_TX_MODE   72
 #define PORT_TX_SIZE   74
+#define PORT_SP_EXTRA  76 /* Fixed: added to each space's width */
 #define PORT_FG_COLOR  80
 #define PORT_BK_COLOR  84
 #define CGRAFPORT_SIZE 108

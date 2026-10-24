@@ -77,6 +77,12 @@ enum {
 bool qd_fill_pattern(const qd_pixels *dst, qd_rect r, qd_rect clip, const uint8_t pat[8], int mode,
                      qd_rgb fg, qd_rgb bg);
 
+/* The same for a mask, rect_w(at) by rect_h(at) bytes, a row at a time:
+   at is where it lies in dst, and a byte that isn't 0 is a 1 bit. For the
+   source modes (srcCopy to notSrcBic), which draw as their pattern modes. */
+bool qd_fill_mask(const qd_pixels *dst, qd_rect at, const uint8_t *mask, qd_rect clip, int mode,
+                  qd_rgb fg, qd_rgb bg);
+
 /* One pixel's value at (x, y), which must be inside p's bounds; storing one;
    and the color of a pixel value. */
 uint32_t qd_get_pixel(const qd_pixels *p, int x, int y);

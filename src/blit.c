@@ -156,29 +156,62 @@ static void put_px(const qd_pixels *p, int x, int y, uint32_t v) {
 }
 
 uint32_t qd_get_pixel(const qd_pixels *p, int x, int y) { return get_px(p, x, y); }
-bool qd_fill_pattern(const qd_pixels *dst, qd_rect r, qd_rect clip, const uint8_t pat[8], int mode,
-                     qd_rgb fg, qd_rgb bg) {
+/* A transfer mode, source (0 to 7) or pattern (8 to 15), as its
+   operation (copy, or, xor, bic) and whether it swaps the bits; false for
+   any other mode. */
+typedef struct {
+    int op;
+    bool flip;
+    uint32_t fg, bg, all;
+} transfer;
+
+static bool transfer_for(const qd_pixels *dst, int mode, qd_rgb fg, qd_rgb bg, transfer *t) {
     if (mode >= 0 && mode < QD_PAT_COPY)
         mode += QD_PAT_COPY;
     if (mode < QD_PAT_COPY || mode > QD_NOT_PAT_BIC)
         return false;
-    bool flip = mode >= QD_NOT_PAT_COPY;
-    int op = (mode - QD_PAT_COPY) & 3;
-    uint32_t vf = qd_pixel_for(fg, dst->depth, dst->pal), vb = qd_pixel_for(bg, dst->depth, dst->pal);
-    uint32_t all = dst->depth == 32 ? 0xFFFFFFu : dst->depth == 16 ? 0x7FFFu : (1u << dst->depth) - 1;
+    t->flip = mode >= QD_NOT_PAT_COPY;
+    t->op = (mode - QD_PAT_COPY) & 3;
+    t->fg = qd_pixel_for(fg, dst->depth, dst->pal);
+    t->bg = qd_pixel_for(bg, dst->depth, dst->pal);
+    t->all = dst->depth == 32 ? 0xFFFFFFu : dst->depth == 16 ? 0x7FFFu : (1u << dst->depth) - 1;
+    return true;
+}
+
+static void transfer_px(const qd_pixels *dst, int x, int y, bool bit, const transfer *t) {
+    bool on = bit != t->flip;
+    switch (t->op) {
+    case 0: put_px(dst, x, y, on ? t->fg : t->bg); break;
+    case 1: if (on) put_px(dst, x, y, t->fg); break;
+    case 2: if (on) put_px(dst, x, y, get_px(dst, x, y) ^ t->all); break;
+    default: if (on) put_px(dst, x, y, t->bg); break;
+    }
+}
+
+bool qd_fill_pattern(const qd_pixels *dst, qd_rect r, qd_rect clip, const uint8_t pat[8], int mode,
+                     qd_rgb fg, qd_rgb bg) {
+    transfer t;
+    if (!transfer_for(dst, mode, fg, bg, &t))
+        return false;
     qd_rect area = rect_sect(rect_sect(r, clip), dst->bounds);
     for (int y = area.top; y < area.bottom; y++) {
         uint8_t row = pat[(y - dst->bounds.top) & 7];
-        for (int x = area.left; x < area.right; x++) {
-            bool on = ((row >> (7 - ((x - dst->bounds.left) & 7))) & 1) != flip;
-            switch (op) {
-            case 0: put_px(dst, x, y, on ? vf : vb); break;
-            case 1: if (on) put_px(dst, x, y, vf); break;
-            case 2: if (on) put_px(dst, x, y, get_px(dst, x, y) ^ all); break;
-            default: if (on) put_px(dst, x, y, vb); break;
-            }
-        }
+        for (int x = area.left; x < area.right; x++)
+            transfer_px(dst, x, y, (row >> (7 - ((x - dst->bounds.left) & 7))) & 1, &t);
     }
+    return true;
+}
+
+bool qd_fill_mask(const qd_pixels *dst, qd_rect at, const uint8_t *mask, qd_rect clip, int mode,
+                  qd_rgb fg, qd_rgb bg) {
+    transfer t;
+    if (!transfer_for(dst, mode, fg, bg, &t))
+        return false;
+    qd_rect area = rect_sect(rect_sect(at, clip), dst->bounds);
+    int w = rect_w(at);
+    for (int y = area.top; y < area.bottom; y++)
+        for (int x = area.left; x < area.right; x++)
+            transfer_px(dst, x, y, mask[(y - at.top) * w + (x - at.left)] != 0, &t);
     return true;
 }
 
