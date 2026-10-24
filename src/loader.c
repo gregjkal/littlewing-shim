@@ -372,6 +372,9 @@ static bool load_macho(const macho_file *m, loaded_image *img, char *err, size_t
         return fail(err, errlen, "a Mach-O program needs the Mach-O memory layout");
     if (!place_segments(m, err, errlen))
         return false;
+    for (int i = 0; i < m->nsegments && !img->header_addr; i++)
+        if (m->segments[i].fileoff == 0 && m->segments[i].filesize > 0)
+            img->header_addr = m->segments[i].vmaddr;
 
     binder b = {m, img, NULL, NULL, NULL};
     uint32_t nimports = 0;

@@ -50,6 +50,7 @@
 
 static struct {
     char exe_path[1024];
+    uint32_t image_header; /* where the program's Mach-O header is mapped */
     uint32_t errno_addr, rune, keymgr_global, mach_init_routine, cthread_init_routine;
     uint32_t tm, tm_zone;
     uint32_t rand_next;
@@ -72,6 +73,7 @@ static struct {
 static void snap_walk(snapshot_walker *w) {
     snapshot_bytes(w, &L, sizeof L);
     SNAPSHOT_HOST(w, L.exe_path);
+    SNAPSHOT_HOST(w, L.image_header);
     SNAPSHOT_HOST(w, L.files);
     snapshot_check(w, L.nkeymgr >= 0 && L.nkeymgr <= KEYMGR_KEYS, "%d keymgr keys", L.nkeymgr);
 }
@@ -111,6 +113,8 @@ void libc_init(const char *exe_path) {
         gm_w32(L.rune + RUNE_UPPER_OFF + 4 * c, (uint32_t)_DefaultRuneLocale.__mapupper[c]);
     }
 }
+
+void libc_set_image_header(uint32_t addr) { L.image_header = addr; }
 
 uint32_t libc_data_symbol(const char *name) {
     if (!L.errno_addr)
@@ -394,6 +398,12 @@ static void h_usleep(void) {
 static void h_exit(void) {
     char why[32];
     snprintf(why, sizeof why, "exit(%d)", (int32_t)trap_arg(0));
+    misc_exit(why, (int)(trap_arg(0) & 0xFF));
+}
+
+static void h_underscore_exit(void) {
+    char why[32];
+    snprintf(why, sizeof why, "_exit(%d)", (int32_t)trap_arg(0));
     misc_exit(why, (int)(trap_arg(0) & 0xFF));
 }
 
@@ -733,6 +743,25 @@ static void h_sysctlbyname(void) {
     trap_return(0xFFFFFFFFu);
 }
 
+/* sysctl: CodeWarrior's runtime asks for {CTL_HW, HW_VECTORUNIT}, to pick
+   its vector code. There is none, as for sysctlbyname. */
+#define GUEST_CTL_HW 6
+#define GUEST_HW_VECTORUNIT 13
+
+static void h_sysctl(void) {
+    uint32_t mib = trap_arg(0), n = trap_arg(1), old = trap_arg(2), oldlen = trap_arg(3);
+    if (n == 2 && gm_r32(mib) == GUEST_CTL_HW && gm_r32(mib + 4) == GUEST_HW_VECTORUNIT && old &&
+        oldlen && gm_r32(oldlen) >= 4) {
+        gm_w32(old, 0);
+        gm_w32(oldlen, 4);
+        trap_return(0);
+        return;
+    }
+    log_msg("sysctl(%u names, the first %u): not provided", n, n ? gm_r32(mib) : 0);
+    set_errno(GUEST_ENOENT);
+    trap_return(0xFFFFFFFFu);
+}
+
 /* ---- output: the game's lines go to the log ---- */
 
 static void h_puts(void) {
@@ -748,12 +777,33 @@ static void h_mutex(void) {
     trap_return(0);
 }
 
+#define GUEST_THREAD_SELF 0x0A000000u /* the one thread's pthread_t, never dereferenced */
+
+static void h_pthread_self(void) { trap_return(GUEST_THREAD_SELF); }
+static void h_pthread_equal(void) { trap_return(trap_arg(0) == trap_arg(1)); }
+
 /* ---- math: a double in f1, a float as a double in f1 ---- */
 
 static void h_cos(void) { cpu_set_fpr(1, cos(cpu_fpr(1))); }
 static void h_cosf(void) { cpu_set_fpr(1, (double)cosf((float)cpu_fpr(1))); }
 static void h_sinf(void) { cpu_set_fpr(1, (double)sinf((float)cpu_fpr(1))); }
 static void h_sqrtf(void) { cpu_set_fpr(1, (double)sqrtf((float)cpu_fpr(1))); }
+static void h_ldexp(void) { cpu_set_fpr(1, ldexp(cpu_fpr(1), (int32_t)trap_arg(0))); }
+
+static void h_frexp(void) {
+    int e;
+    cpu_set_fpr(1, frexp(cpu_fpr(1), &e));
+    gm_w32(trap_arg(0), (uint32_t)e);
+}
+
+static void h_modf(void) {
+    double whole;
+    cpu_set_fpr(1, modf(cpu_fpr(1), &whole));
+    uint64_t bits;
+    memcpy(&bits, &whole, 8);
+    gm_w32(trap_arg(0), (uint32_t)(bits >> 32));
+    gm_w32(trap_arg(0) + 4, (uint32_t)bits);
+}
 
 /* libgcc's 64-bit division: each operand in two words (high first), the
    result in r3 (high) and r4. */
@@ -809,6 +859,57 @@ static void h_nothing(void) {
     trap_return(0);
 }
 
+/* CodeWarrior's runtime registers each image's exception tables: one
+   image, the program, unslid, whose header and load commands are mapped
+   with its first segment. */
+static void h_dyld_image_count(void) { trap_return(L.image_header ? 1 : 0); }
+static void h_dyld_get_image_header(void) { trap_return(trap_arg(0) == 0 ? L.image_header : 0); }
+static void h_dyld_get_image_vmaddr_slide(void) { trap_return(0); }
+
+#define MACHO_LC_SEGMENT 1
+#define MACHO_HEADER_SIZE 28
+#define MACHO_SEGMENT_SIZE 56
+#define MACHO_SECTION_SIZE 68
+#define MACHO_MAX_CMDS 512
+
+static bool name16_is(uint32_t at, const char *want) {
+    char name[17] = {0};
+    memcpy(name, gm_ptr(at, 16), 16);
+    return strcmp(name, want) == 0;
+}
+
+/* The address of the named section's header in the mapped header mh, or 0. */
+static void h_getsectbynamefromheader(void) {
+    uint32_t mh = trap_arg(0);
+    char seg[32], sect[32];
+    gm_read_cstr(trap_arg(1), seg, sizeof seg);
+    gm_read_cstr(trap_arg(2), sect, sizeof sect);
+    if (!mh || !gm_is_backed(mh, MACHO_HEADER_SIZE) || gm_r32(mh) != 0xFEEDFACEu) {
+        trap_return(0);
+        return;
+    }
+    uint32_t ncmds = gm_r32(mh + 16), at = mh + MACHO_HEADER_SIZE;
+    for (uint32_t c = 0; c < ncmds && c < MACHO_MAX_CMDS && gm_is_backed(at, 8); c++) {
+        uint32_t cmd = gm_r32(at), size = gm_r32(at + 4);
+        if (size < 8 || !gm_is_backed(at, size))
+            break;
+        if (cmd == MACHO_LC_SEGMENT && size >= MACHO_SEGMENT_SIZE) {
+            uint32_t nsects = gm_r32(at + 48);
+            for (uint32_t i = 0; i < nsects; i++) {
+                uint32_t h = at + MACHO_SEGMENT_SIZE + MACHO_SECTION_SIZE * i;
+                if (h + MACHO_SECTION_SIZE > at + size)
+                    break;
+                if (name16_is(h, sect) && name16_is(h + 16, seg)) {
+                    trap_return(h);
+                    return;
+                }
+            }
+        }
+        at += size;
+    }
+    trap_return(0);
+}
+
 static void h_dyld_stub_binding_helper(void) {
     trap_crash("a lazy pointer was not bound (dyld_stub_binding_helper)");
 }
@@ -835,6 +936,7 @@ void libc_register(void) {
     trap_register("strftime", h_strftime);
     trap_register("usleep", h_usleep);
     trap_register("exit", h_exit);
+    trap_register("_exit", h_underscore_exit);
     trap_register("abort", h_abort);
     trap_register("__maskrune", h_maskrune);
     trap_register("__toupper", h_toupper);
@@ -854,16 +956,23 @@ void libc_register(void) {
     trap_register("mmap", h_mmap);
     trap_register("munmap", h_munmap);
     trap_register("sysctlbyname", h_sysctlbyname);
+    trap_register("sysctl", h_sysctl);
     trap_register("puts", h_puts);
     trap_register("openlog", h_nothing);
     trap_register("pthread_mutex_init", h_mutex);
     trap_register("pthread_mutex_destroy", h_mutex);
     trap_register("pthread_mutex_lock", h_mutex);
     trap_register("pthread_mutex_unlock", h_mutex);
+    trap_register("pthread_mutex_trylock", h_mutex);
+    trap_register("pthread_self", h_pthread_self);
+    trap_register("pthread_equal", h_pthread_equal);
     trap_register("cos", h_cos);
     trap_register("cosf", h_cosf);
     trap_register("sinf", h_sinf);
     trap_register("sqrtf", h_sqrtf);
+    trap_register("ldexp", h_ldexp);
+    trap_register("frexp", h_frexp);
+    trap_register("modf", h_modf);
     trap_register("__divdi3", h_divdi3);
     trap_register("__umoddi3", h_umoddi3);
     trap_register("_keymgr_get_and_lock_processwide_ptr", h_keymgr_get_and_lock);
@@ -872,5 +981,9 @@ void libc_register(void) {
     trap_register("__keymgr_dwarf2_register_sections", h_nothing);
     trap_register("_dyld_register_func_for_add_image", h_nothing);
     trap_register("_dyld_register_func_for_remove_image", h_nothing);
+    trap_register("_dyld_image_count", h_dyld_image_count);
+    trap_register("_dyld_get_image_header", h_dyld_get_image_header);
+    trap_register("_dyld_get_image_vmaddr_slide", h_dyld_get_image_vmaddr_slide);
+    trap_register("getsectbynamefromheader", h_getsectbynamefromheader);
     trap_register("dyld_stub_binding_helper", h_dyld_stub_binding_helper);
 }
