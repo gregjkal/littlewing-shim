@@ -8,6 +8,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "ae.h"
 #include "cf.h"
 #include "cgdisplay.h"
 #include "cgimage.h"
@@ -500,6 +501,7 @@ int main(int argc, char **argv) {
     mm_register();
     rsrc_register();
     misc_register();
+    ae_register();
     cf_register();
     qd_register();
     dialogs_register();
