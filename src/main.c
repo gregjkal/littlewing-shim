@@ -356,6 +356,7 @@ int main(int argc, char **argv) {
         image_set_data_resolver(macho_data_symbol);
         if (!image_load_macho(buf, len, &img, err, sizeof err))
             return startup_error("can't load %s: %s", path, err);
+        libc_set_image_header(img.header_addr);
         /* Only MONSTER FAIR 1.2.5 is supported, and its second license check
            is always off (see patch.h). */
         if (strcmp(game->id, "monster-fair") == 0) {

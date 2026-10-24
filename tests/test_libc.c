@@ -21,7 +21,10 @@ static const char *const names[] = {
     "_keymgr_get_and_lock_processwide_ptr", "_keymgr_set_and_unlock_processwide_ptr",
     "_init_keymgr", "dyld_stub_binding_helper", "realloc", "strdup", "__error", "strerror", "open",
     "close", "fstat", "getpagesize", "mmap", "munmap", "sysctlbyname", "puts", "pthread_mutex_lock",
-    "cos", "cosf", "sinf", "sqrtf", "__divdi3", "__umoddi3", "snprintf", "sprintf",
+    "cos", "cosf", "sinf", "sqrtf", "__divdi3", "__umoddi3", "_exit", "sysctl",
+    "pthread_mutex_trylock", "pthread_self", "pthread_equal", "ldexp", "frexp", "modf",
+    "_dyld_image_count", "_dyld_get_image_header", "_dyld_get_image_vmaddr_slide",
+    "getsectbynamefromheader", "snprintf", "sprintf", /* sprintf last: see the dlsym test */
 };
 #define NNAMES (uint32_t)(sizeof names / sizeof names[0])
 
@@ -301,6 +304,21 @@ TEST(libc_exit_runs_the_exit_hook) {
     CHECK_CONTAINS(out, "exit hook ran");
 }
 
+static void child_underscore_exit(void *unused) {
+    (void)unused;
+    setup();
+    misc_set_exit_hook(exit_hook);
+    call_import("_exit", 1, 1);
+}
+
+/* CodeWarrior's runtime ends with _exit, which leaves the same way. */
+TEST(libc_underscore_exit_runs_the_exit_hook) {
+    char out[8192];
+    CHECK_EQ(test_run_child(child_underscore_exit, NULL, out, sizeof out), 1);
+    CHECK_CONTAINS(out, "loony: _exit(1)");
+    CHECK_CONTAINS(out, "exit hook ran");
+}
+
 static void child_abort(void *unused) {
     (void)unused;
     setup();
@@ -408,11 +426,24 @@ TEST(libc_sysctl_reports_no_vector_unit) {
     CHECK_EQ(gm_r32(len), 4);
     CHECK_EQ(call_import("sysctlbyname", 5, cstr("kern.osrelease"), v, len, 0, 0), 0xFFFFFFFFu);
     CHECK_EQ(guest_errno(), 2);
+
+    /* CodeWarrior's runtime asks sysctl for {CTL_HW, HW_VECTORUNIT}. */
+    uint32_t mib = scratch(8);
+    gm_w32(mib, 6);
+    gm_w32(mib + 4, 13);
+    gm_w32(v, 7);
+    CHECK_EQ(call_import("sysctl", 6, mib, 2, v, len, 0, 0), 0);
+    CHECK_EQ(gm_r32(v), 0);
+    CHECK_EQ(gm_r32(len), 4);
+    gm_w32(mib + 4, 1); /* HW_MACHINE */
+    CHECK_EQ(call_import("sysctl", 6, mib, 2, v, len, 0, 0), 0xFFFFFFFFu);
+    CHECK_EQ(guest_errno(), 2);
 }
 
-/* Calls the math import name with x in f1, from guest code that stores
-   the f1 it returns (guest_call puts the caller's registers back). */
-static double call_fp(const char *name, double x) {
+/* Calls the math import name with x in f1 and r3 in r3, from guest code
+   that stores the f1 it returns (guest_call puts the caller's registers
+   back). */
+static double call_fp_r3(const char *name, double x, uint32_t r3) {
     uint32_t t = GUEST_TRAP_ADDR(trap_find(name)), out = scratch(8), code = scratch(64);
     const uint32_t words[] = {
         PPC_MFLR_R0, PPC_SAVE_LR, PPC_PUSH64, ppc_lis(12, t >> 16), ppc_ori(12, 12, t & 0xFFFF),
@@ -423,8 +454,17 @@ static double call_fp(const char *name, double x) {
     };
     put_words(code, words, sizeof words / sizeof words[0]);
     cpu_set_fpr(1, x);
-    guest_call(code, 0, NULL);
+    guest_call(code, 1, &r3);
     uint64_t bits = (uint64_t)gm_r32(out) << 32 | gm_r32(out + 4);
+    double d;
+    memcpy(&d, &bits, 8);
+    return d;
+}
+
+static double call_fp(const char *name, double x) { return call_fp_r3(name, x, 0); }
+
+static double read_double(uint32_t a) {
+    uint64_t bits = (uint64_t)gm_r32(a) << 32 | gm_r32(a + 4);
     double d;
     memcpy(&d, &bits, 8);
     return d;
@@ -437,6 +477,65 @@ TEST(libc_math_takes_and_gives_floating_point_registers) {
     CHECK(call_fp("sinf", 1.0) == (double)sinf(1.0f));
     CHECK(call_fp("cosf", 1.0) == (double)cosf(1.0f));
     CHECK_EQ(call_import("pthread_mutex_lock", 1, scratch(44)), 0);
+}
+
+/* MSL's frexp, ldexp and modf: the double in f1, the int or pointer in r3. */
+TEST(libc_frexp_ldexp_and_modf_split_and_scale_doubles) {
+    setup();
+    uint32_t out = scratch(8);
+    CHECK(call_fp_r3("frexp", 48.0, out) == 0.75);
+    CHECK_EQ((int32_t)gm_r32(out), 6);
+    CHECK(call_fp_r3("ldexp", 0.75, 6) == 48.0);
+    CHECK(call_fp_r3("ldexp", 48.0, (uint32_t)-4) == 3.0);
+    CHECK(call_fp_r3("modf", -2.25, out) == -0.25);
+    CHECK(read_double(out) == -2.0);
+}
+
+/* One thread: its mutexes are always free, and it is itself. */
+TEST(libc_pthread_self_is_one_thread) {
+    setup();
+    CHECK_EQ(call_import("pthread_mutex_trylock", 1, scratch(44)), 0);
+    uint32_t self = call_import("pthread_self", 0);
+    CHECK(self != 0);
+    CHECK_EQ(call_import("pthread_self", 0), self);
+    CHECK_EQ(call_import("pthread_equal", 2, self, self), 1);
+    CHECK_EQ(call_import("pthread_equal", 2, self, self + 4), 0);
+}
+
+static void put_name16(uint32_t at, const char *name) {
+    memset(gm_ptr(at, 16), 0, 16);
+    memcpy(gm_ptr(at, 16), name, strlen(name));
+}
+
+/* A mapped header like Golden Logres's: an LC_UNIXTHREAD-sized command it
+   skips, then __DATA's LC_SEGMENT with two sections. */
+TEST(libc_dyld_finds_the_programs_sections_in_its_header) {
+    setup();
+    CHECK_EQ(call_import("_dyld_image_count", 0), 0); /* before the loader says where */
+    uint32_t mh = scratch(28 + 16 + 56 + 2 * 68);
+    gm_w32(mh, 0xFEEDFACE);
+    gm_w32(mh + 16, 2);
+    uint32_t other = mh + 28, seg = other + 16;
+    gm_w32(other, 5);
+    gm_w32(other + 4, 16);
+    gm_w32(seg, 1);
+    gm_w32(seg + 4, 56 + 2 * 68);
+    put_name16(seg + 8, "__DATA");
+    gm_w32(seg + 48, 2);
+    put_name16(seg + 56, "__data");
+    put_name16(seg + 56 + 16, "__DATA");
+    put_name16(seg + 56 + 68, "__mwexceptionidx");
+    put_name16(seg + 56 + 68 + 16, "__DATA");
+    libc_set_image_header(mh);
+
+    CHECK_EQ(call_import("_dyld_image_count", 0), 1);
+    CHECK_EQ(call_import("_dyld_get_image_header", 1, 0), mh);
+    CHECK_EQ(call_import("_dyld_get_image_header", 1, 1), 0);
+    CHECK_EQ(call_import("_dyld_get_image_vmaddr_slide", 1, 0), 0);
+    CHECK_EQ(call_import("getsectbynamefromheader", 3, mh, cstr("__DATA"), cstr("__mwexceptionidx")),
+             seg + 56 + 68);
+    CHECK_EQ(call_import("getsectbynamefromheader", 3, mh, cstr("__TEXT"), cstr("__data")), 0);
+    CHECK_EQ(call_import("getsectbynamefromheader", 3, mh + 4, cstr("__DATA"), cstr("__data")), 0);
 }
 
 TEST(libc_divides_64_bit_words) {

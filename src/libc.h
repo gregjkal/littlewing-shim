@@ -7,11 +7,18 @@
    snprintf), reading files (open, fstat and mmap, which copies a file onto
    the heap; nothing is ever written), a few math calls, mutexes that are
    always free (there is one thread), and the dyld and keymgr calls crt1
-   would make. */
+   would make. CodeWarrior's runtime (MSL) also asks sysctl for a vector
+   unit (there is none), finds its exception tables with the dyld image
+   calls and getsectbynamefromheader (one image, the program, unslid), and
+   ends with _exit. */
 
 /* Resets the state and allocates the data objects in the guest heap.
    Requires mm_init(). exe_path is the program's path, for argv. */
 void libc_init(const char *exe_path);
+
+/* Where the program's Mach-O header is mapped (loaded_image.header_addr),
+   for the dyld image calls. Until it is set there are no images. */
+void libc_set_image_header(uint32_t addr);
 
 /* Registers the handlers. Requires trap_init(). */
 void libc_register(void);
