@@ -7,7 +7,7 @@
 
 typedef void (*test_fn)(void);
 
-void test_register(const char *name, test_fn fn);
+void test_register(const char *name, test_fn fn, bool slow);
 void test_fail(const char *file, int line, const char *msg);
 void test_skip(const char *reason);
 
@@ -67,7 +67,23 @@ bool test_rerun_unforked(const char *name);
 #define TEST(name)                                                              \
     static void name(void);                                                     \
     __attribute__((constructor)) static void name##_register(void) {            \
-        test_register(#name, name);                                             \
+        test_register(#name, name, false);                                      \
+    }                                                                           \
+    static void name(void)
+
+/* A slow test (minutes of play): it skips unless test_slow_enabled(), and
+   `loony_tests --slow` picks it and only its kind. */
+#define SLOW_TEST(name)                                                         \
+    static void name(void);                                                     \
+    static void name##_unless_fast(void) {                                      \
+        if (!test_slow_enabled()) {                                             \
+            test_skip("slow; set LOONY_SLOW_TESTS=1 or pass --slow to run");    \
+            return;                                                             \
+        }                                                                       \
+        name();                                                                 \
+    }                                                                           \
+    __attribute__((constructor)) static void name##_register(void) {            \
+        test_register(#name, name##_unless_fast, true);                         \
     }                                                                           \
     static void name(void)
 
@@ -150,14 +166,6 @@ bool test_rerun_unforked(const char *name);
     do {                                                                        \
         if (!test_md_present()) {                                               \
             test_skip("Mad Daedalus not found");                                \
-            return;                                                             \
-        }                                                                       \
-    } while (0)
-
-#define SKIP_UNLESS_SLOW()                                                      \
-    do {                                                                        \
-        if (!test_slow_enabled()) {                                             \
-            test_skip("slow; set LOONY_SLOW_TESTS=1 to run");                   \
             return;                                                             \
         }                                                                       \
     } while (0)
