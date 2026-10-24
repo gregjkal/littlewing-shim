@@ -123,6 +123,21 @@ bool test_md_present(void) {
     return access(test_md_exe_path(), R_OK) == 0;
 }
 
+const char *test_ae_app(void) {
+    const char *d = getenv("LOONY_AE_APP");
+    return d && *d ? d : "/Applications/Angel Egg.app";
+}
+
+const char *test_ae_exe_path(void) {
+    static char path[1100];
+    snprintf(path, sizeof path, "%s/Contents/MacOS/Angel Egg", test_ae_app());
+    return path;
+}
+
+bool test_ae_present(void) {
+    return access(test_ae_exe_path(), R_OK) == 0;
+}
+
 bool test_slow_enabled(void) {
     const char *s = getenv("LOONY_SLOW_TESTS");
     return s && *s && strcmp(s, "0") != 0;

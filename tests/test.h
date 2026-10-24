@@ -30,6 +30,10 @@ bool test_jz_present(void);
 const char *test_md_app(void);
 const char *test_md_exe_path(void);
 bool test_md_present(void);
+/* Angel Egg's bundle: $LOONY_AE_APP, or /Applications/Angel Egg.app. */
+const char *test_ae_app(void);
+const char *test_ae_exe_path(void);
+bool test_ae_present(void);
 /* Whether to run the slow tests (minutes of play each): $LOONY_SLOW_TESTS
    set to anything but empty or 0. */
 bool test_slow_enabled(void);
@@ -169,3 +173,12 @@ bool test_rerun_unforked(const char *name);
             return;                                                             \
         }                                                                       \
     } while (0)
+
+#define SKIP_UNLESS_AE()                                                        \
+    do {                                                                        \
+        if (!test_ae_present()) {                                               \
+            test_skip("Angel Egg not found");                                   \
+            return;                                                             \
+        }                                                                       \
+    } while (0)
+

@@ -347,6 +347,7 @@ static bool find_main(binder *b, char *err, size_t errlen) {
         return fail(err, errlen, "can't find main (the call before %s is not into __text)",
                     exited ? "exit" : "_start's last");
     b->img->main_addr = found;
+    b->img->main_void = !exited;
     return true;
 }
 

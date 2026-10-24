@@ -20,7 +20,7 @@
 
 static const char *const names[] = {
     "Alert", "StopAlert", "ParamText", "GetNewDialog", "ModalDialog", "GetDialogItem",
-    "GetDialogItemText", "DisposeDialog",
+    "GetDialogItemText", "DisposeDialog", "DrawDialog",
 };
 static uint8_t *fork_buf;
 
@@ -225,6 +225,35 @@ TEST(dialogs_clicks_focus_fields_and_press_buttons) {
     SKIP_UNLESS_GAME();
     char out[16384];
     CHECK_EQ(test_run_child(child_click_fields, NULL, out, sizeof out), 0);
+}
+
+/* DrawDialog paints a shown dialog again over whatever covered it (Angel
+   Egg's Register calls it right after GetNewDialog). */
+static void child_draw_dialog(void *unused) {
+    (void)unused;
+    if (!setup())
+        exit(3);
+    uint32_t dlg = call_import("GetNewDialog", 3, 911u, 0u, 0xFFFFFFFFu);
+    uint32_t drawn = screen_hash();
+    qd_pixels px;
+    qd_palette pal;
+    qd_screen(&px, &pal);
+    for (int y = 140; y < 300; y++) /* 911 sits at (180, 130) */
+        memset(px.base + (size_t)y * px.row_bytes + 200, 0x23, 400);
+    if (screen_hash() == drawn)
+        exit(4);
+    call_import("DrawDialog", 1, dlg);
+    if (screen_hash() != drawn)
+        exit(5);
+    call_import("DisposeDialog", 1, dlg);
+    call_import("DrawDialog", 1, dlg); /* disposed: crashes */
+}
+
+TEST(dialogs_draw_dialog_paints_it_again) {
+    SKIP_UNLESS_GAME();
+    char out[16384];
+    CHECK_EQ(test_run_child(child_draw_dialog, NULL, out, sizeof out), 2);
+    CHECK_CONTAINS(out, "DrawDialog: 0x0b000000 is not a dialog");
 }
 
 /* ModalDialog runs the newest dialog, whatever slot it landed in. */

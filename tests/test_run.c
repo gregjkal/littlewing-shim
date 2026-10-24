@@ -2615,6 +2615,69 @@ TEST(run_mad_daedalus_quits_from_its_own_menu) {
     CHECK(!strstr(out, "quit Apple Event"));
 }
 
+static void run_angel_egg_headless(void *unused) {
+    (void)unused;
+    setenv("LOONY_FIXED_CLOCK", "1", 1);
+    setenv("LOONY_EXIT_AFTER", "600", 1);
+    setenv("LOONY_SCREENSHOT", shot, 1);
+    run_loony((void *)test_ae_app());
+}
+
+/* Angel Egg 3.0.1 answers its two shareware alerts (Play Demo, then OK),
+   makes its window the 1024x768 screen, loads its table, and by tick 600
+   plays its attract mode. */
+TEST(run_angel_egg_plays_its_opening_headless) {
+    SKIP_UNLESS_AE();
+    tmp_name(shot, sizeof shot, "run");
+    char out[32768];
+    test_tmp_dir(run_data, sizeof run_data);
+    int status = test_run_child(run_angel_egg_headless, NULL, out, sizeof out);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    size_t len = 0;
+    uint8_t *png = read_file(shot, &len);
+    unlink(shot);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "playing Angel Egg from");
+    CHECK_CONTAINS(out, "loony: Alert 901 (answering item 1): Play Demo");
+    CHECK_CONTAINS(out, "loony: Alert 900 (answering item 1): OK");
+    CHECK_CONTAINS(out, "loony: exiting after 600 ticks (LOONY_EXIT_AFTER)");
+    CHECK(!strstr(out, "not supported"));
+    CHECK(png != NULL);
+    CHECK(len > 33);
+    CHECK_EQ(rd_be32(png + 16), 1024);
+    CHECK_EQ(rd_be32(png + 20), 768);
+    uint32_t h = fnv1a32(png, len);
+    free(png);
+    CHECK_EQ(h, 0x8440172Fu); /* the table, its backglass reading ANGEL EGG, EGG ANGEL */
+}
+
+/* Angel Egg's own Quit, Cmd-Q in its File menu, at its attract mode: its
+   void main returns (it has no ExitToShell) whatever is in r3, so the run
+   exits with 0, with no quit Apple Event. The late quit ends a run whose
+   Cmd-Q went astray. */
+TEST(run_angel_egg_quits_from_its_own_menu) {
+    SKIP_UNLESS_AE();
+    char out[32768];
+    int status = run_script_in(test_ae_app(), "1200 down lcmd\n1202 down q\n1206 up q\n1208 up lcmd\n2400 quit\n",
+                               NULL, NULL, 0, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: main returned ");
+    CHECK(!strstr(out, "quit Apple Event"));
+}
+
+/* Cmd-Q (the script's quit) at its attract mode: the quit Apple Event, and
+   its main returns. */
+TEST(run_angel_egg_quits_on_the_quit_apple_event) {
+    SKIP_UNLESS_AE();
+    char out[32768];
+    int status = run_script_in(test_ae_app(), "1200 quit\n", NULL, NULL, 0, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "sending the quit Apple Event");
+    CHECK_CONTAINS(out, "loony: main returned ");
+    CHECK(!strstr(out, "didn't quit"));
+}
+
 TEST(run_reports_missing_game_folder) {
     char out[4096];
     int status = test_run_child(run_loony, (void *)"/nonexistent/loony", out, sizeof out);
@@ -3193,6 +3256,9 @@ static const regression_start mf_start = {
 static const regression_start jz_start = {
     "1720 down esc\n1724 up esc\n1900 down return\n1906 up return\n2000 down return\n2006 up return\n", 2100};
 
+/* Angel Egg: after its title, Cmd-N is Operation > New Game. */
+static const regression_start ae_start = {"900 down lcmd\n902 down n\n906 up n\n908 up lcmd\n", 1200};
+
 /* Mad Daedalus: one Esc opens the menu over the table; Return picks NEW
    GAME, then 1 PLAYER. */
 static const regression_start md_start = {
@@ -3351,6 +3417,29 @@ SLOW_TEST(run_three_minutes_of_mad_daedalus_match_the_recording) {
        balls are gone, GAME OVER at 155,300. Minute 3: the table plays its
        own demo, ball 1. */
     CHECK_STR(got, "ede7d3d1 af73d7df 3751c795 17b22851");
+}
+
+/* Three minutes of Angel Egg, started with Cmd-N after its title, with
+   the same plunger, flippers and nudges. */
+SLOW_TEST(run_three_minutes_of_angel_egg_match_the_recording) {
+    SKIP_UNLESS_AE();
+    uint32_t h[3], wh;
+    size_t len;
+    char out[32768];
+    int status = play_regression(test_ae_app(), &ae_start, h, &wh, &len, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "runtime error"));
+    /* The run ends at the first pump past the last tick: up to a tick
+       more sound. */
+    size_t want = 44 + (size_t)REGRESSION_TICKS * 44100 / 60 * 4;
+    CHECK(len >= want && len < want + 44100 / 60 * 4);
+    char got[64];
+    snprintf(got, sizeof got, "%08x %08x %08x %08x", h[0], h[1], h[2], wh);
+    /* Frames at minutes 1, 2 and 3, then the recording. Minute 1: ball 1,
+       66 seconds of demo time left. Minute 2: ball 3, LOCK IS ENABLED.
+       Minute 3: the demo time ran out; the attract display shows the high
+       scores, and the sound stopped with it. */
+    CHECK_STR(got, "13540246 05c8953e 3e47a0bd 91f706c2");
 }
 
 /* Edits the snapshot section of the recording at path in place: edit gets

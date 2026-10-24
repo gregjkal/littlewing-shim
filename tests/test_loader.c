@@ -181,6 +181,7 @@ TEST(macho_load_finds_main_after_start) {
     uint8_t *buf;
     CHECK(load_built(&(mb_opts){0}, &img, err, sizeof err, &buf));
     CHECK_EQ(img.main_addr, MB_MAIN);
+    CHECK(!img.main_void);
     CHECK_EQ(img.header_addr, 0x1000); /* __TEXT, at file offset 0 */
     image_free(&img);
     free(buf);
@@ -202,6 +203,7 @@ TEST(macho_load_finds_main_before_a_linked_exit) {
             &(mb_opts){.linked_exit = true, .trap_ends_start = trap, .no_exit_import = true}, &img,
             err, sizeof err, &buf));
         CHECK_EQ(img.main_addr, MB_MAIN);
+        CHECK(img.main_void); /* what it returns goes to MSL's exit, and means nothing */
         image_free(&img);
         free(buf);
     }

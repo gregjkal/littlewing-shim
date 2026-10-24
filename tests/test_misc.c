@@ -227,7 +227,7 @@ static void child_main_returned(void *unused) {
     (void)unused;
     setup();
     misc_set_exit_hook(exit_hook);
-    misc_main_returned(42);
+    misc_main_returned(42, unused != NULL);
 }
 
 /* As crt1 passes main's return value to exit(): the status is main's, and
@@ -239,6 +239,15 @@ TEST(misc_main_returned_exits_with_mains_status) {
     const char *logged = strstr(out, "loony: main returned 42\n");
     CHECK(logged != NULL);
     CHECK_CONTAINS(logged, "exit hook ran");
+}
+
+/* A CodeWarrior program's void main leaves anything in r3: the run exits
+   with 0, and the log keeps the value. */
+TEST(misc_main_returned_from_a_void_main_exits_with_0) {
+    char out[4096];
+    int status = test_run_child(child_main_returned, (void *)1, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: main returned 42\n");
 }
 
 static int idle_calls;
