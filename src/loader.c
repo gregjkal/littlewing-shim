@@ -297,10 +297,11 @@ static uint32_t stub_for(const binder *b, const char *name) {
 
 /* crt1's entry calls _start, which calls main and then exit. main is the
    target of the last bl before the one to the exit stub. CodeWarrior's
-   runtime (Golden Logres, Angel Egg) links MSL's exit in, and its _start
-   ends bl main; bl exit without calling an exit stub: there main is the
-   target of the bl before _start's last. _start ends at a trap or at the
-   next function's mflr r0. */
+   runtime (Golden Logres, Angel Egg) imports no exit, only __exit: it links
+   MSL's exit in, and its _start ends bl main; bl exit. Without an exit stub,
+   main is the target of the bl before _start's last, and _start must end
+   within MAX_SCAN words: at a trap or at the next function's mflr r0 (its
+   own mflr r0 is its first word). */
 #define MAX_SCAN 256
 #define PPC_TRAP 0x7FE00008u
 #define PPC_MFLR_R0 0x7C0802A6u
@@ -317,24 +318,35 @@ static bool find_main(binder *b, char *err, size_t errlen) {
     if (!start || start < text->addr || start >= end)
         return fail(err, errlen, "can't find main (no call to _start after the entry point)");
     uint32_t prev = 0, last = 0;
+    bool exited = false, ended = false;
     for (uint32_t a = start + 4; a < end && a < start + 4 * MAX_SCAN; a += 4) {
         uint32_t w = gm_r32(a);
-        if (w == PPC_TRAP || w == PPC_MFLR_R0)
+        if (w == PPC_TRAP || w == PPC_MFLR_R0) {
+            ended = true;
             break;
+        }
         uint32_t t = bl_target(a);
         if (!t)
             continue;
         if (exit_stub && t == exit_stub) {
-            prev = last;
-            last = t;
+            exited = true;
             break;
         }
         prev = last;
         last = t;
     }
-    if (!prev || prev < text->addr || prev >= end)
-        return fail(err, errlen, "can't find main (_start makes no call before its exit)");
-    b->img->main_addr = prev;
+    if (exit_stub && !exited)
+        return fail(err, errlen, "can't find main (_start never calls exit)");
+    if (!exit_stub && !ended)
+        return fail(err, errlen, "can't find main (can't find the end of _start)");
+    uint32_t found = exited ? last : prev;
+    if (!found)
+        return fail(err, errlen, "can't find main (%s)",
+                    exited ? "no call before exit in _start" : "_start makes fewer than two calls");
+    if (found < text->addr || found >= end)
+        return fail(err, errlen, "can't find main (the call before %s is not into __text)",
+                    exited ? "exit" : "_start's last");
+    b->img->main_addr = found;
     return true;
 }
 
