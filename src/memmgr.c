@@ -438,6 +438,8 @@ static void h_new_grow_zone_upp(void) { trap_return(trap_arg(0)); }
 static void h_dispose_grow_zone_upp(void) {}
 static void h_set_grow_zone(void) {}
 static void h_gz_save_hnd(void) { trap_return(0); }
+/* ReserveMem(Size): the heap has room enough, and nothing moves. */
+static void h_reserve_mem(void) { last_error = MM_NO_ERR; }
 
 void mm_register(void) {
     trap_register("NewPtr", h_new_ptr);
@@ -470,4 +472,5 @@ void mm_register(void) {
     trap_register("DisposeGrowZoneUPP", h_dispose_grow_zone_upp);
     trap_register("SetGrowZone", h_set_grow_zone);
     trap_register("GZSaveHnd", h_gz_save_hnd);
+    trap_register("ReserveMem", h_reserve_mem);
 }

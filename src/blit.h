@@ -32,6 +32,7 @@ typedef struct {
 } qd_pixels;
 
 #define QD_SRC_COPY 0
+#define QD_DITHER_COPY 64 /* a flag added to a mode */
 
 static inline int rect_w(qd_rect r) { return r.right - r.left; }
 static inline int rect_h(qd_rect r) { return r.bottom - r.top; }
@@ -48,12 +49,33 @@ uint32_t qd_pixel_for(qd_rgb c, int depth, const qd_palette *pal);
 /* Copies src_rect of src onto dst_rect of dst, scaling with nearest-neighbor
    sampling when the sizes differ. Only pixels inside clip and dst's bounds
    are written. 1-bit sources are colorized: 1 bits become fg, 0 bits bg.
+   ditherCopy is srcCopy: colors map to the nearest, never dithered.
    Writes a message and returns false for an unsupported mode or conversion. */
 bool qd_blit(const qd_pixels *src, qd_rect src_rect, const qd_pixels *dst, qd_rect dst_rect,
              qd_rect clip, int mode, qd_rgb fg, qd_rgb bg, char *err, size_t errlen);
 
 /* Fills r (clipped to clip and dst's bounds) with color c. */
 void qd_fill(const qd_pixels *dst, qd_rect r, qd_rect clip, qd_rgb c);
+
+/* The pattern transfer modes. A source mode (0 to 7) means its pattern mode. */
+enum {
+    QD_PAT_COPY = 8,
+    QD_PAT_OR,
+    QD_PAT_XOR,
+    QD_PAT_BIC,
+    QD_NOT_PAT_COPY,
+    QD_NOT_PAT_OR,
+    QD_NOT_PAT_XOR,
+    QD_NOT_PAT_BIC,
+};
+
+/* Fills r (clipped to clip and dst's bounds) with the 8x8 pattern pat, in
+   mode: where a pattern bit is 1, patCopy and patOr draw fg, patBic draws
+   bg and patXor inverts the pixel; patCopy draws bg where it is 0, and the
+   not modes swap the bits. The pattern is aligned to dst's bounds. False
+   for a mode that isn't a pattern mode. */
+bool qd_fill_pattern(const qd_pixels *dst, qd_rect r, qd_rect clip, const uint8_t pat[8], int mode,
+                     qd_rgb fg, qd_rgb bg);
 
 /* One pixel's value at (x, y), which must be inside p's bounds; storing one;
    and the color of a pixel value. */

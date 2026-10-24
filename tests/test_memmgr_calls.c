@@ -10,7 +10,7 @@ static const char *const names[] = {
     "DisposeHandle", "GetHandleSize", "RecoverHandle", "HLock", "HUnlock", "HPurge",
     "HNoPurge", "MoveHHi", "HGetState", "HSetState", "MemError", "SetHandleSize", "EmptyHandle",
     "HLockHi", "TempNewHandle", "MaxBlock", "MoreMasterPointers", "NewGrowZoneUPP",
-    "DisposeGrowZoneUPP", "SetGrowZone", "GZSaveHnd", "FreeMem",
+    "DisposeGrowZoneUPP", "SetGrowZone", "GZSaveHnd", "FreeMem", "ReserveMem",
 };
 
 static void setup(void) {
@@ -215,4 +215,11 @@ TEST(mmcall_grow_zone_and_master_pointers_change_nothing) {
     CHECK_EQ(call_import("GZSaveHnd", 0), 0);
     call_import("DisposeGrowZoneUPP", 1, upp);
     CHECK_EQ(mm_free_bytes(), free_before);
+}
+
+TEST(mmcall_reserve_mem_succeeds) {
+    setup();
+    call_import("NewPtr", 1, 0x7FFFFFFFu);
+    call_import("ReserveMem", 1, 4096u);
+    CHECK_EQ(mem_error(), 0);
 }

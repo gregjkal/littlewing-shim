@@ -44,14 +44,17 @@ To get a game, download it from LittleWing's [download
 page](http://www.littlewingpinball.com/doc/en/downloads/index.html), open the
 disk image, and drag the game onto the Applications shortcut next to it: the
 game's folder for Loony Labyrinth, Crystal Caliburn and Jinni Zeala, the app
-itself for MONSTER FAIR and Mad Daedalus. Keep its name. Neither app runs on
-Apple Silicon by itself; LittleWing.app runs them.
+itself for MONSTER FAIR and Mad Daedalus. Keep its name. To keep the games
+together, put them in a folder of their own in Applications instead, such as
+`/Applications/LittleWing Games/Loony Labyrinth`; any folder name works, one
+level down. A game directly in Applications is played over a copy in a
+folder. Neither app runs on Apple Silicon by itself; LittleWing.app runs them.
 
 Download `LittleWing-<version>.zip` from
 [Releases](https://github.com/gregjkal/littlewing-shim/releases), unzip it,
 and move `LittleWing.app` to `/Applications` (or anywhere); or build it as
 above and copy `build-release/LittleWing.app`. Double-click it. With two to
-five games installed, it opens on a picker showing each game's title picture
+seven games installed, it opens on a picker showing each game's title picture
 (MONSTER FAIR's, Jinni Zeala's and Mad Daedalus's cards show their icons): the arrow keys (or
 the mouse) choose, and Return (or a click) plays. It starts on the last game
 played. With one game installed, it plays that game. Choosing QUIT in a game's
