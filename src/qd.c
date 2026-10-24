@@ -246,6 +246,7 @@ static uint32_t new_port(uint32_t pm_h, qd_rect port_rect, port_kind kind) {
     qd_write_rgb(p + PORT_RGB_BK, (qd_rgb){0xFFFF, 0xFFFF, 0xFFFF});
     gm_w16(p + PORT_PN_SIZE, 1);
     gm_w16(p + PORT_PN_SIZE + 2, 1);
+    gm_w16(p + PORT_TX_MODE, 1); /* srcOr */
     gm_w32(p + PORT_FG_COLOR, 33); /* blackColor */
     gm_w32(p + PORT_BK_COLOR, 30); /* whiteColor */
     Q.ports[Q.nports++] = (port_info){.addr = p, .kind = kind, .visible = kind != KIND_GWORLD,
