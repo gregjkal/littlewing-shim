@@ -1,6 +1,7 @@
 #include "test.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 #include "cf.h"
 #include "harness.h"
@@ -21,7 +22,11 @@ static const char *const names[] = {
     "RectRgn", "UnionRgn", "GetRegionBounds", "GetDeviceList", "GetNextDevice", "GetMaxDevice",
     "TestDeviceAttribute", "GetWindowList", "FrontWindow", "GetNextWindow",
     "GetFrontWindowOfClass", "IsWindowVisible", "IsValidWindowPtr", "GetWindowFromPort",
-    "FindWindow", "GetGrayRgn",
+    "FindWindow", "GetGrayRgn", "CreateCustomWindow", "NewWindowDefUPP", "GetWindowGroupOfClass",
+    "SetWindowGroup", "MoveWindow", "SizeWindow", "SelectWindow", "GetWindowBounds",
+    "GetWindowRegion", "SetWTitle", "GetWTitle", "SetWRefCon", "GetWRefCon", "SetWindowKind",
+    "GetWindowKind", "LocalToGlobal", "GlobalToLocal", "SetOrigin", "GetWindowClass",
+    "GetAvailableWindowPositioningBounds", "InvalWindowRgn", "ValidWindowRect", "HiliteWindow", "GetWindowModality",
 };
 
 static void setup(void) {
@@ -500,4 +505,160 @@ TEST(qd_the_window_list_puts_the_newest_in_front) {
     call_import("GetRegionBounds", 2, gray, r);
     CHECK_EQ(qd_read_rect(r).bottom, 600);
     CHECK_EQ(qd_read_rect(r).right, 800);
+}
+
+/* A window made at (50,50), then sized and moved as Angel Egg does. */
+static uint32_t placed_window(void) {
+    uint32_t out = scratch(4), def = scratch(8);
+    if (call_import("CreateCustomWindow", 5, def, 6u, 8u, rect(50, 50, 51, 51), out) != 0)
+        fatal("CreateCustomWindow failed");
+    uint32_t w = gm_r32(out);
+    call_import("SizeWindow", 4, w, 200u, 100u, 0u);
+    call_import("MoveWindow", 4, w, 4u, 42u, 1u);
+    return w;
+}
+
+TEST(qd_a_custom_window_draws_where_it_sits_on_the_screen) {
+    setup();
+    call_import("SetDepth", 4, call_import("GetMainDevice", 0), 16u, 0u, 1u);
+    uint32_t w = placed_window();
+    CHECK_EQ(call_import("IsWindowVisible", 1, w), 0);
+    uint32_t r = scratch(8);
+    call_import("GetWindowPortBounds", 2, w, r);
+    CHECK_EQ(qd_read_rect(r).bottom, 100);
+    CHECK_EQ(qd_read_rect(r).right, 200);
+    call_import("SetPortWindowPort", 1, w);
+    call_import("RGBForeColor", 1, rgb(0xFFFF, 0, 0));
+    call_import("PaintRect", 1, rect(0, 0, 1, 1));
+    uint32_t base = qd_screen_base();
+    CHECK_EQ(gm_r16(base + 42 * 1600 + 4 * 2), 0x7C00);
+    CHECK_EQ(gm_r16(base), 0);
+    /* CopyBits through the port's PixMap lands in the same place */
+    uint32_t pm = call_import("GetPortBitMapForCopyBits", 1, w);
+    call_import("CopyBits", 6, pm, pm, rect(0, 0, 1, 1), rect(1, 1, 2, 2), 0u, 0u);
+    CHECK_EQ(gm_r16(base + 43 * 1600 + 5 * 2), 0x7C00);
+}
+
+TEST(qd_a_custom_window_reports_its_place) {
+    setup();
+    uint32_t w = placed_window(), r = scratch(8);
+    CHECK_EQ(call_import("GetWindowBounds", 3, w, 33u, r), 0); /* kWindowContentRgn */
+    CHECK_EQ(qd_read_rect(r).top, 42);
+    CHECK_EQ(qd_read_rect(r).left, 4);
+    CHECK_EQ(qd_read_rect(r).bottom, 142);
+    CHECK_EQ(qd_read_rect(r).right, 204);
+    uint32_t rgn = call_import("NewRgn", 0);
+    CHECK_EQ(call_import("GetWindowRegion", 3, w, 32u, rgn), 0);
+    call_import("GetRegionBounds", 2, rgn, r);
+    CHECK_EQ(qd_read_rect(r).top, 42);
+    CHECK_EQ(qd_read_rect(r).right, 204);
+
+    call_import("ShowWindow", 1, w);
+    uint32_t out = scratch(4);
+    CHECK_EQ(call_import("FindWindow", 2, (uint32_t)50 << 16 | 10, out), 3);
+    CHECK_EQ(gm_r32(out), w);
+    CHECK_EQ(call_import("FindWindow", 2, (uint32_t)10 << 16 | 10, out), 0);
+
+    call_import("SetPortWindowPort", 1, w);
+    uint32_t pt = scratch(4);
+    gm_w16(pt, 50);
+    gm_w16(pt + 2, 10);
+    call_import("GlobalToLocal", 1, pt);
+    CHECK_EQ(gm_r16(pt), 8);
+    CHECK_EQ(gm_r16(pt + 2), 6);
+    call_import("LocalToGlobal", 1, pt);
+    CHECK_EQ(gm_r16(pt), 50);
+    CHECK_EQ(gm_r16(pt + 2), 10);
+}
+
+TEST(qd_a_custom_window_keeps_its_place_when_the_screen_changes) {
+    setup();
+    uint32_t w = placed_window();
+    call_import("SetDepth", 4, call_import("GetMainDevice", 0), 16u, 0u, 1u);
+    uint32_t r = scratch(8);
+    call_import("GetWindowPortBounds", 2, w, r);
+    CHECK_EQ(qd_read_rect(r).right, 200);
+    uint32_t pm = call_import("GetPortBitMapForCopyBits", 1, w);
+    CHECK_EQ(gm_r32(pm + PM_BASE_ADDR), qd_screen_base());
+    CHECK_EQ(gm_r16(pm + PM_PIXEL_SIZE), 16);
+    CHECK_EQ((int16_t)gm_r16(pm + PM_BOUNDS), -42);
+    CHECK_EQ((int16_t)gm_r16(pm + PM_BOUNDS + 2), -4);
+}
+
+TEST(qd_window_properties) {
+    setup();
+    uint32_t w = placed_window();
+    CHECK_EQ(call_import("NewWindowDefUPP", 1, 0x4deb0u), 0x4deb0u);
+    uint32_t group = call_import("GetWindowGroupOfClass", 1, 6u);
+    CHECK(group != 0);
+    CHECK_EQ(call_import("SetWindowGroup", 2, w, group), 0);
+    uint32_t title = scratch(256);
+    memcpy(gm_ptr(title, 10), "\x09Angel Egg", 10);
+    call_import("SetWTitle", 2, w, title);
+    uint32_t back = scratch(256);
+    call_import("GetWTitle", 2, w, back);
+    CHECK_EQ(memcmp(gm_ptr(back, 10), "\x09Angel Egg", 10), 0);
+    call_import("SetWRefCon", 2, w, 0x12345678u);
+    CHECK_EQ(call_import("GetWRefCon", 1, w), 0x12345678u);
+    call_import("SetWindowKind", 2, w, 8u);
+    CHECK_EQ(call_import("GetWindowKind", 1, w), 8);
+    uint32_t cls = scratch(4), r = scratch(8);
+    CHECK_EQ(call_import("GetWindowClass", 2, w, cls), 0);
+    CHECK_EQ(gm_r32(cls), 6);
+    CHECK_EQ(call_import("GetAvailableWindowPositioningBounds", 2, call_import("GetMainDevice", 0), r), 0);
+    CHECK_EQ(qd_read_rect(r).bottom, 600);
+    CHECK_EQ(qd_read_rect(r).right, 800);
+    CHECK_EQ(call_import("InvalWindowRgn", 2, w, call_import("NewRgn", 0)), 0);
+    CHECK_EQ(call_import("ValidWindowRect", 2, w, r), 0);
+    call_import("HiliteWindow", 2, w, 1u);
+    uint32_t modality = scratch(4), unavailable = scratch(4);
+    gm_w32(modality, 3);
+    CHECK_EQ(call_import("GetWindowModality", 3, w, modality, unavailable), 0);
+    CHECK_EQ(gm_r32(modality), 0);
+}
+
+TEST(qd_select_window_brings_it_to_the_front) {
+    setup();
+    uint32_t a = qd_new_window(800, 600), b = qd_new_window(400, 300);
+    CHECK_EQ(call_import("GetWindowList", 0), b);
+    call_import("SelectWindow", 1, a);
+    CHECK_EQ(call_import("GetWindowList", 0), a);
+    CHECK_EQ(call_import("GetNextWindow", 1, a), b);
+}
+
+/* SetOrigin moves a port's coordinates, not what it draws on. */
+TEST(qd_set_origin_moves_a_windows_coordinates) {
+    setup();
+    call_import("SetDepth", 4, call_import("GetMainDevice", 0), 16u, 0u, 1u);
+    uint32_t w = placed_window(), r = scratch(8);
+    call_import("SetPortWindowPort", 1, w);
+    call_import("SetOrigin", 2, 10u, 20u);
+    call_import("GetPortBounds", 2, w, r);
+    CHECK_EQ(qd_read_rect(r).top, 20);
+    CHECK_EQ(qd_read_rect(r).left, 10);
+    CHECK_EQ(qd_read_rect(r).bottom, 120);
+    CHECK_EQ(qd_read_rect(r).right, 210);
+    call_import("RGBForeColor", 1, rgb(0xFFFF, 0, 0));
+    call_import("PaintRect", 1, rect(20, 10, 21, 11)); /* the window's top left */
+    CHECK_EQ(gm_r16(qd_screen_base() + 42 * 1600 + 4 * 2), 0x7C00);
+    call_import("GetWindowBounds", 3, w, 33u, r); /* the window hasn't moved */
+    CHECK_EQ(qd_read_rect(r).top, 42);
+    CHECK_EQ(qd_read_rect(r).left, 4);
+    call_import("SetOrigin", 2, 0u, 0u);
+    call_import("GetPortBounds", 2, w, r);
+    CHECK_EQ(qd_read_rect(r).top, 0);
+    CHECK_EQ(qd_read_rect(r).right, 200);
+}
+
+TEST(qd_set_origin_on_a_gworld) {
+    setup();
+    uint32_t gw = new_gworld(16, 4, 2), r = scratch(8);
+    call_import("SetGWorld", 2, gw, 0u);
+    call_import("SetOrigin", 2, 100u, 50u);
+    call_import("GetPortBounds", 2, gw, r);
+    CHECK_EQ(qd_read_rect(r).top, 50);
+    CHECK_EQ(qd_read_rect(r).left, 100);
+    call_import("RGBForeColor", 1, rgb(0xFFFF, 0, 0));
+    call_import("PaintRect", 1, rect(50, 101, 51, 102));
+    CHECK_EQ(gm_r16(base_of(gw) + 2), 0x7C00);
 }

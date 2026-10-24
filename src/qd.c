@@ -24,6 +24,16 @@ typedef struct {
     port_kind kind;
     bool visible;
     uint32_t order; /* when it was made: the newest window is in front */
+    /* A window: where its content's top left is on the screen, and whether
+       it is the whole screen, taking the screen's size when that changes.
+       Its port has a PixMap of its own over the screen's pixels, whose
+       bounds put (0, 0) there. */
+    int16_t h, v;
+    bool fills_screen;
+    int16_t oh, ov; /* SetOrigin's: the port's top left in its own coordinates */
+    int16_t window_kind;
+    uint32_t refcon;
+    uint8_t title[256]; /* a Pascal string */
 } port_info;
 
 static struct {
@@ -224,12 +234,15 @@ static uint32_t new_port(uint32_t pm_h, qd_rect port_rect, port_kind kind) {
     gm_w16(p + PORT_PN_SIZE + 2, 1);
     gm_w32(p + PORT_FG_COLOR, 33); /* blackColor */
     gm_w32(p + PORT_BK_COLOR, 30); /* whiteColor */
-    Q.ports[Q.nports++] = (port_info){p, kind, kind != KIND_GWORLD, ++Q.next_order};
+    Q.ports[Q.nports++] = (port_info){.addr = p, .kind = kind, .visible = kind != KIND_GWORLD,
+                                      .order = ++Q.next_order, .oh = port_rect.left, .ov = port_rect.top};
     return p;
 }
 
 static void dispose_port(port_info *info) {
     uint32_t p = info->addr;
+    if (info->kind == KIND_WINDOW)
+        mm_dispose_handle(gm_r32(p + PORT_PIXMAP)); /* its pixels and colors are the screen's */
     mm_dispose_handle(gm_r32(p + PORT_VIS_RGN));
     mm_dispose_handle(gm_r32(p + PORT_CLIP_RGN));
     mm_dispose_ptr(p);
@@ -279,17 +292,43 @@ static void each_port_clip(const char *call, uint32_t port, uint32_t mask, clip_
 
 /* ---- the screen ---- */
 
+static qd_rect offset_rect(qd_rect r, int dh, int dv) {
+    return (qd_rect){(int16_t)(r.top + dv), (int16_t)(r.left + dh), (int16_t)(r.bottom + dv),
+                     (int16_t)(r.right + dh)};
+}
+
+/* Makes window w's PixMap the screen's, with bounds that put the window's
+   top left (its origin) at its place on the screen. */
+static void place_window_pixels(const port_info *w) {
+    uint32_t pm = gm_r32(gm_r32(w->addr + PORT_PIXMAP)), screen = gm_r32(Q.screen_pm);
+    memcpy(gm_ptr(pm, PIXMAP_SIZE), gm_ptr(screen, PIXMAP_SIZE), PIXMAP_SIZE);
+    qd_write_rect(pm + PM_BOUNDS, offset_rect(qd_read_rect(screen + PM_BOUNDS), w->oh - w->h, w->ov - w->v));
+}
+
+/* Makes p's portRect and visRgn width by height, from its origin. */
+static void size_port(const port_info *p, int width, int height) {
+    qd_rect r = {p->ov, p->oh, (int16_t)(p->ov + height), (int16_t)(p->oh + width)};
+    qd_write_rect(p->addr + PORT_RECT, r);
+    rgn vis;
+    rgn_init(&vis);
+    rgn_set_rect(&vis, r);
+    rgn_write_for("the window's visible region", gm_r32(p->addr + PORT_VIS_RGN), &vis);
+    rgn_free(&vis);
+}
+
 static void make_screen(int w, int h, int depth) {
     qd_rect b = {0, 0, (int16_t)h, (int16_t)w};
     setup_pixmap(Q.screen_pm, depth, b, std_ctab(depth));
     uint32_t gd = gm_r32(Q.main_device);
     gm_w16(gd + GD_TYPE, depth > 8 ? 2 : 0);
     qd_write_rect(gd + GD_RECT, b);
-    for (int i = 0; i < Q.nports; i++)
-        if (Q.ports[i].kind != KIND_GWORLD) {
-            qd_write_rect(Q.ports[i].addr + PORT_RECT, b);
-            qd_write_rect(gm_r32(gm_r32(Q.ports[i].addr + PORT_VIS_RGN)) + 2, b);
-        }
+    for (int i = 0; i < Q.nports; i++) {
+        port_info *p = &Q.ports[i];
+        if (p->kind == KIND_SCREEN || (p->kind == KIND_WINDOW && p->fills_screen))
+            size_port(p, w, h);
+        if (p->kind == KIND_WINDOW)
+            place_window_pixels(p);
+    }
     Q.dirty = true;
 }
 
@@ -549,10 +588,25 @@ static void h_get_qd_globals_screen_bits(void) {
     trap_return(out);
 }
 
-uint32_t qd_new_window(int width, int height) {
-    uint32_t w = new_port(Q.screen_pm, (qd_rect){0, 0, (int16_t)height, (int16_t)width}, KIND_WINDOW);
-    find_port(w)->visible = false;
+/* A window port whose content is global on the screen, with a PixMap of its
+   own (place_window_pixels). */
+static port_info *new_window(qd_rect global, bool fills_screen) {
+    uint32_t pm_h = mm_new_handle(PIXMAP_SIZE, true);
+    if (!pm_h)
+        trap_crash("out of guest memory for a window");
+    qd_rect local = {0, 0, (int16_t)rect_h(global), (int16_t)rect_w(global)};
+    port_info *w = find_port(new_port(pm_h, local, KIND_WINDOW));
+    w->h = global.left;
+    w->v = global.top;
+    w->fills_screen = fills_screen;
+    place_window_pixels(w);
     return w;
+}
+
+uint32_t qd_new_window(int width, int height) {
+    port_info *w = new_window((qd_rect){0, 0, (int16_t)height, (int16_t)width}, true);
+    w->visible = false;
+    return w->addr;
 }
 
 void qd_set_window_hook(qd_window_fn fn) { Q.window_hook = fn; }
@@ -606,6 +660,9 @@ static port_info *need_window(const char *call, uint32_t w) {
     return p;
 }
 
+/* QDError: nothing here fails without crashing, so noErr. */
+static void h_qd_error(void) { trap_return(QD_NO_ERR); }
+
 static void h_get_window_list(void) { trap_return(window_behind(0)); }
 static void h_front_window(void) { trap_return(front_visible_window()); }
 static void h_get_next_window(void) { trap_return(window_behind(need_window("GetNextWindow", trap_arg(0))->addr)); }
@@ -621,6 +678,11 @@ static void h_get_front_window_of_class(void) {
     trap_return(visible ? front_visible_window() : window_behind(0));
 }
 
+/* IsWindowHilited: the front visible window is the active one. */
+static void h_is_window_hilited(void) {
+    trap_return(need_window("IsWindowHilited", trap_arg(0))->addr == front_visible_window());
+}
+
 static void h_is_window_visible(void) { trap_return(need_window("IsWindowVisible", trap_arg(0))->visible); }
 
 static void h_is_valid_window_ptr(void) {
@@ -631,17 +693,24 @@ static void h_is_valid_window_ptr(void) {
 /* A window's port is the window. */
 static void h_get_window_from_port(void) { trap_return(need_window("GetWindowFromPort", trap_arg(0))->addr); }
 
+/* Where window w's content is on the screen. Windows here have no frame,
+   so that is the whole window. */
+static qd_rect window_global(const port_info *w) {
+    qd_rect r = qd_read_rect(w->addr + PORT_RECT);
+    return (qd_rect){w->v, w->h, (int16_t)(w->v + rect_h(r)), (int16_t)(w->h + rect_w(r))};
+}
+
 /* FindWindow(Point, WindowRef *) -> WindowPartCode: in the content of the
-   front visible window holding the point (global coordinates, which a
-   window's port shares: windows sit at the screen's origin), or on the
+   front visible window holding the point (global coordinates), or on the
    desk. The menu bar is hidden and 0 lines tall. */
 static void h_find_window(void) {
     uint32_t pt = trap_arg(0), out = trap_arg(1);
     int v = (int16_t)(pt >> 16), h = (int16_t)(pt & 0xFFFF);
     uint32_t found = 0;
     for (uint32_t w = window_behind(0); w && !found; w = window_behind(w)) {
-        qd_rect r = qd_read_rect(w + PORT_RECT);
-        if (find_port(w)->visible && v >= r.top && v < r.bottom && h >= r.left && h < r.right)
+        const port_info *p = find_port(w);
+        qd_rect r = window_global(p);
+        if (p->visible && v >= r.top && v < r.bottom && h >= r.left && h < r.right)
             found = w;
     }
     if (out)
@@ -693,6 +762,140 @@ static void h_create_new_window(void) {
     trap_return(QD_NO_ERR);
 }
 
+/* CreateCustomWindow(const WindowDefSpec *, WindowClass, WindowAttributes,
+   const Rect *contentBounds, WindowRef *out) -> OSStatus: a hidden window
+   at contentBounds on the screen. Its definition procedure would draw its
+   frame, and windows here have none, so it is never called. */
+static void h_create_custom_window(void) {
+    qd_rect b = qd_read_rect(trap_arg(3));
+    if (rect_empty(b))
+        trap_crash("CreateCustomWindow: empty bounds (%d,%d,%d,%d)", b.top, b.left, b.bottom, b.right);
+    log_msg("CreateCustomWindow: class %u, attributes 0x%08x, (%d,%d,%d,%d)", trap_arg(1), trap_arg(2),
+            b.top, b.left, b.bottom, b.right);
+    port_info *w = new_window(b, false);
+    w->visible = false;
+    gm_w32(trap_arg(4), w->addr);
+    trap_return(QD_NO_ERR);
+}
+
+/* NewWindowDefUPP(proc): on Mach-O a UPP is the procedure itself. */
+static void h_new_window_def_upp(void) { trap_return(trap_arg(0)); }
+static void h_dispose_window_def_upp(void) {}
+
+/* Window groups order layers of windows; here every window is in one layer,
+   so GetWindowGroupOfClass's group is a token and SetWindowGroup keeps
+   nothing. */
+#define WINDOW_GROUP_BASE 0x0FFF0200u
+static void h_get_window_group_of_class(void) { trap_return(WINDOW_GROUP_BASE + (trap_arg(0) & 0xFFu)); }
+
+static void h_set_window_group(void) {
+    need_window("SetWindowGroup", trap_arg(0));
+    trap_return(QD_NO_ERR);
+}
+
+/* MoveWindow(WindowRef, short hGlobal, short vGlobal, Boolean front) */
+static void h_move_window(void) {
+    port_info *w = need_window("MoveWindow", trap_arg(0));
+    w->h = (int16_t)trap_arg(1);
+    w->v = (int16_t)trap_arg(2);
+    w->fills_screen = false;
+    place_window_pixels(w);
+    if (trap_arg(3) & 0xFF)
+        w->order = ++Q.next_order;
+    Q.dirty = true;
+}
+
+/* SizeWindow(WindowRef, short width, short height, Boolean update) */
+static void h_size_window(void) {
+    port_info *w = need_window("SizeWindow", trap_arg(0));
+    int16_t width = (int16_t)trap_arg(1), height = (int16_t)trap_arg(2);
+    if (width < 1 || height < 1)
+        trap_crash("SizeWindow: %d by %d", width, height);
+    size_port(w, width, height);
+    w->fills_screen = false;
+    Q.dirty = true;
+}
+
+/* SetOrigin(short h, short v): the current port's top left becomes (h, v)
+   in its own coordinates. Its portRect, visRgn and PixMap bounds move with
+   it, and its clip region stays. The screen's port keeps (0, 0): its
+   PixMap is the screen's own. */
+static void h_set_origin(void) {
+    port_info *p = need_port("SetOrigin", Q.cur_port);
+    int16_t h = (int16_t)trap_arg(0), v = (int16_t)trap_arg(1);
+    int dh = h - p->oh, dv = v - p->ov;
+    if (!dh && !dv)
+        return;
+    if (p->kind == KIND_SCREEN)
+        trap_crash("SetOrigin: (%d,%d) on the screen's port is not supported", h, v);
+    p->oh = h;
+    p->ov = v;
+    qd_rect r = qd_read_rect(p->addr + PORT_RECT);
+    size_port(p, rect_w(r), rect_h(r));
+    if (p->kind == KIND_WINDOW) {
+        place_window_pixels(p);
+    } else {
+        uint32_t pm = port_pixmap(p->addr);
+        qd_write_rect(pm + PM_BOUNDS, offset_rect(qd_read_rect(pm + PM_BOUNDS), dh, dv));
+    }
+}
+
+/* SelectWindow(WindowRef): to the front. */
+static void h_select_window(void) {
+    need_window("SelectWindow", trap_arg(0))->order = ++Q.next_order;
+    Q.dirty = true;
+}
+
+/* GetWindowBounds(WindowRef, WindowRegionCode, Rect *) -> OSStatus: every
+   region of a window without a frame is its content. */
+static void h_get_window_bounds(void) {
+    qd_write_rect(trap_arg(2), window_global(need_window("GetWindowBounds", trap_arg(0))));
+    trap_return(QD_NO_ERR);
+}
+
+/* GetWindowRegion(WindowRef, WindowRegionCode, RgnHandle) -> OSStatus */
+static void h_get_window_region(void) {
+    rgn r;
+    rgn_init(&r);
+    rgn_set_rect(&r, window_global(need_window("GetWindowRegion", trap_arg(0))));
+    rgn_write_for("GetWindowRegion", trap_arg(2), &r);
+    rgn_free(&r);
+    trap_return(QD_NO_ERR);
+}
+
+/* SetWTitle(WindowRef, ConstStr255Param), GetWTitle(WindowRef, Str255) */
+static void h_set_wtitle(void) {
+    port_info *w = need_window("SetWTitle", trap_arg(0));
+    uint32_t s = trap_arg(1);
+    uint8_t n = s ? gm_r8(s) : 0;
+    w->title[0] = n;
+    if (n)
+        memcpy(w->title + 1, gm_ptr(s + 1, n), n);
+    log_msg("window title: %.*s", n, (const char *)w->title + 1);
+}
+
+static void h_get_wtitle(void) {
+    const port_info *w = need_window("GetWTitle", trap_arg(0));
+    memcpy(gm_ptr(trap_arg(1), 1u + w->title[0]), w->title, 1u + w->title[0]);
+}
+
+static void h_set_wrefcon(void) { need_window("SetWRefCon", trap_arg(0))->refcon = trap_arg(1); }
+static void h_get_wrefcon(void) { trap_return(need_window("GetWRefCon", trap_arg(0))->refcon); }
+static void h_set_window_kind(void) { need_window("SetWindowKind", trap_arg(0))->window_kind = (int16_t)trap_arg(1); }
+static void h_get_window_kind(void) { trap_return((uint32_t)(int32_t)need_window("GetWindowKind", trap_arg(0))->window_kind); }
+
+/* LocalToGlobal(Point *), GlobalToLocal(Point *): through the current
+   port's PixMap bounds, whose top left is the screen's origin in the port's
+   coordinates. */
+static void convert_point(uint32_t pt, int sign) {
+    qd_rect b = qd_read_rect(port_pixmap(Q.cur_port) + PM_BOUNDS);
+    gm_w16(pt, (uint16_t)((int16_t)gm_r16(pt) - sign * b.top));
+    gm_w16(pt + 2, (uint16_t)((int16_t)gm_r16(pt + 2) - sign * b.left));
+}
+
+static void h_local_to_global(void) { convert_point(trap_arg(0), 1); }
+static void h_global_to_local(void) { convert_point(trap_arg(0), -1); }
+
 /* ChangeWindowAttributes(WindowRef, set, clear) -> OSStatus: windows here
    have no frame for attributes to change. */
 static void h_change_window_attributes(void) {
@@ -721,6 +924,48 @@ static void h_inval_window_rect(void) {
     Q.dirty = true;
 }
 
+/* InvalWindowRgn(WindowRef, RgnHandle) -> OSStatus. ValidWindowRect and
+   ValidWindowRgn: the window is drawn whenever it changes, so there is
+   nothing to take back. */
+static void h_inval_window_rgn(void) {
+    need_window("InvalWindowRgn", trap_arg(0));
+    Q.dirty = true;
+    trap_return(QD_NO_ERR);
+}
+
+static void h_valid_window_area(void) {
+    need_window("ValidWindowRect", trap_arg(0));
+    trap_return(QD_NO_ERR);
+}
+
+/* HiliteWindow(WindowRef, Boolean): the front window is the highlighted
+   one (IsWindowHilited), and there is no frame to draw it in. */
+static void h_hilite_window(void) { need_window("HiliteWindow", trap_arg(0)); }
+
+/* GetWindowModality(WindowRef, WindowModality *, WindowRef *unavailable)
+   -> OSStatus: no window here is modal. */
+static void h_get_window_modality(void) {
+    need_window("GetWindowModality", trap_arg(0));
+    gm_w32(trap_arg(1), 0); /* kWindowModalityNone */
+    if (trap_arg(2))
+        gm_w32(trap_arg(2), 0);
+    trap_return(QD_NO_ERR);
+}
+
+/* GetWindowClass(WindowRef, WindowClass *) -> OSStatus */
+static void h_get_window_class(void) {
+    need_window("GetWindowClass", trap_arg(0));
+    gm_w32(trap_arg(1), WINDOW_CLASS_DOCUMENT);
+    trap_return(QD_NO_ERR);
+}
+
+/* GetAvailableWindowPositioningBounds(GDHandle, Rect *) -> OSStatus: the
+   whole screen, since the menu bar and the Dock are the host's. */
+static void h_get_available_window_positioning_bounds(void) {
+    qd_write_rect(trap_arg(1), qd_read_rect(gm_r32(Q.screen_pm) + PM_BOUNDS));
+    trap_return(QD_NO_ERR);
+}
+
 /* QDFlushPortBuffer(port, region): the screen is presented at the next pump. */
 static void h_qd_flush_port_buffer(void) { Q.dirty = true; }
 
@@ -742,7 +987,7 @@ static void h_begin_full_screen(void) {
         gm_w16(wp, (uint16_t)rect_w(b));
     if (hp)
         gm_w16(hp, (uint16_t)rect_h(b));
-    uint32_t win = new_port(Q.screen_pm, b, KIND_WINDOW);
+    uint32_t win = new_window(b, true)->addr;
     qd_pixels px;
     qd_palette pal;
     qd_screen(&px, &pal);
@@ -944,9 +1189,35 @@ void qd_register(void) {
     trap_register("DisposeWindow", h_dispose_window);
     trap_register("RepositionWindow", h_reposition_window);
     trap_register("CreateNewWindow", h_create_new_window);
+    trap_register("CreateCustomWindow", h_create_custom_window);
+    trap_register("NewWindowDefUPP", h_new_window_def_upp);
+    trap_register("DisposeWindowDefUPP", h_dispose_window_def_upp);
+    trap_register("GetWindowGroupOfClass", h_get_window_group_of_class);
+    trap_register("SetWindowGroup", h_set_window_group);
+    trap_register("MoveWindow", h_move_window);
+    trap_register("SizeWindow", h_size_window);
+    trap_register("SelectWindow", h_select_window);
+    trap_register("SetOrigin", h_set_origin);
+    trap_register("GetWindowBounds", h_get_window_bounds);
+    trap_register("GetWindowRegion", h_get_window_region);
+    trap_register("SetWTitle", h_set_wtitle);
+    trap_register("GetWTitle", h_get_wtitle);
+    trap_register("SetWRefCon", h_set_wrefcon);
+    trap_register("GetWRefCon", h_get_wrefcon);
+    trap_register("SetWindowKind", h_set_window_kind);
+    trap_register("GetWindowKind", h_get_window_kind);
+    trap_register("LocalToGlobal", h_local_to_global);
+    trap_register("GlobalToLocal", h_global_to_local);
     trap_register("ChangeWindowAttributes", h_change_window_attributes);
     trap_register("SetWindowTitleWithCFString", h_set_window_title_with_cfstring);
     trap_register("InvalWindowRect", h_inval_window_rect);
+    trap_register("InvalWindowRgn", h_inval_window_rgn);
+    trap_register("ValidWindowRect", h_valid_window_area);
+    trap_register("ValidWindowRgn", h_valid_window_area);
+    trap_register("GetWindowClass", h_get_window_class);
+    trap_register("HiliteWindow", h_hilite_window);
+    trap_register("GetWindowModality", h_get_window_modality);
+    trap_register("GetAvailableWindowPositioningBounds", h_get_available_window_positioning_bounds);
     trap_register("QDFlushPortBuffer", h_qd_flush_port_buffer);
     trap_register("BeginFullScreen", h_begin_full_screen);
     trap_register("EndFullScreen", h_end_full_screen);
@@ -961,6 +1232,8 @@ void qd_register(void) {
     trap_register("GetNextWindow", h_get_next_window);
     trap_register("GetFrontWindowOfClass", h_get_front_window_of_class);
     trap_register("IsWindowVisible", h_is_window_visible);
+    trap_register("IsWindowHilited", h_is_window_hilited);
+    trap_register("QDError", h_qd_error);
     trap_register("IsValidWindowPtr", h_is_valid_window_ptr);
     trap_register("GetWindowFromPort", h_get_window_from_port);
     trap_register("FindWindow", h_find_window);

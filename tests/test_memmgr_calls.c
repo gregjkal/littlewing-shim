@@ -10,7 +10,7 @@ static const char *const names[] = {
     "DisposeHandle", "GetHandleSize", "RecoverHandle", "HLock", "HUnlock", "HPurge",
     "HNoPurge", "MoveHHi", "HGetState", "HSetState", "MemError", "SetHandleSize", "EmptyHandle",
     "HLockHi", "TempNewHandle", "MaxBlock", "MoreMasterPointers", "NewGrowZoneUPP",
-    "DisposeGrowZoneUPP", "SetGrowZone", "GZSaveHnd",
+    "DisposeGrowZoneUPP", "SetGrowZone", "GZSaveHnd", "FreeMem",
 };
 
 static void setup(void) {
@@ -192,6 +192,15 @@ TEST(mmcall_max_block_is_the_largest_free_block) {
     call_import("NewPtr", 1, 1000u);
     CHECK(call_import("MaxBlock", 0) < whole);
     CHECK(call_import("MaxBlock", 0) <= mm_free_bytes());
+}
+
+TEST(mmcall_free_mem_is_the_free_bytes) {
+    setup();
+    uint32_t before = call_import("FreeMem", 0);
+    CHECK_EQ(before, mm_free_bytes());
+    call_import("NewPtr", 1, 1000u);
+    CHECK(call_import("FreeMem", 0) < before);
+    CHECK_EQ(mem_error(), 0);
 }
 
 /* The heap never runs the grow zone procedure, so it is only kept. */
