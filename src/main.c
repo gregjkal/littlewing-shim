@@ -97,8 +97,10 @@ static void log_to_file_if_app(const char *argv0) {
    CFPreferencesAppSynchronize (say, quit during a sequence that outlasted
    the quit grace period). */
 static void save_prefs_at_exit(void) {
-    if (!util_failed())
+    if (!util_failed()) {
         cf_save_prefs();
+        rsrc_update_all();
+    }
 }
 
 /* The event pump's present: when a frame check is due (a recording or a
@@ -217,6 +219,7 @@ static void back_to_picker(void) {
     if (!return_to_picker || events_quit_requested() || util_failed())
         return;
     cf_save_prefs();
+    rsrc_update_all();
     unsetenv("LOONY_RECORD"); /* the next game doesn't record over this one */
     unsetenv("LOONY_REPLAY");
     unsetenv("LOONY_WATCH");
@@ -360,7 +363,18 @@ int main(int argc, char **argv) {
             log_msg("MONSTER FAIR 1.2.5: its second license check is off");
         }
         local_patch_hook(game->id);
-        rsrc_open_empty();
+        /* Carbon opens Contents/Resources/<program>.rsrc, a resource file
+           in a data fork, as the application's (Angel Egg has one). */
+        char rsrc_path[PATH_MAX];
+        const char *exe_name = strrchr(game->exe, '/');
+        snprintf(rsrc_path, sizeof rsrc_path, "%s/Contents/Resources/%s.rsrc", dir,
+                 exe_name ? exe_name + 1 : game->exe);
+        size_t rsrc_len = 0;
+        uint8_t *rsrc_file = access(rsrc_path, F_OK) == 0 ? read_file(rsrc_path, &rsrc_len) : NULL;
+        if (!rsrc_file)
+            rsrc_open_empty();
+        else if (!rsrc_open(rsrc_file, rsrc_len, err, sizeof err))
+            return startup_error("can't load the resources in %s: %s", rsrc_path, err);
         misc_init();
         misc_set_system_version(MISC_SYSTEM_VERSION_MACHO);
         misc_set_exit_hook(back_to_picker);

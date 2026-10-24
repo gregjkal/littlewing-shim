@@ -536,50 +536,137 @@ static open_file *file_of(int16_t ref) {
     return &F.files[slot];
 }
 
+/* Copies src, from where it is open, to a new file at dst. Returns
+   whether it all arrived. */
+static bool copy_stream(FILE *src, const char *dst) {
+    FILE *out = fopen(dst, "wb");
+    bool ok = out != NULL;
+    char buf[65536];
+    size_t n;
+    while (ok && (n = fread(buf, 1, sizeof buf, src)) > 0)
+        ok = fwrite(buf, 1, n, out) == n;
+    ok = ok && !ferror(src);
+    if (out && fclose(out) != 0)
+        ok = false;
+    return ok;
+}
+
+/* Copies rel from the game folder to the data folder, its data fork and
+   its resource fork, unless it is there already. The copy is made under a
+   temporary name and renamed when complete, so a failed copy never hides
+   the original. Returns an OSErr. */
+static int16_t copy_to_data(const char *call, const char *rel) {
+    if (!F.data_dir[0])
+        return no_data_dir(call);
+    char src[PATH_CAP], dst[PATH_CAP], tmp[PATH_CAP + 8], parent[PATH_CAP];
+    under(F.game_dir, rel, src, sizeof src);
+    under(F.data_dir, rel, dst, sizeof dst);
+    if (exists(dst, false))
+        return 0;
+    snprintf(tmp, sizeof tmp, "%s.tmp", dst);
+    snprintf(parent, sizeof parent, "%s", dst);
+    *strrchr(parent, '/') = '\0';
+    char src_fork[PATH_CAP + 16], tmp_fork[PATH_CAP + 24];
+    snprintf(src_fork, sizeof src_fork, "%s/..namedfork/rsrc", src);
+    snprintf(tmp_fork, sizeof tmp_fork, "%s/..namedfork/rsrc", tmp);
+    FILE *in = fopen(src, "rb");
+    bool ok = in && make_dirs(parent) && copy_stream(in, tmp);
+    if (in)
+        fclose(in);
+    FILE *fork = ok ? fopen(src_fork, "rb") : NULL;
+    if (fork) {
+        fseek(fork, 0, SEEK_END);
+        long fork_len = ftell(fork);
+        fseek(fork, 0, SEEK_SET);
+        ok = fork_len == 0 || copy_stream(fork, tmp_fork);
+        fclose(fork);
+    }
+    ok = ok && rename(tmp, dst) == 0;
+    if (!ok) {
+        log_msg("%s: can't copy %s to %s: %s", call, src, dst, strerror(errno));
+        remove(tmp);
+        return FILES_IO_ERR;
+    }
+    return 0;
+}
+
 /* Makes an open file writable: copies a game-folder file into the data
    folder (unless another open file already did) and reopens the copy at the
-   same mark. The copy is made under a temporary name and renamed when
-   complete, so a failed copy never hides the original. Returns an OSErr. */
+   same mark. Returns an OSErr. */
 static int16_t make_writable(const char *call, open_file *o) {
     if (!o->writable)
         return FILES_WR_PERM_ERR;
     if (o->in_data)
         return 0;
-    if (!F.data_dir[0])
-        return no_data_dir(call);
-    char src[PATH_CAP], dst[PATH_CAP], tmp[PATH_CAP + 8], parent[PATH_CAP];
-    under(F.game_dir, o->rel, src, sizeof src);
+    int16_t err = copy_to_data(call, o->rel);
+    if (err)
+        return err;
+    char dst[PATH_CAP];
     under(F.data_dir, o->rel, dst, sizeof dst);
-    snprintf(tmp, sizeof tmp, "%s.tmp", dst);
-    snprintf(parent, sizeof parent, "%s", dst);
-    *strrchr(parent, '/') = '\0';
     long mark = ftell(o->f);
-    bool ok = true;
-    if (!exists(dst, false)) {
-        FILE *out = make_dirs(parent) ? fopen(tmp, "wb") : NULL;
-        ok = out != NULL;
-        fseek(o->f, 0, SEEK_SET);
-        char buf[65536];
-        size_t n;
-        while (ok && (n = fread(buf, 1, sizeof buf, o->f)) > 0)
-            ok = fwrite(buf, 1, n, out) == n;
-        ok = ok && !ferror(o->f);
-        if (out && fclose(out) != 0)
-            ok = false;
-        ok = ok && rename(tmp, dst) == 0;
-        if (!ok)
-            remove(tmp);
-    }
-    FILE *f = ok ? fopen(dst, "r+b") : NULL;
+    FILE *f = fopen(dst, "r+b");
     if (!f) {
-        log_msg("%s: can't copy %s to %s: %s", call, src, dst, strerror(errno));
-        fseek(o->f, mark, SEEK_SET);
+        log_msg("%s: can't open %s: %s", call, dst, strerror(errno));
         return FILES_IO_ERR;
     }
     fclose(o->f);
     o->f = f;
     o->in_data = true;
     fseek(f, mark, SEEK_SET);
+    return 0;
+}
+
+/* ---- resource forks, for rsrc.c ---- */
+
+void files_spec_rel(uint32_t spec, char *out, size_t cap) { spec_rel_path(spec, out, cap); }
+
+int16_t files_read_rsrc_fork(const char *rel, uint8_t **out, size_t *len) {
+    *out = NULL;
+    *len = 0;
+    char path[PATH_CAP], fork[PATH_CAP + 16];
+    locate(rel, false, path, sizeof path);
+    if (!exists(path, false))
+        return FILES_FNF_ERR;
+    snprintf(fork, sizeof fork, "%s/..namedfork/rsrc", path);
+    struct stat st;
+    if (stat(fork, &st) != 0 || st.st_size == 0)
+        return 0;
+    *out = read_file(fork, len);
+    if (!*out) {
+        log_msg("can't read %s: %s", fork, strerror(errno));
+        return FILES_IO_ERR;
+    }
+    return 0;
+}
+
+int16_t files_write_rsrc_fork(const char *rel, const uint8_t *data, size_t len) {
+    if (!F.data_dir[0])
+        return no_data_dir("the Resource Manager");
+    char path[PATH_CAP], fork[PATH_CAP + 16];
+    under(F.game_dir, rel, path, sizeof path);
+    int16_t err = 0;
+    if (exists(path, false))
+        err = copy_to_data("the Resource Manager", rel);
+    under(F.data_dir, rel, path, sizeof path);
+    if (!err && !exists(path, false)) {
+        char parent[PATH_CAP];
+        snprintf(parent, sizeof parent, "%s", path);
+        *strrchr(parent, '/') = '\0';
+        FILE *f = make_dirs(parent) ? fopen(path, "wb") : NULL;
+        if (!f || fclose(f) != 0)
+            err = FILES_IO_ERR;
+    }
+    if (err)
+        return err;
+    snprintf(fork, sizeof fork, "%s/..namedfork/rsrc", path);
+    FILE *f = fopen(fork, "wb");
+    bool ok = f && fwrite(data, 1, len, f) == len;
+    if (f && fclose(f) != 0)
+        ok = false;
+    if (!ok) {
+        log_msg("can't write %s: %s", fork, strerror(errno));
+        return FILES_IO_ERR;
+    }
     return 0;
 }
 
