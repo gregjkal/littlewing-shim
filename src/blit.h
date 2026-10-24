@@ -32,6 +32,7 @@ typedef struct {
 } qd_pixels;
 
 #define QD_SRC_COPY 0
+#define QD_DITHER_COPY 64 /* a flag added to a mode */
 
 static inline int rect_w(qd_rect r) { return r.right - r.left; }
 static inline int rect_h(qd_rect r) { return r.bottom - r.top; }
@@ -48,6 +49,7 @@ uint32_t qd_pixel_for(qd_rgb c, int depth, const qd_palette *pal);
 /* Copies src_rect of src onto dst_rect of dst, scaling with nearest-neighbor
    sampling when the sizes differ. Only pixels inside clip and dst's bounds
    are written. 1-bit sources are colorized: 1 bits become fg, 0 bits bg.
+   ditherCopy is srcCopy: colors map to the nearest, never dithered.
    Writes a message and returns false for an unsupported mode or conversion. */
 bool qd_blit(const qd_pixels *src, qd_rect src_rect, const qd_pixels *dst, qd_rect dst_rect,
              qd_rect clip, int mode, qd_rgb fg, qd_rgb bg, char *err, size_t errlen);
