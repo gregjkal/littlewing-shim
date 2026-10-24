@@ -18,7 +18,7 @@ static const char *const names[] = {
     "SetThemeCursor", "KeyScript", "GetMBarHeight", "NewAEEventHandlerUPP",
     "AEInstallEventHandler", "ICStart", "ICStop", "ExitToShell", "ICLaunchURL", "num2dec",
     "LSOpenCFURLRef", "SetTextServiceLanguage", "TISCopyCurrentASCIICapableKeyboardInputSource",
-    "TISSelectInputSource", "Fix2X", "Long2Fix",
+    "TISSelectInputSource", "SetA5", "SetCurrentA5", "Fix2X", "Long2Fix",
 };
 
 static void setup(void) {
@@ -443,6 +443,14 @@ TEST(misc_text_input_sources_stay_the_hosts) {
     CHECK_EQ(call_import("SetTextServiceLanguage", 1, scratch(4)), 0);
     CHECK_EQ(call_import("TISCopyCurrentASCIICapableKeyboardInputSource", 0), 0);
     CHECK_EQ(call_import("TISSelectInputSource", 1, 0), (uint32_t)-50);
+}
+
+/* A PowerPC program has no A5 world. */
+TEST(misc_set_a5_changes_nothing_and_returns_zero) {
+    setup();
+    CHECK_EQ(call_import("SetCurrentA5", 0), 0);
+    CHECK_EQ(call_import("SetA5", 1, 0x1234u), 0);
+    CHECK_EQ(call_import("SetCurrentA5", 0), 0);
 }
 
 /* Fix2X(f) as the game calls it: guest_call puts the registers back, so
