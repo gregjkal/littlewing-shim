@@ -416,6 +416,19 @@ static void h_get_resource(void) {
     trap_return(get(rsrc_find(trap_arg(0), (int16_t)trap_arg(1))));
 }
 
+static void h_get_picture(void) { trap_return(get(rsrc_find(FOURCC('P', 'I', 'C', 'T'), (int16_t)trap_arg(0)))); }
+
+/* KillPicture(PicHandle): a picture from a resource is released with it,
+   any other disposed of. */
+static void h_kill_picture(void) {
+    uint32_t h = trap_arg(0);
+    rsrc_entry *e = rsrc_find_handle(h);
+    if (e && !(e->attrs & RSRC_ATTR_CHANGED))
+        e->handle = 0;
+    if (!e || !(e->attrs & RSRC_ATTR_CHANGED))
+        mm_dispose_handle(h);
+}
+
 static void h_get1_resource(void) {
     trap_return(get(R.cur >= 0 ? find_in(&files[R.cur], trap_arg(0), (int16_t)trap_arg(1)) : NULL));
 }
@@ -775,4 +788,6 @@ void rsrc_register(void) {
     trap_register("GetResInfo", h_get_res_info);
     trap_register("SetResInfo", h_set_res_info);
     trap_register("GetIndString", h_get_ind_string);
+    trap_register("GetPicture", h_get_picture);
+    trap_register("KillPicture", h_kill_picture);
 }

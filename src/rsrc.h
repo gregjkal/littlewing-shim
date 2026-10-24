@@ -90,5 +90,7 @@ void rsrc_update_all(void);
    malloc'd, *len bytes. For writing a file, and for tests. */
 uint8_t *rsrc_build(const rsrc_entry *entries, const uint8_t *const *data, uint32_t n, size_t *len);
 
-/* Registers the Resource Manager imports. Requires rsrc_open() and mm_init(). */
+/* Registers the Resource Manager imports, and GetPicture and KillPicture,
+   QuickDraw's pictures from 'PICT' resources. Requires rsrc_open() and
+   mm_init(). */
 void rsrc_register(void);

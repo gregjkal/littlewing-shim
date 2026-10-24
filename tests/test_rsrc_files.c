@@ -15,7 +15,7 @@ static const char *const names[] = {
     "FSpCreateResFile", "CloseResFile",    "UpdateResFile", "WriteResource",    "ChangedResource",
     "AddResource",     "CountResources",   "GetIndResource", "GetResAttrs",     "SetResAttrs",
     "GetResInfo",      "SetResInfo",       "GetIndString",  "Get1NamedResource", "Count1Resources",
-    "Get1IndResource",
+    "Get1IndResource", "GetPicture", "KillPicture",
 };
 
 #define TEXT FOURCC('T', 'E', 'X', 'T')
@@ -395,5 +395,30 @@ TEST(rsrcfile_the_current_file_alone) {
     CHECK_EQ(res_error(), RSRC_NOT_FOUND_ERR);
     CHECK_EQ(call_import("Count1Resources", 1, TEXT), 1);
     CHECK_STR(text_of(call_import("Get1IndResource", 2, TEXT, 1u)), "from app");
+    teardown();
+}
+
+TEST(rsrcfile_pictures_come_from_pict_resources) {
+    setup();
+    rsrc_close();
+    rsrc_entry e[1] = {{.type = FOURCC('P', 'I', 'C', 'T'), .id = 128, .len = 4}};
+    const uint8_t *d[1] = {(const uint8_t *)"pict"};
+    size_t len;
+    free(app_fork);
+    app_fork = rsrc_build(e, d, 1, &len);
+    char err[256];
+    CHECK(rsrc_open(app_fork, len, err, sizeof err));
+    uint32_t h = call_import("GetPicture", 1, 128u);
+    CHECK_STR(text_of(h), "pict");
+    CHECK_EQ(call_import("GetPicture", 1, 128u), h);
+    CHECK_EQ(call_import("GetPicture", 1, 129u), 0);
+    CHECK_EQ(res_error(), RSRC_NOT_FOUND_ERR);
+    call_import("KillPicture", 1, h);
+    CHECK(!mm_is_handle(h));
+    uint32_t again = call_import("GetPicture", 1, 128u);
+    CHECK(mm_is_handle(again));
+    uint32_t mine = mm_new_handle(4, false);
+    call_import("KillPicture", 1, mine);
+    CHECK(!mm_is_handle(mine));
     teardown();
 }
