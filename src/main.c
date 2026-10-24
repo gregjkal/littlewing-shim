@@ -43,6 +43,7 @@
 #include "seek.h"
 #include "settings.h"
 #include "sound.h"
+#include "text.h"
 #include "trap.h"
 #include "util.h"
 #include "watch.h"
@@ -509,6 +510,7 @@ int main(int argc, char **argv) {
     qd_register();
     region_register();
     pen_register();
+    text_register();
     dialogs_register();
     cgimage_register();
     cgdisplay_register();
