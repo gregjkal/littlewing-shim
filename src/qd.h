@@ -41,9 +41,16 @@
 #define PORT_CLIP_RGN  28
 #define PORT_RGB_FG    36
 #define PORT_RGB_BK    42
+#define PORT_BK_PIXPAT 32 /* the background pattern (pen.c): a handle to its 8 bytes, or 0 for white */
+#define PORT_PN_LOC    48 /* Point: v, h */
 #define PORT_PN_SIZE   52
 #define PORT_PN_MODE   56
+#define PORT_PN_PIXPAT 58 /* the pen pattern, as PORT_BK_PIXPAT's, or 0 for black */
 #define PORT_PN_VIS    66
+#define PORT_TX_FONT   68
+#define PORT_TX_FACE   70 /* a Style byte */
+#define PORT_TX_MODE   72
+#define PORT_TX_SIZE   74
 #define PORT_FG_COLOR  80
 #define PORT_BK_COLOR  84
 #define CGRAFPORT_SIZE 108
@@ -64,6 +71,10 @@
 
 qd_rect qd_read_rect(uint32_t addr);
 void qd_write_rect(uint32_t addr, qd_rect r);
+
+/* RGBColor: red, green, blue (uint16 each). */
+qd_rgb qd_read_rgb(uint32_t addr);
+void qd_write_rgb(uint32_t addr, qd_rgb c);
 
 /* Reads a CTabHandle into pal. */
 void qd_read_ctab(uint32_t ctab, qd_palette *pal);
@@ -112,6 +123,14 @@ uint32_t qd_new_window(int width, int height);
 typedef enum { QD_WINDOW_SHOWN, QD_WINDOW_HIDDEN, QD_WINDOW_DISPOSED, QD_WINDOW_REPOSITIONED } qd_window_change;
 typedef void (*qd_window_fn)(uint32_t window, qd_window_change change, uint32_t arg);
 void qd_set_window_hook(qd_window_fn fn);
+
+/* For the modules that draw into ports (pen.c): calls fn with the current
+   port's pixels and each rectangle drawing there is clipped to (its
+   portRect, within its clip region, and within the region mask unless it
+   is 0), then notes the screen changed if the pixels are its. call names
+   the drawing call in a crash. */
+typedef void (*qd_draw_fn)(const qd_pixels *px, qd_rect clip, void *ctx);
+void qd_draw(const char *call, uint32_t mask, qd_draw_fn fn, void *ctx);
 
 /* Registers the QuickDraw, GWorld and window imports, including
    CreateNewWindow (the first one sizes the screen to its content),
