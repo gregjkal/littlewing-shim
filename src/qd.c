@@ -444,14 +444,14 @@ static void h_index2color(void) {
     qd_palette pal;
     current_palette("Index2Color", &pal);
     uint32_t i = trap_arg(0);
-    write_rgb(trap_arg(1), i < (uint32_t)pal.n ? pal.c[i] : (qd_rgb){0, 0, 0});
+    qd_write_rgb(trap_arg(1), i < (uint32_t)pal.n ? pal.c[i] : (qd_rgb){0, 0, 0});
 }
 
 /* Color2Index(const RGBColor *rgb) -> long: the nearest entry. */
 static void h_color2index(void) {
     qd_palette pal;
     current_palette("Color2Index", &pal);
-    trap_return(qd_pixel_for(read_rgb(trap_arg(0)), 8, &pal)); /* any indexed depth: the nearest */
+    trap_return(qd_pixel_for(qd_read_rgb(trap_arg(0)), 8, &pal)); /* any indexed depth: the nearest */
 }
 
 /* Random() -> short: QuickDraw's generator, randSeed times 16807 modulo
