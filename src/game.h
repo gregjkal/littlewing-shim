@@ -11,8 +11,9 @@
    Daedalus (1.1.9) are Mac OS X bundles with Mach-O programs; Mad Daedalus
    plays its sound through CoreAudio and wants a 1024x768 display. Angel
    Egg (3.0.1) is a Mach-O bundle too, a classic Toolbox program built with
-   CodeWarrior, and plays in a 1024x768 window. Adding a
-   game is a row in game.c (the picker lays out two to PICKER_MAX games). */
+   CodeWarrior, and plays in a 1024x768 window. Golden Logres (3.0.4) is
+   another, built with PowerPlant, and takes the display at 1024x768.
+   Adding a game is a row in game.c (the picker lays out two to PICKER_MAX games). */
 typedef enum {
     GAME_PEF_FOLDER,   /* a folder holding a PEF program with a resource fork */
     GAME_MACHO_BUNDLE, /* an .app bundle holding a Mach-O program */

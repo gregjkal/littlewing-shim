@@ -34,6 +34,10 @@ bool test_md_present(void);
 const char *test_ae_app(void);
 const char *test_ae_exe_path(void);
 bool test_ae_present(void);
+/* Golden Logres's bundle: $LOONY_GL_APP, or /Applications/Golden Logres.app. */
+const char *test_gl_app(void);
+const char *test_gl_exe_path(void);
+bool test_gl_present(void);
 /* Whether to run the slow tests (minutes of play each): $LOONY_SLOW_TESTS
    set to anything but empty or 0. */
 bool test_slow_enabled(void);
@@ -182,3 +186,10 @@ bool test_rerun_unforked(const char *name);
         }                                                                       \
     } while (0)
 
+#define SKIP_UNLESS_GL()                                                        \
+    do {                                                                        \
+        if (!test_gl_present()) {                                               \
+            test_skip("Golden Logres not found");                               \
+            return;                                                             \
+        }                                                                       \
+    } while (0)
