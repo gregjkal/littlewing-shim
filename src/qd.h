@@ -8,6 +8,11 @@
    their original big-endian layout (Inside Macintosh: Imaging With
    QuickDraw): Rects, PixMaps (in handles), CGrafPorts, the main GDevice and
    color tables. A WindowRef is the address of the window's CGrafPort.
+   Windows have no frame: a window is its content, at a place on the
+   screen, and its port's PixMap is the screen's pixels with bounds that
+   put the window's (0, 0) there. HD mode follows the screen's pixels at
+   the screen's own bounds, so it is right only for windows at the origin,
+   which every game with HD art has.
    Drawing is clipped to the port's portRect and clip region, which may be
    any shape (region.h), and CopyBits to its mask region too. */
 
@@ -122,8 +127,9 @@ uint32_t qd_screen_base(void);
 void qd_resize_screen(int width, int height, int depth);
 uint32_t qd_current_port(void);
 
-/* A new window port, hidden, whose portRect is (0, 0, height, width). It
-   shares the screen's pixels, as every window does. */
+/* A new window port, hidden, at the screen's origin, whose portRect is
+   (0, 0, height, width) until the screen changes size, when it takes the
+   screen's. */
 uint32_t qd_new_window(int width, int height);
 
 /* What happened to a window, for the code that draws it (dialogs.c draws
@@ -142,6 +148,7 @@ typedef void (*qd_draw_fn)(const qd_pixels *px, qd_rect clip, void *ctx);
 void qd_draw(const char *call, uint32_t mask, qd_draw_fn fn, void *ctx);
 
 /* Registers the QuickDraw, GWorld and window imports, including
-   CreateNewWindow (the first one sizes the screen to its content),
+   CreateNewWindow (the first one sizes the screen to its content, and every
+   one is at the origin), CreateCustomWindow (at its bounds),
    ChangeWindowAttributes and SetWindowTitleWithCFString. */
 void qd_register(void);
