@@ -30,10 +30,10 @@ static const char *const names[] = {
 #define TV_PROC (GUEST_IMAGE_BASE + 0x8100)
 #define COUNTER (GUEST_IMAGE_BASE + 0x8200)
 
-static void setup(void) {
+static void setup_with(const char *const *imports, int n) {
     unsetenv("LOONY_EXIT_AFTER");
     setenv("LOONY_FIXED_CLOCK", "1", 1);
-    harness_init(names, sizeof names / sizeof names[0]);
+    harness_init(imports, n);
     mm_init();
     misc_init();
     misc_register();
@@ -41,6 +41,8 @@ static void setup(void) {
     events_register();
     unsetenv("LOONY_FIXED_CLOCK");
 }
+
+static void setup(void) { setup_with(names, sizeof names / sizeof names[0]); }
 
 typedef struct {
     uint16_t what, modifiers;
@@ -212,6 +214,21 @@ TEST(classic_events_the_quit_comes_as_a_high_level_event) {
     char out[4096];
     CHECK_EQ(test_run_child(child_quit, NULL, out, sizeof out), 0);
     CHECK_CONTAINS(out, "quit requested; the game has no quit handler");
+}
+
+/* A classic game that takes no Apple Events (Tristan) gets the quit as
+   Cmd-Q, which its menu's key equivalent turns into its Quit. */
+TEST(classic_events_the_quit_comes_as_cmd_q_without_apple_events) {
+    static const char *const plain[] = {"WaitNextEvent"};
+    setup_with(plain, sizeof plain / sizeof plain[0]);
+    take_launch_events();
+    events_request_quit();
+    record e;
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 3); /* keyDown */
+    CHECK_EQ(e.message, 0x0C71u);
+    CHECK(e.modifiers & 0x0100u); /* cmdKey */
+    CHECK(events_quit_requested());
 }
 
 TEST(classic_events_caret_and_double_click_times) {

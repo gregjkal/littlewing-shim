@@ -79,6 +79,29 @@ TEST(trap_nested_guest_call) {
     CHECK_EQ(cpu_gpr(1), sp);
 }
 
+/* A classic program's callback may be a routine descriptor (0xAAFE, then
+   records of which the one for PowerPC holds a transition vector), as
+   Tristan's sound callback is; guest_call runs its PowerPC routine. */
+TEST(trap_calls_through_a_routine_descriptor) {
+    static const char *const names[] = {"TestDouble"};
+    setup(names, 1);
+    uint32_t inner[] = {0x38630064 /* addi r3,r3,100 */, 0x4E800020 /* blr */};
+    put_words(INNER, inner, 2);
+    uint32_t rd = GUEST_IMAGE_BASE + 0x9000;
+    gm_w32(rd, 0xAAFE0700);       /* the Mixed Mode trap word, version 7 */
+    gm_w16(rd + 10, 1);           /* two records: the last is index 1 */
+    gm_w8(rd + 12 + 5, 0);        /* a 68K one */
+    gm_w32(rd + 12 + 8, 0x1234);
+    gm_w32(rd + 32, 0x000003C0);  /* procInfo */
+    gm_w8(rd + 32 + 5, 1);        /* PowerPC */
+    gm_w32(rd + 32 + 8, TV_INNER);
+    uint32_t arg = 5;
+    CHECK_EQ(guest_call(rd, 1, &arg), 105);
+    gm_w16(rd + 32 + 6, 1);       /* relative to the descriptor */
+    gm_w32(rd + 32 + 8, TV_INNER - rd);
+    CHECK_EQ(guest_call(rd, 1, &arg), 105);
+}
+
 /* Each trap entry is counted at its guest_call depth: the import the outer
    code calls at depth 1, the one the inner code calls from a handler's own
    guest_call at depth 2. */

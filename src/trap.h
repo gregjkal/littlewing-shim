@@ -23,7 +23,9 @@ void trap_register(const char *name, trap_handler fn);
 /* Calls the guest function whose transition vector is at tvector, with up to
    8 word arguments in r3..r10. Returns the guest's r3. Re-entrant: handlers
    may call it again. All registers are restored before it returns. With
-   direct calls on, tvector is the function's code address instead. */
+   direct calls on, tvector is the function's code address instead; with
+   them off, it may also be a routine descriptor (a classic program's
+   UniversalProcPtr), whose PowerPC routine is called. */
 uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args);
 
 /* The guest's r4 when the last guest_call (or guest_resume) returned: the

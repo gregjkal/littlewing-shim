@@ -299,11 +299,27 @@ void events_post_activation(bool active) {
     post(EV_CLASS_APPLICATION, active ? EV_APP_ACTIVATED : EV_APP_DEACTIVATED);
 }
 
+/* Whether the game can take the quit Apple Event: a classic program that
+   calls neither AEInstallEventHandler nor AEProcessAppleEvent (Tristan)
+   can't, and System 7 quit such a program as if its user chose Quit: with
+   Cmd-Q, which a game ignores while its menus are disabled. */
+static bool takes_apple_events(void) {
+    return !E.classic || trap_find("AEInstallEventHandler") >= 0 || trap_find("AEProcessAppleEvent") >= 0;
+}
+
 void events_request_quit(void) {
     if (E.quit_deadline == 0) {
-        ev_event *e = post(EV_CLASS_APPLE_EVENT, EV_APPLE_EVENT);
-        if (e)
-            e->command = AE_ID_QUIT;
+        ev_event *e;
+        if (takes_apple_events()) {
+            e = post(EV_CLASS_APPLE_EVENT, EV_APPLE_EVENT);
+            if (e)
+                e->command = AE_ID_QUIT;
+        } else if ((e = post(EV_CLASS_KEYBOARD, EV_RAW_KEY_DOWN))) {
+            log_msg("sending the quit as Cmd-Q; the game takes no Apple Events");
+            e->key_code = 0x0C; /* Q */
+            e->modifiers = KM_CMD;
+            e->chr = 'q';
+        }
         E.quit_deadline = wall_seconds() + QUIT_GRACE_SECONDS;
     }
 }
