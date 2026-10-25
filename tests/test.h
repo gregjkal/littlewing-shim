@@ -38,6 +38,10 @@ bool test_ae_present(void);
 const char *test_gl_app(void);
 const char *test_gl_exe_path(void);
 bool test_gl_present(void);
+/* FAIRY TOWER's bundle: $LOONY_FT_APP, or where the app finds it. */
+const char *test_ft_app(void);
+const char *test_ft_exe_path(void);
+bool test_ft_present(void);
 /* Whether to run the slow tests (minutes of play each): $LOONY_SLOW_TESTS
    set to anything but empty or 0. */
 bool test_slow_enabled(void);
@@ -190,6 +194,14 @@ bool test_rerun_unforked(const char *name);
     do {                                                                        \
         if (!test_gl_present()) {                                               \
             test_skip("Golden Logres not found");                               \
+            return;                                                             \
+        }                                                                       \
+    } while (0)
+
+#define SKIP_UNLESS_FT()                                                        \
+    do {                                                                        \
+        if (!test_ft_present()) {                                               \
+            test_skip("FAIRY TOWER not found");                                 \
             return;                                                             \
         }                                                                       \
     } while (0)
