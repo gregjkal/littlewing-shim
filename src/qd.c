@@ -686,7 +686,10 @@ static void h_open_cport(void) {
 
 /* CloseCPort(CGrafPtr): its regions, patterns and PixMap handle are
    disposed of; the port's memory, the pixels and the color table stay
-   the game's. */
+   the game's. As in QuickDraw, the PixMap disposed of is the one in
+   portPixMap, whoever made it: a program that replaces OpenCPort's with
+   SetPortPix disposes of OpenCPort's itself (Tristan does, right after
+   OpenCPort) or puts it back before closing. */
 static void h_close_cport(void) {
     port_info *info = need_port("CloseCPort", trap_arg(0));
     if (info->kind != KIND_PORT)
@@ -694,7 +697,9 @@ static void h_close_cport(void) {
     dispose_port(info);
 }
 
-/* SetPortPix(PixMapHandle): the current port's PixMap. */
+/* SetPortPix(PixMapHandle): the current port's PixMap. The one it
+   replaces stays the program's to dispose of or put back, as in
+   QuickDraw. */
 static void h_set_port_pix(void) { gm_w32(Q.cur_port + PORT_PIXMAP, trap_arg(0)); }
 
 /* PortSize(width, height): the current port's portRect, from its top left. */

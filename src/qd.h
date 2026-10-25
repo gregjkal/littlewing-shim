@@ -62,10 +62,10 @@
 #define CGRAFPORT_SIZE 108
 
 /* QDGlobals, 206 bytes: a classic program's own, whose last field's
-   address it passes to InitGraf. */
+   address it passes to InitGraf. InitGraf leaves arrow, the Cursor at 94,
+   zero: the shim has no cursor data, and no game reads it. */
 #define QDG_RAND_SEED   76
 #define QDG_SCREEN_BITS 80  /* a BitMap: baseAddr, rowBytes, bounds */
-#define QDG_ARROW       94  /* a Cursor, 68 bytes */
 #define QDG_PATTERNS    162 /* dkGray, ltGray, gray, black, white */
 #define QDG_THE_PORT    202
 #define QDGLOBALS_SIZE  206

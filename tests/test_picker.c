@@ -8,6 +8,7 @@
 #include "game.h"
 #include "picker.h"
 #include "png.h"
+#include "rsrc.h"
 #include "util.h"
 
 static uint8_t screen[PICKER_W * PICKER_H * 4];
@@ -502,6 +503,87 @@ TEST(picker_art_for_tristan_is_its_title) {
     CHECK(beside_is_card);
     CHECK(title_is_drawn);
     CHECK_STR(got, "648c7523"); /* the title shown in the eight-game picker */
+}
+
+/* An empty version 1 picture whose frame is w by h. */
+static void blank_pict(uint8_t pic[13], int w, int h) {
+    static const uint8_t head[] = {0, 13, 0, 0, 0, 0};
+    memcpy(pic, head, sizeof head);
+    wr_be16(pic + 6, (uint16_t)h);
+    wr_be16(pic + 8, (uint16_t)w);
+    pic[10] = 0x11; /* version 1 */
+    pic[11] = 0x01;
+    pic[12] = 0xFF; /* end */
+}
+
+/* A program at dir/game whose resource fork holds PICT 800 of w800 by
+   h800 (none if 0) and PICT 900 of w900 by h900 (none if 0). */
+static void art_program(const char *dir, int w800, int h800, int w900, int h900, char *path, size_t cap) {
+    uint8_t p800[13], p900[13];
+    blank_pict(p800, w800, h800);
+    blank_pict(p900, w900, h900);
+    rsrc_entry e[2] = {{0}};
+    const uint8_t *d[2];
+    uint32_t n = 0;
+    if (w800) {
+        e[n] = (rsrc_entry){.type = FOURCC('P', 'I', 'C', 'T'), .id = 800, .len = sizeof p800};
+        d[n++] = p800;
+    }
+    if (w900) {
+        e[n] = (rsrc_entry){.type = FOURCC('P', 'I', 'C', 'T'), .id = 900, .len = sizeof p900};
+        d[n++] = p900;
+    }
+    size_t len;
+    uint8_t *fork = rsrc_build(e, d, n, &len);
+    char fork_path[1300];
+    snprintf(path, cap, "%s/game", dir);
+    snprintf(fork_path, sizeof fork_path, "%s/..namedfork/rsrc", path);
+    FILE *f = fopen(path, "wb");
+    if (!f || fclose(f) != 0 || !(f = fopen(fork_path, "wb")) || fwrite(fork, 1, len, f) != len || fclose(f) != 0)
+        fatal("can't write %s", fork_path);
+    free(fork);
+}
+
+static bool is_card(const uint8_t *art, int x, int y) {
+    const uint8_t *p = art + ((size_t)y * PICKER_ART_W + (size_t)x) * 4;
+    return p[1] == 0x22 && p[2] == 0x22 && p[3] == 0x22;
+}
+
+/* Without the game: a PICT 800 of the wrong size (Tristan's credits) is
+   passed over for PICT 900, which is centered on the card at its own size
+   when it fits; a 512x384 PICT 800 fills the card; a PICT 900 larger than
+   512x384, or no picture at all, gives no art. */
+TEST(picker_art_falls_back_to_a_centered_pict_900) {
+    char dir[1024], path[1200], err[512] = "", big_err[512] = "", none_err[512] = "", err800[512] = "";
+    test_tmp_dir(dir, sizeof dir);
+    uint8_t *art = malloc(PICKER_ART_W * PICKER_ART_H * 4), *art800 = malloc(PICKER_ART_W * PICKER_ART_H * 4);
+    art_program(dir, 348, 301, 100, 50, path, sizeof path);
+    bool ok = picker_load_art(path, art, err, sizeof err);
+    art_program(dir, 512, 384, 100, 50, path, sizeof path);
+    bool ok800 = picker_load_art(path, art800, err800, sizeof err800);
+    uint8_t *scratch_art = malloc(PICKER_ART_W * PICKER_ART_H * 4);
+    art_program(dir, 348, 301, 600, 50, path, sizeof path);
+    bool big = picker_load_art(path, scratch_art, big_err, sizeof big_err);
+    art_program(dir, 0, 0, 0, 0, path, sizeof path);
+    bool none = picker_load_art(path, scratch_art, none_err, sizeof none_err);
+    test_remove_tree(dir);
+    /* 100x50 centered on the card: columns l to l + 99, rows 119 to 168 */
+    int l = (PICKER_ART_W - 100) / 2, cx = PICKER_ART_W / 2;
+    bool centered = !is_card(art, l, 119) && !is_card(art, l + 99, 168) && is_card(art, l - 1, 144) &&
+                    is_card(art, l + 100, 144) && is_card(art, cx, 118) && is_card(art, cx, 169);
+    bool fills = !is_card(art800, 0, 0) && !is_card(art800, PICKER_ART_W - 1, PICKER_ART_H - 1);
+    free(art);
+    free(art800);
+    free(scratch_art);
+    CHECK(ok);
+    CHECK_STR(err, "");
+    CHECK(centered);
+    CHECK(ok800);
+    CHECK(fills);
+    CHECK(!big);
+    CHECK_CONTAINS(big_err, "has no 512x384 PICT 800, icns 128 or PICT 900");
+    CHECK(!none);
+    CHECK_CONTAINS(none_err, "has no 512x384 PICT 800, icns 128 or PICT 900");
 }
 
 /* Golden Logres is a bundle without appl.png: its card is the 128x128

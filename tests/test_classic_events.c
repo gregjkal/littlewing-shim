@@ -231,6 +231,22 @@ TEST(classic_events_the_quit_comes_as_cmd_q_without_apple_events) {
     CHECK(events_quit_requested());
 }
 
+/* The same before the game's first event call: Tristan shows its startup
+   alerts before it calls WaitNextEvent, and a quit then must still come as
+   Cmd-Q, not as an Apple Event it never reads. */
+TEST(classic_events_a_quit_before_the_first_event_call_comes_as_cmd_q) {
+    static const char *const plain[] = {"WaitNextEvent"};
+    setup_with(plain, sizeof plain / sizeof plain[0]);
+    events_request_quit();
+    record e;
+    bool cmd_q = false;
+    for (int i = 0; i < 4 && !cmd_q; i++) {
+        CHECK(wne(EVERY, &e));
+        cmd_q = e.what == 3 && e.message == 0x0C71u && (e.modifiers & 0x0100u);
+    }
+    CHECK(cmd_q);
+}
+
 TEST(classic_events_caret_and_double_click_times) {
     setup();
     CHECK_EQ(call_import("GetCaretTime", 0), 32);
