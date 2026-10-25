@@ -386,3 +386,44 @@ TEST(classic_events_activate_full_screen_begun_again) {
     CHECK_EQ(e.message, b);
     CHECK_EQ(e.modifiers & 1, 1);
 }
+
+/* A classic game that reads the keyboard with GetKeys and leaves the queue
+   alone (Tristan, while a ball is in play) loses its oldest input, as a Mac
+   does when the Operating System event queue is full, never the newest:
+   30 presses of Z and one of X leave 20 events, and X is the last. */
+TEST(classic_events_a_full_queue_drops_its_oldest_input) {
+    setup();
+    take_launch_events();
+    uint32_t km = scratch(16);
+    for (int i = 0; i < 30; i++) {
+        events_post_key(SDL_SCANCODE_Z, true, false);
+        events_post_key(SDL_SCANCODE_Z, false, false);
+    }
+    events_post_key(SDL_SCANCODE_X, true, false); /* key code 0x07 */
+    CHECK_EQ(events_queued(), EV_CLASSIC_QUEUE);
+    call_import("GetKeys", 1, km); /* play input is the keyboard's state, not the queue's */
+    CHECK_EQ(gm_r8(km), 1u << 7);
+    record e;
+    int downs = 0;
+    while (wne(EVERY, &e)) {
+        CHECK_EQ(e.what, 3);
+        downs++;
+    }
+    CHECK_EQ(downs, 10); /* the last 9 Zs (their ups have no record) and X */
+    CHECK_EQ(e.what, 0);
+    events_post_key(SDL_SCANCODE_X, false, false);
+    events_post_key(SDL_SCANCODE_C, true, false);
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.message >> 8, 0x08u); /* C */
+}
+
+/* A Carbon game's queue (Loony Labyrinth's) is left as it was: it holds
+   64 events, and what comes once it is full is dropped. */
+TEST(classic_events_a_carbon_games_queue_keeps_its_size) {
+    setup();
+    for (int i = 0; i < 40; i++) {
+        events_post_key(SDL_SCANCODE_Z, true, false);
+        events_post_key(SDL_SCANCODE_Z, false, false);
+    }
+    CHECK_EQ(events_queued(), EV_MAX_EVENTS);
+}

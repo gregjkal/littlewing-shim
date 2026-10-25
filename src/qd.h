@@ -144,7 +144,13 @@ uint32_t qd_new_window(int width, int height);
 /* What happened to a window, for the code that draws it (dialogs.c draws
    nib windows). arg is RepositionWindow's method. Called before a disposed
    window's port goes away. */
-typedef enum { QD_WINDOW_SHOWN, QD_WINDOW_HIDDEN, QD_WINDOW_DISPOSED, QD_WINDOW_REPOSITIONED } qd_window_change;
+typedef enum {
+    QD_WINDOW_SHOWN,
+    QD_WINDOW_HIDDEN,
+    QD_WINDOW_DISPOSED,
+    QD_WINDOW_REPOSITIONED,
+    QD_WINDOW_SELECTED, /* only for a dialog hook's DialogRef */
+} qd_window_change;
 /* The frontmost shown window that GetNewCWindow made and that needs
    drawing (an update event: it was shown, or PaintBehind), until
    BeginUpdate; 0 if none. Other windows draw themselves. */
@@ -152,6 +158,14 @@ uint32_t qd_pending_update(void);
 
 typedef void (*qd_window_fn)(uint32_t window, qd_window_change change, uint32_t arg);
 void qd_set_window_hook(qd_window_fn fn);
+
+/* A classic DialogRef (GetNewDialog's) is not a port here: dialogs.c draws
+   the dialog on the screen itself. ShowWindow, HideWindow and SelectWindow
+   on something that isn't a port ask this hook (QD_WINDOW_SHOWN,
+   QD_WINDOW_HIDDEN, QD_WINDOW_SELECTED), which returns true if ref is a
+   dialog of its; otherwise the call crashes, as on any other non-window. */
+typedef bool (*qd_dialog_fn)(uint32_t ref, qd_window_change change);
+void qd_set_dialog_hook(qd_dialog_fn fn);
 
 /* The front visible window (FrontWindow), or 0; and whether w is a window
    that hasn't been disposed of. */

@@ -51,6 +51,7 @@ static struct {
     bool dirty;
     int saved_w, saved_h; /* screen size before BeginFullScreen */
     qd_window_fn window_hook;
+    qd_dialog_fn dialog_hook;
     bool direct;          /* qd_set_direct_drawing */
     bool window_sized;    /* CreateNewWindow has sized the screen */
     uint32_t next_order;
@@ -59,7 +60,7 @@ static struct {
     uint32_t qd_globals;  /* InitGraf's: the game's QDGlobals, or 0 */
 } Q;
 
-/* A snapshot's walk (snapshot.h): dialogs' hook is the host's. */
+/* A snapshot's walk (snapshot.h): dialogs' hooks are the host's. */
 static void snap_walk(snapshot_walker *w) {
     snapshot_bytes(w, &Q, sizeof Q);
     snapshot_check(w, Q.nports >= 0 && Q.nports <= MAX_PORTS, "%d ports", Q.nports);
@@ -67,6 +68,7 @@ static void snap_walk(snapshot_walker *w) {
                                                      Q.saved_h <= 4096),
                    "the screen before full screen, %d by %d", Q.saved_w, Q.saved_h);
     SNAPSHOT_HOST(w, Q.window_hook);
+    SNAPSHOT_HOST(w, Q.dialog_hook);
 }
 SNAPSHOT_STATE_WALK(Q, snap_walk)
 
@@ -885,6 +887,12 @@ uint32_t qd_new_window(int width, int height) {
 }
 
 void qd_set_window_hook(qd_window_fn fn) { Q.window_hook = fn; }
+void qd_set_dialog_hook(qd_dialog_fn fn) { Q.dialog_hook = fn; }
+
+/* Whether w is a DialogRef that the dialog hook took the call for. */
+static bool dialog_took(uint32_t w, qd_window_change change) {
+    return !find_port(w) && Q.dialog_hook && Q.dialog_hook(w, change);
+}
 
 static void window_changed(uint32_t w, qd_window_change change, uint32_t arg) {
     if (Q.window_hook)
@@ -892,6 +900,8 @@ static void window_changed(uint32_t w, qd_window_change change, uint32_t arg) {
 }
 
 static void h_show_window(void) {
+    if (dialog_took(trap_arg(0), QD_WINDOW_SHOWN))
+        return;
     port_info *p = need_port("ShowWindow", trap_arg(0));
     if (p->classic && !p->visible)
         p->update = true;
@@ -901,6 +911,8 @@ static void h_show_window(void) {
 }
 
 static void h_hide_window(void) {
+    if (dialog_took(trap_arg(0), QD_WINDOW_HIDDEN))
+        return;
     need_port("HideWindow", trap_arg(0))->visible = false;
     Q.dirty = true;
     window_changed(trap_arg(0), QD_WINDOW_HIDDEN, 0);
@@ -1213,6 +1225,8 @@ static void h_set_origin(void) {
 
 /* SelectWindow(WindowRef): to the front. */
 static void h_select_window(void) {
+    if (dialog_took(trap_arg(0), QD_WINDOW_SELECTED))
+        return;
     need_window("SelectWindow", trap_arg(0))->order = ++Q.next_order;
     Q.dirty = true;
 }

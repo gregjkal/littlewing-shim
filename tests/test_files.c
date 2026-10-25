@@ -661,6 +661,29 @@ TEST(files_the_preferences_folder_is_the_overlaid_game_folder) {
     teardown();
 }
 
+/* Tristan saves its license as "TRISTAN IE Registration" in the
+   Preferences folder: FindFolder, FSMakeFSSpec there, FSpCreate, FSpOpenDF,
+   FSWrite and FSClose. It lands in the data folder, never the game's. */
+TEST(files_a_license_saved_in_preferences_goes_to_the_data_folder) {
+    setup();
+    uint32_t vref = scratch(2), dir_id = scratch(4), name = scratch(256), spec = scratch(FSSPEC_SIZE);
+    CHECK_EQ(call_import("FindFolder", 5, 0xFFFF8000u, FOURCC('p', 'r', 'e', 'f'), 1u, vref, dir_id), 0);
+    gm_write_pstr(name, "TRISTAN IE Registration");
+    CHECK_EQ((int16_t)call_import("FSMakeFSSpec", 4, (uint32_t)(int32_t)(int16_t)gm_r16(vref), gm_r32(dir_id),
+                                  name, spec),
+             FILES_FNF_ERR);
+    CHECK_EQ(call_import("FSpCreate", 4, spec, FOURCC('T', 'R', 'S', 'N'), FOURCC('p', 'r', 'e', 'f'), 0u), 0);
+    uint32_t ref = scratch(2);
+    CHECK_EQ(call_import("FSpOpenDF", 3, spec, 3u, ref), 0);
+    CHECK_EQ(fs_write(gm_r16(ref), "license"), 0);
+    CHECK_EQ(call_import("FSClose", 1, (uint32_t)gm_r16(ref)), 0);
+    CHECK_STR(contents(data, "TRISTAN IE Registration"), "license");
+    char p[1200];
+    snprintf(p, sizeof p, "%s/TRISTAN IE Registration", dir);
+    CHECK(access(p, F_OK) != 0);
+    teardown();
+}
+
 TEST(files_finder_info_and_aliases) {
     setup();
     char p[1200];

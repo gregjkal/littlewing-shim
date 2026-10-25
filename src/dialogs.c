@@ -180,6 +180,7 @@ static void snap_walk(snapshot_walker *w) {
 SNAPSHOT_STATE_WALK(G, snap_walk)
 
 static void window_changed(uint32_t window, qd_window_change change, uint32_t arg);
+static bool dialog_window_call(uint32_t ref, qd_window_change change);
 
 void dialogs_init(void) {
     for (int i = 0; i < DLG_MAX; i++)
@@ -193,6 +194,7 @@ void dialogs_init(void) {
     G.auto_alerts = a && strcmp(a, "1") == 0;
     font_init();
     qd_set_window_hook(window_changed);
+    qd_set_dialog_hook(dialog_window_call);
 }
 
 /* ---- text ---- */
@@ -366,9 +368,17 @@ static dialog *new_dialog(const char *call) {
 
 static const qd_rgb BLACK = {0, 0, 0}, WHITE = {0xFFFF, 0xFFFF, 0xFFFF}, GRAY = {0x8000, 0x8000, 0x8000};
 
+/* While draw_item runs, the dialog's box: its items are clipped to it, as
+   its window's port clips them on a Mac, so an item placed outside the box
+   (Tristan's DITL 911 keeps an OK button there) isn't seen. Empty
+   otherwise: the box's own frame is drawn outside it. */
+static qd_rect item_clip;
+
+static qd_rect clipped(qd_rect r) { return rect_empty(item_clip) ? r : rect_sect(r, item_clip); }
+
 static void fill(qd_rect r, qd_rgb c) {
     qd_pixels px = screen();
-    qd_fill(&px, r, px.bounds, c);
+    qd_fill(&px, r, clipped(px.bounds), c);
 }
 
 static void frame(qd_rect r, int thick, qd_rgb c) {
@@ -380,7 +390,7 @@ static void frame(qd_rect r, int thick, qd_rgb c) {
 
 static void text_at(int x, int y, const char *s, int n, qd_rgb c, qd_rect clip) {
     qd_pixels px = screen();
-    font_draw(&px, x, y, s, n, c, clip);
+    font_draw(&px, x, y, s, n, c, clipped(clip));
 }
 
 static void draw_picture(qd_rect r, int16_t id) {
@@ -389,7 +399,7 @@ static void draw_picture(qd_rect r, int16_t id) {
         return;
     qd_pixels px = screen();
     char err[128];
-    if (!pict_draw(rsrc_data(e), e->len, r, &px, r, BLACK, WHITE, err, sizeof err))
+    if (!pict_draw(rsrc_data(e), e->len, r, &px, clipped(r), BLACK, WHITE, err, sizeof err))
         log_msg("dialog: can't draw PICT %d: %s", id, err);
 }
 
@@ -417,7 +427,7 @@ static void draw_image(const item *it, qd_rect r) {
     qd_rect to = it->scale_to_fit ? r : offset(src.bounds, r.left, r.top);
     qd_pixels px = screen();
     char err[128];
-    if (!qd_blit(&src, src.bounds, &px, to, r, QD_SRC_COPY, BLACK, WHITE, err, sizeof err))
+    if (!qd_blit(&src, src.bounds, &px, to, clipped(r), QD_SRC_COPY, BLACK, WHITE, err, sizeof err))
         log_msg("dialog: can't draw an image view: %s", err);
 }
 
@@ -435,10 +445,19 @@ static int text_room(const dialog *d, int i) {
     return bottom - r.top - 2;
 }
 
+static void draw_item_clipped(dialog *d, int i);
+
 static void draw_item(dialog *d, int i) {
-    item *it = &d->items[i];
-    if (it->hidden)
+    if (d->items[i].hidden)
         return;
+    item_clip = d->bounds;
+    draw_item_clipped(d, i);
+    item_clip = (qd_rect){0, 0, 0, 0};
+    qd_mark_dirty();
+}
+
+static void draw_item_clipped(dialog *d, int i) {
+    item *it = &d->items[i];
     qd_rect r = offset(it->r, d->bounds.left, d->bounds.top);
     char text[1024];
     display_text(d, it, text, sizeof text);
@@ -565,12 +584,13 @@ static void close_dialog(dialog *d) {
 
 static bool inside(qd_rect r, int x, int y) { return x >= r.left && x < r.right && y >= r.top && y < r.bottom; }
 
+/* The item under (x, y), which must be inside the dialog's box too. */
 static int item_at(dialog *d, int x, int y) {
     for (int i = d->nitems - 1; i >= 0; i--) {
         qd_rect r = offset(d->items[i].r, d->bounds.left, d->bounds.top);
         if (d->items[i].type == DLG_ITEM_EDIT_TEXT)
             r = outset(r, 3);
-        if (!d->items[i].hidden && inside(r, x, y))
+        if (!d->items[i].hidden && inside(r, x, y) && inside(d->bounds, x, y))
             return i;
     }
     return -1;
@@ -848,11 +868,27 @@ static void h_get_dialog_item_text(void) {
 }
 
 /* DrawDialog(DialogRef): draws the box and every item again. An invisible
-   DLOG stays hidden until ModalDialog shows it. */
+   DLOG stays hidden until ShowWindow or ModalDialog shows it. */
 static void h_draw_dialog(void) {
     dialog *d = need_dialog("DrawDialog", trap_arg(0), KIND_DLOG);
     if (d->shown)
         draw_all(d);
+}
+
+/* ShowWindow, HideWindow and SelectWindow on a DialogRef (qd_set_dialog_hook):
+   a DLOG made invisible is shown when the game shows it. A dialog is
+   always drawn over the game's windows, so SelectWindow has nothing to do. */
+static bool dialog_window_call(uint32_t ref, qd_window_change change) {
+    uint32_t i = (ref - DLG_TAG_BASE) / 16u;
+    if (ref < DLG_TAG_BASE || (ref - DLG_TAG_BASE) % 16u || i >= DLG_MAX || !G.d[i].open ||
+        G.d[i].kind != KIND_DLOG)
+        return false;
+    dialog *d = &G.d[i];
+    if (change == QD_WINDOW_SHOWN && !d->shown)
+        show(d);
+    else if (change == QD_WINDOW_HIDDEN && d->shown)
+        hide(d);
+    return true;
 }
 
 static void h_dispose_dialog(void) {
@@ -970,6 +1006,7 @@ static void window_changed(uint32_t window, qd_window_change change, uint32_t ar
             hide(d);
         break;
     case QD_WINDOW_DISPOSED: close_dialog(d); break;
+    case QD_WINDOW_SELECTED: break;
     case QD_WINDOW_REPOSITIONED: {
         /* kWindowAlertPositionOnMainScreen (7) and the alert positions on a
            parent window (8, 9, with no parent: the main screen); anything

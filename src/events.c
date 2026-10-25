@@ -176,9 +176,36 @@ static ev_event *need_event(const char *call, uint32_t ref) {
     return e;
 }
 
+static int dequeue_at(int k);
+static void release(ev_event *e);
+
+/* A classic game's input events (keyboard and mouse): the Operating System
+   event queue's, which holds 20 on a Mac. */
+static bool os_queue_event(uint32_t cls) { return cls == EV_CLASS_KEYBOARD || cls == EV_CLASS_MOUSE; }
+
+/* Before a classic game's input event is queued: when 20 are waiting
+   (Tristan reads the keyboard with GetKeys during play and leaves its
+   queue alone), the oldest goes, as PostEvent does on a full queue, so
+   the newest input is never the one lost. Logged once. */
+static void make_room_in_the_os_queue(uint32_t cls) {
+    if (!E.classic || !os_queue_event(cls))
+        return;
+    int n = 0, oldest = -1;
+    for (int k = 0; k < E.qcount; k++)
+        if (os_queue_event(E.events[E.queue[(E.qhead + k) % EV_MAX_EVENTS]].cls) && n++ == 0)
+            oldest = k;
+    if (n < EV_CLASSIC_QUEUE)
+        return;
+    if (!E.warned_full)
+        log_msg("events: the event queue is full; dropping its oldest input, as a Mac does");
+    E.warned_full = true;
+    release(&E.events[dequeue_at(oldest)]);
+}
+
 /* Queues a new event (the queue holds its reference). Returns it, or NULL
    if the queue is full (logged once). */
 static ev_event *post(uint32_t cls, uint32_t kind) {
+    make_room_in_the_os_queue(cls);
     int i = 0;
     while (i < EV_MAX_EVENTS && E.events[i].refs)
         i++;

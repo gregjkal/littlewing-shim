@@ -12,7 +12,11 @@
    Dialogs are drawn straight onto the emulated screen from their ALRT, DLOG
    and DITL resources, plainly and with the 8x8 font (font.h): a framed white
    box, buttons, static text with ParamText substitutions, edit fields,
-   pictures and icons. What was under a dialog comes back when it closes.
+   pictures and icons, each clipped to the box, as a dialog's window clips
+   them on a Mac (an item placed outside it is neither seen nor clicked).
+   What was under a dialog comes back when it closes. A DialogRef isn't a
+   window port, but ShowWindow, HideWindow and SelectWindow work on one
+   (qd_set_dialog_hook): a DLOG made invisible appears when the game shows it.
    While one is open it takes the input (events_set_modal): clicks on
    buttons, Return or Enter for the default button, Esc or Cmd-. for a
    button titled "Cancel", typing, Delete, Tab and Shift-Tab between edit
