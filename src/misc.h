@@ -106,7 +106,7 @@ typedef struct {
    decimal point. */
 void misc_num2dec(int style, int digits, double x, misc_decimal *out);
 
-/* Registers Gestalt, time, string, cursor, Apple Event, Internet Config,
+/* Registers Gestalt, time (IUDateString and IUTimeString among them), string, cursor, Apple Event, Internet Config,
    LSOpenCFURLRef, KeyScript and the text input source calls (which change
    nothing), GetMBarHeight, SysEnvirons, the A5 calls, BlockMoveData,
    num2dec, dec2num, sqrt, p2cstr, c2pstr, Fix2X, Long2Fix and

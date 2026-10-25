@@ -747,6 +747,17 @@ static void h_fs_delete(void) {
     trap_return((uint32_t)(int32_t)err);
 }
 
+/* SFPutFile(Point where, prompt, origName, DlgHookProcPtr, SFReply *): the
+   Standard File save dialog. There is no file dialog, so it is cancelled:
+   good false. The SFReply: good, copy (1 each), fType (4), vRefNum,
+   version (2 each), fName (Str63). */
+#define SFREPLY_SIZE 74
+static void h_sf_put_file(void) {
+    uint32_t reply = trap_arg(4);
+    memset(gm_ptr(reply, SFREPLY_SIZE), 0, SFREPLY_SIZE);
+    log_msg("SFPutFile: there is no save dialog; cancelled");
+}
+
 /* GetVRefNum(refNum, short *vRefNum) -> OSErr: the one volume. */
 static void h_get_vref_num(void) {
     if (!file_of((int16_t)trap_arg(0))) {
@@ -1079,6 +1090,7 @@ void files_register(void) {
     trap_register("FSDelete", h_fs_delete);
     trap_register("GetVRefNum", h_get_vref_num);
     trap_register("SetVol", h_set_vol);
+    trap_register("SFPutFile", h_sf_put_file);
     trap_register("FSPathMakeRef", h_fs_path_make_ref);
     trap_register("FSGetDataForkName", h_fs_get_data_fork_name);
     trap_register("FSOpenFork", h_fs_open_fork);

@@ -16,7 +16,7 @@ static const char *const names[] = {
     "FSpCreate", "FSWrite", "SetEOF", "PBFlushFileSync", "FSPathMakeRef", "FSGetDataForkName",
     "FSOpenFork", "FSGetForkSize", "FSGetForkPosition", "FSSetForkPosition", "FSCloseFork",
     "FSRead", "FindFolder", "FSpGetFInfo", "ResolveAliasFile", "NewAlias", "FlushVol",
-    "Create", "FSOpen", "FSDelete", "GetVRefNum", "SetVol",
+    "Create", "FSOpen", "FSDelete", "GetVRefNum", "SetVol", "SFPutFile",
 };
 
 static char dir[1024], data[1100];
@@ -750,6 +750,12 @@ TEST(files_name_and_volume_calls) {
     CHECK(access(p, F_OK) != 0);
     CHECK_EQ((int16_t)call_import("FSDelete", 2, name_of("Prefs"), 0u), FILES_FNF_ERR);
     CHECK_EQ((int16_t)call_import("FSOpen", 3, name_of(":Nowhere:x"), 0u, out), FILES_DIR_NF_ERR);
+
+    uint32_t reply = scratch(74);
+    memset(gm_ptr(reply, 74), 0xAA, 74);
+    call_import("SFPutFile", 5, 0x00500050u, name_of("Save as:"), name_of("Scores"), 0u, reply);
+    CHECK_EQ(gm_r8(reply), 0); /* cancelled */
+    CHECK_EQ(gm_r8(reply + 10), 0);
 
     CHECK_EQ(call_import("SetVol", 2, 0u, vol), 0);
     CHECK_EQ((int16_t)call_import("SetVol", 2, 0u, (uint32_t)(int32_t)-5), FILES_NSV_ERR);

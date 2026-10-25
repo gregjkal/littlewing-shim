@@ -373,6 +373,53 @@ static void h_get_date_time(void) {
     gm_w32(trap_arg(0), (uint32_t)(now + gmtoff + MAC_EPOCH_OFFSET));
 }
 
+/* IUDateString(unsigned long dateTime, DateForm, Str255 result) and
+   IUTimeString(dateTime, Boolean wantSeconds, Str255 result): a Mac's
+   date and time (local, seconds since 1904) as the U.S. System wrote
+   them: "10/25/26", "Sunday, October 25, 2026" (longDate),
+   "Sun, Oct 25, 2026" (abbrevDate); "1:05 PM" or "1:05:09 PM". */
+static struct tm mac_time(uint32_t secs) {
+    time_t t = (time_t)((int64_t)secs - (int64_t)MAC_EPOCH_OFFSET);
+    struct tm tm;
+    gmtime_r(&t, &tm);
+    return tm;
+}
+
+static void h_iu_date_string(void) {
+    struct tm tm = mac_time(trap_arg(0));
+    static const char *const days[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday",
+                                       "Friday", "Saturday"};
+    static const char *const months[] = {"January", "February", "March", "April", "May", "June", "July",
+                                         "August", "September", "October", "November", "December"};
+    char s[64];
+    switch (trap_arg(1) & 0xFF) {
+    case 1:
+        snprintf(s, sizeof s, "%s, %s %d, %d", days[tm.tm_wday], months[tm.tm_mon], tm.tm_mday,
+                 tm.tm_year + 1900);
+        break;
+    case 2:
+        snprintf(s, sizeof s, "%.3s, %.3s %d, %d", days[tm.tm_wday], months[tm.tm_mon], tm.tm_mday,
+                 tm.tm_year + 1900);
+        break;
+    default:
+        snprintf(s, sizeof s, "%d/%d/%02d", tm.tm_mon + 1, tm.tm_mday, tm.tm_year % 100);
+        break;
+    }
+    gm_write_pstr(trap_arg(2), s);
+}
+
+static void h_iu_time_string(void) {
+    struct tm tm = mac_time(trap_arg(0));
+    int h = tm.tm_hour % 12 ? tm.tm_hour % 12 : 12;
+    const char *half = tm.tm_hour < 12 ? "AM" : "PM";
+    char s[32];
+    if (trap_arg(1) & 0xFF)
+        snprintf(s, sizeof s, "%d:%02d:%02d %s", h, tm.tm_min, tm.tm_sec, half);
+    else
+        snprintf(s, sizeof s, "%d:%02d %s", h, tm.tm_min, half);
+    gm_write_pstr(trap_arg(2), s);
+}
+
 /* ReadLocation(MachineLocation *): latitude and longitude 0, then gmtDelta in
    the low 24 bits with the daylight-saving flag (0x80) in the high byte. */
 static void h_read_location(void) {
@@ -664,6 +711,8 @@ void misc_register(void) {
     trap_register("Microseconds", h_microseconds);
     trap_register("Delay", h_delay);
     trap_register("GetDateTime", h_get_date_time);
+    trap_register("IUDateString", h_iu_date_string);
+    trap_register("IUTimeString", h_iu_time_string);
     trap_register("ReadLocation", h_read_location);
     trap_register("NumToString", h_num_to_string);
     trap_register("p2cstrcpy", h_p2cstrcpy);

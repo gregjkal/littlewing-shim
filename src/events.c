@@ -11,6 +11,7 @@
 #include "memmgr.h"
 #include "misc.h"
 #include "play.h"
+#include "qd.h"
 #include "replay.h"
 #include "script.h"
 #include "snapshot.h"
@@ -983,7 +984,9 @@ static void h_quit_application_event_loop(void) { E.quit = true; }
    autoKey whose message is the key code << 8 | the character; key ups are
    left out, as the Mac's default system event mask has them; activation is
    an osEvt (suspend or resume); the quit Apple Event is a kHighLevelEvent
-   that AEProcessAppleEvent hands to the game's quit handler. Modifier
+   that AEProcessAppleEvent hands to the game's quit handler. After the
+   queue, a window that needs drawing gets an updateEvt (qd.h's
+   qd_pending_update), again each time until BeginUpdate. Modifier
    changes and commands have no EventRecord and are dropped. */
 
 #define CL_NULL       0
@@ -991,6 +994,7 @@ static void h_quit_application_event_loop(void) { E.quit = true; }
 #define CL_MOUSE_UP   2
 #define CL_KEY_DOWN   3
 #define CL_AUTO_KEY   5
+#define CL_UPDATE     6
 #define CL_OS         15
 #define CL_HIGH_LEVEL 23
 #define CL_HIGH_LEVEL_MASK 0x0400u /* not 1 << 23: the mask has 16 bits */
@@ -1068,6 +1072,11 @@ static bool classic_next(uint32_t mask, uint32_t rec, bool take) {
             gm_w16(rec + 10, (uint16_t)e->v), gm_w16(rec + 12, (uint16_t)e->h);
         if (take)
             release(&E.events[dequeue_at(k)]);
+        return true;
+    }
+    uint32_t window = qd_pending_update();
+    if (window && (mask & (1u << CL_UPDATE))) { /* until BeginUpdate takes it */
+        write_record(rec, CL_UPDATE, window, E.mouse_h, E.mouse_v, current_modifiers(), E.mouse_down);
         return true;
     }
     write_record(rec, CL_NULL, 0, E.mouse_h, E.mouse_v, current_modifiers(), E.mouse_down);

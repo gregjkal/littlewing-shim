@@ -97,5 +97,5 @@ int16_t files_write_rsrc_fork(const char *rel, const uint8_t *data, size_t len);
    FindFolder (the Preferences folder alone), FSpGetFInfo, ResolveAliasFile
    (there are no aliases), NewAlias and FlushVol, and the calls that take
    a name and a volume instead of an FSSpec: Create, FSOpen, FSDelete,
-   GetVRefNum and SetVol. */
+   GetVRefNum and SetVol, and SFPutFile, which is always cancelled. */
 void files_register(void);

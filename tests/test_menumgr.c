@@ -19,7 +19,7 @@ static const char *const names[] = {
     "IsMenuItemEnabled", "GetItemCmd", "GetItemMark", "SetItemMark", "SetMenuItemText",
     "MenuSelect", "MenuKey", "MenuEvent", "IsCmdChar", "GetCCursor", "InitMenus",
     "GetMenuItemText", "CheckItem", "InsertMenuItem", "DeleteMenuItem", "AppendResMenu",
-    "EnableItem", "DisableItem",
+    "EnableItem", "DisableItem", "OpenDeskAcc", "SystemClick", "SystemEdit",
 };
 
 /* ---- a resource fork: File (MENU 128), Operation (MENU 129), crsr 128 ---- */
@@ -275,4 +275,9 @@ TEST(menumgr_classic_item_calls) {
 
     call_import("AppendResMenu", 2, m, FOURCC('D', 'R', 'V', 'R')); /* no desk accessories */
     CHECK_EQ(call_import("CountMenuItems", 1, m), 5);
+    uint32_t name = scratch(256);
+    gm_write_pstr(name, "Calculator");
+    CHECK_EQ(call_import("OpenDeskAcc", 1, name), 0);
+    call_import("SystemClick", 2, scratch(16), 0u);
+    CHECK_EQ(call_import("SystemEdit", 1, 2u), 0); /* the game edits */
 }

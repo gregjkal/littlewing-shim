@@ -145,6 +145,11 @@ uint32_t qd_new_window(int width, int height);
    nib windows). arg is RepositionWindow's method. Called before a disposed
    window's port goes away. */
 typedef enum { QD_WINDOW_SHOWN, QD_WINDOW_HIDDEN, QD_WINDOW_DISPOSED, QD_WINDOW_REPOSITIONED } qd_window_change;
+/* The frontmost shown window that GetNewCWindow made and that needs
+   drawing (an update event: it was shown, or PaintBehind), until
+   BeginUpdate; 0 if none. Other windows draw themselves. */
+uint32_t qd_pending_update(void);
+
 typedef void (*qd_window_fn)(uint32_t window, qd_window_change change, uint32_t arg);
 void qd_set_window_hook(qd_window_fn fn);
 

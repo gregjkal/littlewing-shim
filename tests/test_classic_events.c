@@ -10,6 +10,9 @@
 #include "keymap.h"
 #include "memmgr.h"
 #include "misc.h"
+#include "qd.h"
+#include "rsrc.h"
+#include "util.h"
 
 /* The classic Event Manager a PowerPlant game (Golden Logres, Angel Egg)
    uses, on the Carbon queue. */
@@ -18,7 +21,7 @@ static const char *const names[] = {
     "WaitNextEvent", "GetNextEvent", "EventAvail", "Button", "StillDown", "GetKeys",
     "GetCurrentKeyModifiers", "GetGlobalMouse", "GetCaretTime", "GetDblTime",
     "GetCurrentEventLoop", "AEProcessAppleEvent", "NewEventLoopTimerUPP", "GetMainEventLoop",
-    "InstallEventLoopTimer",
+    "InstallEventLoopTimer", "GetNewCWindow", "BeginUpdate", "EndUpdate",
 };
 
 #define EVERY 0xFFFFu
@@ -215,4 +218,39 @@ TEST(classic_events_caret_and_double_click_times) {
     setup();
     CHECK_EQ(call_import("GetCaretTime", 0), 32);
     CHECK_EQ(call_import("GetDblTime", 0), 30);
+}
+
+/* A window GetNewCWindow shows gets an updateEvt after the queue's
+   events, every time, until BeginUpdate takes it. */
+TEST(classic_events_update_a_new_window_until_begin_update) {
+    setup();
+    static const uint8_t wind[] = {0, 0, 0, 0, 0, 100, 0, 200, 0, 3, 1, 0, 0, 0, 0, 0, 0, 0, 0};
+    rsrc_entry res = {.type = FOURCC('W', 'I', 'N', 'D'), .id = 128, .len = sizeof wind};
+    const uint8_t *d = wind;
+    size_t len;
+    uint8_t *fork = rsrc_build(&res, &d, 1, &len);
+    char err[256];
+    CHECK(rsrc_open(fork, len, err, sizeof err));
+    qd_init(640, 480, 8);
+    qd_register();
+    record e;
+    CHECK(wne(EVERY, &e)); /* the resume */
+    uint32_t w = call_import("GetNewCWindow", 3, 128u, 0u, (uint32_t)-1);
+    events_post_key(SDL_SCANCODE_Z, true, false);
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 23); /* the open application Apple Event, queued first */
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 3); /* then the key */
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 6); /* updateEvt */
+    CHECK_EQ(e.message, w);
+    CHECK(!wne(KEY_DOWN_MASK, &e)); /* not in the mask */
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 6); /* again */
+    call_import("BeginUpdate", 1, w);
+    call_import("EndUpdate", 1, w);
+    CHECK(!wne(EVERY, &e));
+    CHECK_EQ(e.what, 0);
+    rsrc_close();
+    free(fork);
 }

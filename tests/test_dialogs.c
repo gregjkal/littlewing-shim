@@ -19,7 +19,7 @@
 #include "snapshot.h"
 
 static const char *const names[] = {
-    "Alert", "StopAlert", "NoteAlert", "ParamText", "GetNewDialog", "ModalDialog", "GetDialogItem",
+    "Alert", "StopAlert", "NoteAlert", "InitDialogs", "ParamText", "GetNewDialog", "ModalDialog", "GetDialogItem",
     "GetDialogItemText", "DisposeDialog", "DrawDialog",
 };
 static uint8_t *fork_buf;
@@ -85,6 +85,7 @@ static void child_auto_alert(void *unused) {
     setenv("LOONY_AUTO_ALERTS", "1", 1);
     if (!setup())
         exit(3);
+    call_import("InitDialogs", 1, 0u); /* changes nothing */
     if (call_import("Alert", 2, 901u, 0u) != 1)
         exit(4);
     if (call_import("StopAlert", 2, 900u, 0u) != 1)

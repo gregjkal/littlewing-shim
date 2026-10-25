@@ -33,5 +33,7 @@ void menumgr_init(void);
    SetItemMark, SetMenuItemText, MenuSelect, MenuKey, MenuEvent and
    IsCmdChar, and the older calls a System 7 program makes: InitMenus,
    EnableItem, DisableItem, CheckItem, GetMenuItemText, InsertMenuItem,
-   DeleteMenuItem and AppendResMenu. Requires trap_init(). */
+   DeleteMenuItem and AppendResMenu, and the Desk Manager's OpenDeskAcc,
+   SystemClick and SystemEdit, with no desk accessories to open. Requires
+   trap_init(). */
 void menumgr_register(void);

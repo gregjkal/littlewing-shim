@@ -20,6 +20,7 @@ static const char *const names[] = {
     "LSOpenCFURLRef", "SetTextServiceLanguage", "TISCopyCurrentASCIICapableKeyboardInputSource",
     "TISSelectInputSource", "SetA5", "SetCurrentA5", "Fix2X", "Long2Fix",
     "LMGetCurrentA5", "SysEnvirons", "dec2num", "p2cstr", "c2pstr", "sqrt",
+    "IUDateString", "IUTimeString",
 };
 
 static void setup(void) {
@@ -553,4 +554,25 @@ TEST(misc_fixed_point) {
     CHECK_EQ(call_import("Long2Fix", 1, (uint32_t)-2), 0xFFFE0000u);
     CHECK_EQ(call_import("Long2Fix", 1, 40000u), 0x7FFFFFFFu);
     CHECK_EQ(call_import("Long2Fix", 1, (uint32_t)-40000), 0x80000000u);
+}
+
+static const char *iu(const char *call, uint32_t secs, uint32_t form) {
+    static char s[256];
+    uint32_t p = scratch(256);
+    call_import(call, 3, secs, form, p);
+    gm_read_pstr(p, s);
+    return s;
+}
+
+/* A Mac's date and time (seconds since 1904) as the U.S. System wrote them. */
+TEST(misc_iu_date_and_time_strings) {
+    setup();
+    uint32_t t = 3844242309u; /* Saturday, October 25, 2025, 1:05:09 PM */
+    CHECK_STR(iu("IUDateString", t, 0), "10/25/25");
+    CHECK_STR(iu("IUDateString", t, 1), "Saturday, October 25, 2025");
+    CHECK_STR(iu("IUDateString", t, 2), "Sat, Oct 25, 2025");
+    CHECK_STR(iu("IUTimeString", t, 0), "1:05 PM");
+    CHECK_STR(iu("IUTimeString", t, 1), "1:05:09 PM");
+    CHECK_STR(iu("IUTimeString", 0, 1), "12:00:00 AM"); /* January 1, 1904 */
+    CHECK_STR(iu("IUDateString", 0, 0), "1/1/04");
 }

@@ -343,6 +343,13 @@ static void h_append_res_menu(void) {
     }
 }
 
+/* The Desk Manager: there are no desk accessories, so OpenDeskAcc opens
+   none (0), SystemClick has no window of one to pass a click to, and
+   SystemEdit has no front one to edit (false: the game handles it). */
+static void h_open_desk_acc(void) { trap_return(0); }
+static void h_system_click(void) {}
+static void h_system_edit(void) { trap_return(0); }
+
 /* InitMenus: the menus were made empty at the start. */
 static void h_init_menus(void) {}
 
@@ -393,6 +400,9 @@ static void h_is_cmd_char(void) {
 void menumgr_register(void) {
     trap_register("GetMenu", h_get_menu);
     trap_register("InitMenus", h_init_menus);
+    trap_register("OpenDeskAcc", h_open_desk_acc);
+    trap_register("SystemClick", h_system_click);
+    trap_register("SystemEdit", h_system_edit);
     trap_register("GetMenuItemText", h_get_menu_item_text);
     trap_register("CheckItem", h_check_item);
     trap_register("InsertMenuItem", h_insert_menu_item);

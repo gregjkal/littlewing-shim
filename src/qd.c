@@ -35,6 +35,9 @@ typedef struct {
     int16_t oh, ov; /* SetOrigin's: the port's top left in its own coordinates */
     int16_t window_kind;
     uint32_t refcon;
+    /* A window GetNewCWindow made, whose content the Window Manager asks
+       the game to draw with update events, and whether it needs drawing. */
+    bool classic, update;
     uint8_t title[256]; /* a Pascal string */
 } port_info;
 
@@ -263,12 +266,17 @@ static void init_port(uint32_t p, uint32_t pm_h, qd_rect port_rect, port_kind ki
                                       .order = ++Q.next_order, .oh = port_rect.left, .ov = port_rect.top};
 }
 
-static uint32_t new_port(uint32_t pm_h, qd_rect port_rect, port_kind kind) {
-    uint32_t p = mm_new_ptr(CGRAFPORT_SIZE, true);
+/* A new port in size bytes (a CGrafPort, or a record that starts with one). */
+static uint32_t new_port_sized(uint32_t pm_h, qd_rect port_rect, port_kind kind, uint32_t size) {
+    uint32_t p = mm_new_ptr(size, true);
     if (!p)
         trap_crash("out of guest memory for a port");
     init_port(p, pm_h, port_rect, kind);
     return p;
+}
+
+static uint32_t new_port(uint32_t pm_h, qd_rect port_rect, port_kind kind) {
+    return new_port_sized(pm_h, port_rect, kind, CGRAFPORT_SIZE);
 }
 
 static void dispose_port(port_info *info) {
@@ -848,17 +856,21 @@ static void h_set_gdevice(void) { Q.cur_device = trap_arg(0) ? trap_arg(0) : Q.m
 
 /* A window port whose content is global on the screen, with a PixMap of its
    own (place_window_pixels). */
-static port_info *new_window(qd_rect global, bool fills_screen) {
+static port_info *new_window_sized(qd_rect global, bool fills_screen, uint32_t size) {
     uint32_t pm_h = mm_new_handle(PIXMAP_SIZE, true);
     if (!pm_h)
         trap_crash("out of guest memory for a window");
     qd_rect local = {0, 0, (int16_t)rect_h(global), (int16_t)rect_w(global)};
-    port_info *w = find_port(new_port(pm_h, local, KIND_WINDOW));
+    port_info *w = find_port(new_port_sized(pm_h, local, KIND_WINDOW, size));
     w->h = global.left;
     w->v = global.top;
     w->fills_screen = fills_screen;
     place_window_pixels(w);
     return w;
+}
+
+static port_info *new_window(qd_rect global, bool fills_screen) {
+    return new_window_sized(global, fills_screen, CGRAFPORT_SIZE);
 }
 
 uint32_t qd_new_window(int width, int height) {
@@ -875,7 +887,10 @@ static void window_changed(uint32_t w, qd_window_change change, uint32_t arg) {
 }
 
 static void h_show_window(void) {
-    need_port("ShowWindow", trap_arg(0))->visible = true;
+    port_info *p = need_port("ShowWindow", trap_arg(0));
+    if (p->classic && !p->visible)
+        p->update = true;
+    p->visible = true;
     Q.dirty = true;
     window_changed(trap_arg(0), QD_WINDOW_SHOWN, 0);
 }
@@ -909,6 +924,15 @@ static uint32_t front_visible_window(void) {
     while (w && !find_port(w)->visible)
         w = window_behind(w);
     return w;
+}
+
+uint32_t qd_pending_update(void) {
+    for (uint32_t w = window_behind(0); w; w = window_behind(w)) {
+        const port_info *p = find_port(w);
+        if (p->visible && p->update)
+            return w;
+    }
+    return 0;
 }
 
 static port_info *need_window(const char *call, uint32_t w) {
@@ -1018,6 +1042,83 @@ static void h_create_new_window(void) {
     }
     gm_w32(trap_arg(3), qd_new_window(w, h));
     trap_return(QD_NO_ERR);
+}
+
+/* GetNewCWindow(short id, void *storage, WindowRef behind) -> WindowRef: a
+   window from WIND resource id, its content at the WIND's bounds on the
+   screen, shown if the WIND says so. A program may change the WIND it
+   has loaded before (Tristan centers it), so a loaded one is read from
+   its handle. The window is a whole CWindowRecord, for a program that
+   looks into one: the port, then windowKind, visible and refCon as they
+   were made (later changes are the shim's alone). Only storage the
+   Window Manager allocates (NULL) is supported. */
+#define WIND_VISIBLE 10
+#define WIND_REFCON 14
+#define WIND_TITLE 18
+#define WREC_KIND 108
+#define WREC_VISIBLE 110
+#define WREC_REFCON 152
+#define CWINDOWRECORD_SIZE 156
+static void h_get_new_cwindow(void) {
+    int16_t id = (int16_t)trap_arg(0);
+    if (trap_arg(1))
+        trap_crash("GetNewCWindow: a window in the game's own memory is not supported");
+    rsrc_entry *e = rsrc_find(FOURCC('W', 'I', 'N', 'D'), id);
+    if (!e)
+        trap_crash("GetNewCWindow: there is no WIND %d", id);
+    uint8_t wind[WIND_TITLE + 256] = {0};
+    uint32_t len = e->handle ? mm_handle_size(e->handle) : e->len;
+    if (len > sizeof wind)
+        len = sizeof wind;
+    memcpy(wind, e->handle ? gm_ptr(gm_r32(e->handle), len) : rsrc_data(e), len);
+    if (len < WIND_TITLE + 1u || len < WIND_TITLE + 1u + wind[WIND_TITLE])
+        trap_crash("GetNewCWindow: WIND %d is malformed", id);
+    qd_rect b = {(int16_t)rd_be16(wind), (int16_t)rd_be16(wind + 2), (int16_t)rd_be16(wind + 4),
+                 (int16_t)rd_be16(wind + 6)};
+    if (rect_empty(b))
+        trap_crash("GetNewCWindow: WIND %d has empty bounds", id);
+    port_info *w = new_window_sized(b, false, CWINDOWRECORD_SIZE);
+    w->visible = wind[WIND_VISIBLE] != 0;
+    w->classic = true;
+    w->update = w->visible;
+    w->window_kind = 8; /* userKind */
+    w->refcon = rd_be32(wind + WIND_REFCON);
+    memcpy(w->title, wind + WIND_TITLE, (size_t)wind[WIND_TITLE] + 1);
+    gm_w16(w->addr + WREC_KIND, (uint16_t)w->window_kind);
+    gm_w8(w->addr + WREC_VISIBLE, w->visible);
+    gm_w32(w->addr + WREC_REFCON, w->refcon);
+    Q.dirty = true;
+    log_msg("GetNewCWindow: WIND %d, (%d,%d,%d,%d)", id, b.top, b.left, b.bottom, b.right);
+    trap_return(w->addr);
+}
+
+/* CloseWindow(WindowRef): as DisposeWindow. */
+static void h_close_window(void) {
+    port_info *info = need_window("CloseWindow", trap_arg(0));
+    window_changed(info->addr, QD_WINDOW_DISPOSED, 0);
+    events_forget_window(info->addr);
+    dispose_port(info);
+    Q.dirty = true;
+}
+
+/* BeginUpdate and EndUpdate (WindowRef): the window's update is taken.
+   Only whether a window needs drawing is kept, not where, so the whole
+   window may be drawn, as it always may. */
+static void h_begin_update(void) { need_port("BeginUpdate", trap_arg(0))->update = false; }
+static void h_end_update(void) { need_port("EndUpdate", trap_arg(0)); }
+
+/* PaintBehind(WindowRef startWindow, RgnHandle): there is no desktop or
+   frame to paint; each window GetNewCWindow made from startWindow back
+   (NULL for all of them) gets an update event. */
+static void h_paint_behind(void) {
+    bool behind = trap_arg(0) == 0;
+    for (uint32_t w = window_behind(0); w; w = window_behind(w)) {
+        port_info *p = find_port(w);
+        behind = behind || w == trap_arg(0);
+        if (behind && p->classic)
+            p->update = true;
+    }
+    Q.dirty = true;
 }
 
 /* CreateCustomWindow(const WindowDefSpec *, WindowClass, WindowAttributes,
@@ -1341,8 +1442,18 @@ static void copy_clipped(qd_rect clip, void *ctx) {
 
 /* CopyBits(srcBits, dstBits, srcRect, dstRect, mode, maskRgn): the mask is
    in the destination's coordinates. */
+/* A BitMap pointer as CopyBits takes it. A classic program passes a color
+   port's &portBits for the port: there, after the portPixMap handle,
+   portVersion's top two bits are set, where a BitMap's or PixMap's
+   rowBytes can't have both. That stands for the port's PixMap. */
+static uint32_t bits_of(uint32_t bits) {
+    if ((gm_r16(bits + PM_ROW_BYTES) & 0xC000) == 0xC000)
+        return gm_r32(gm_r32(bits));
+    return bits;
+}
+
 static void h_copy_bits(void) {
-    uint32_t src_bits = trap_arg(0), dst_bits = trap_arg(1), mask = trap_arg(5);
+    uint32_t src_bits = bits_of(trap_arg(0)), dst_bits = bits_of(trap_arg(1)), mask = trap_arg(5);
     copy_job j = {.sr = qd_read_rect(trap_arg(2)), .dr = qd_read_rect(trap_arg(3)),
                   .mode = (int16_t)trap_arg(4), .fg = qd_read_rgb(Q.cur_port + PORT_RGB_FG),
                   .bk = qd_read_rgb(Q.cur_port + PORT_RGB_BK)};
@@ -1430,6 +1541,11 @@ void qd_register(void) {
     trap_register("GetMaxDevice", h_get_max_device);
     trap_register("TestDeviceAttribute", h_test_device_attribute);
     trap_register("SetDepth", h_set_depth);
+    trap_register("GetNewCWindow", h_get_new_cwindow);
+    trap_register("CloseWindow", h_close_window);
+    trap_register("BeginUpdate", h_begin_update);
+    trap_register("EndUpdate", h_end_update);
+    trap_register("PaintBehind", h_paint_behind);
     trap_register("NewPixMap", h_new_pixmap);
     trap_register("OpenCPort", h_open_cport);
     trap_register("CloseCPort", h_close_cport);

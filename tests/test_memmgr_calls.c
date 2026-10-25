@@ -11,7 +11,7 @@ static const char *const names[] = {
     "HNoPurge", "MoveHHi", "HGetState", "HSetState", "MemError", "SetHandleSize", "EmptyHandle",
     "HLockHi", "TempNewHandle", "MaxBlock", "MoreMasterPointers", "NewGrowZoneUPP",
     "DisposeGrowZoneUPP", "SetGrowZone", "GZSaveHnd", "FreeMem", "ReserveMem",
-    "MoreMasters", "GetApplLimit", "SetApplLimit", "MaxApplZone",
+    "MoreMasters", "GetApplLimit", "SetApplLimit", "MaxApplZone", "HandToHand",
 };
 
 static void setup(void) {
@@ -239,4 +239,18 @@ TEST(mmcall_appl_limit_is_the_heap_end) {
     CHECK_EQ(mem_error(), 0);
     CHECK_EQ(call_import("GetApplLimit", 0), limit);
     CHECK_EQ(mm_free_bytes(), free_before);
+}
+
+TEST(mmcall_hand_to_hand_copies_the_handle) {
+    setup();
+    uint32_t h = call_import("NewHandleClear", 1, 6u), hp = scratch(4);
+    memcpy(gm_ptr(gm_r32(h), 6), "abcdef", 6);
+    gm_w32(hp, h);
+    CHECK_EQ(call_import("HandToHand", 1, hp), 0);
+    uint32_t copy = gm_r32(hp);
+    CHECK(copy != h && mm_is_handle(copy) && mm_is_handle(h));
+    CHECK_EQ(mm_handle_size(copy), 6);
+    CHECK(memcmp(gm_ptr(gm_r32(copy), 6), "abcdef", 6) == 0);
+    gm_w32(hp, 0);
+    CHECK_EQ((int16_t)call_import("HandToHand", 1, hp), MM_NIL_HANDLE_ERR);
 }
