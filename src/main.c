@@ -322,8 +322,8 @@ int main(int argc, char **argv) {
             return startup_error("LOONY_GAME names no known game: %s", forced);
         game_folder(game, dir, sizeof dir);
     } else {
-        const game_info *installed[8];
-        int n = game_installed(installed, 8);
+        const game_info *installed[PICKER_MAX];
+        int n = game_installed(installed, PICKER_MAX);
         if (n == 0)
             return no_game_error();
         if (n == 1) {

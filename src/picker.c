@@ -52,6 +52,14 @@
 #define CARD7_GAP 24
 #define CARD7_ROW 200
 #define NAME7_TOP0 252
+/* Nine cards: smaller again, three rows of three, the columns wide enough
+   that every name fits on one line. */
+#define ART9_W 144
+#define ART9_H 108
+#define CARD9_GAP 120
+#define CARD9_TOP0 100
+#define CARD9_ROW 148
+#define NAME9_BELOW 10 /* from a card's art bottom to its name */
 #define NAME_LEADING 4 /* between a two-line name's lines */
 #define ICON_SIZE 128 /* icns 128's largest image, it32 */
 
@@ -60,19 +68,24 @@ static const qd_rgb BLACK = {0, 0, 0}, GOLD = {0xFFFF, 0xCCCC, 0x3333}, DARK = {
                     GRAY = {0x8888, 0x8888, 0x8888};
 
 /* Cards in a row: all of them, except four, which take two rows of two,
-   five and six, two rows of three, and seven and eight, rows of four. */
-static int columns(int n) { return n == 4 ? 2 : n == 5 || n == 6 ? 3 : n >= 7 ? 4 : n; }
+   five and six, two rows of three, seven and eight, rows of four, and
+   nine, three rows of three. */
+static int columns(int n) { return n == 4 ? 2 : n == 5 || n == 6 || n == 9 ? 3 : n >= 7 ? 4 : n; }
+
+/* Whether n cards take rows of four, where a name may need two lines. */
+static bool four_across(int n) { return n == 7 || n == 8; }
 
 /* Where card i's art goes: two cards side by side, three smaller ones, or
-   four to eight in two rows, each row centered. */
+   four to eight in two rows and nine in three, each row centered. */
 static qd_rect card(int n, int i) {
     if (n >= 4) {
         int cols = columns(n), row = i / cols;
-        int w = n >= 7 ? ART7_W : ART4_W, h = n >= 7 ? ART7_H : ART4_H;
-        int gap = n == 4 ? CARD4_GAP : n >= 7 ? CARD7_GAP : CARD5_GAP;
+        int w = n == 9 ? ART9_W : n >= 7 ? ART7_W : ART4_W, h = n == 9 ? ART9_H : n >= 7 ? ART7_H : ART4_H;
+        int gap = n == 4 ? CARD4_GAP : n == 9 ? CARD9_GAP : n >= 7 ? CARD7_GAP : CARD5_GAP;
         int in_row = n - row * cols < cols ? n - row * cols : cols;
         int left = (PICKER_W - in_row * w - (in_row - 1) * gap) / 2 + i % cols * (w + gap);
-        int top = CARD4_TOP0 + row * (n >= 7 ? CARD7_ROW : CARD4_ROW);
+        int top = n == 9 ? CARD9_TOP0 + row * CARD9_ROW
+                         : CARD4_TOP0 + row * (n >= 7 ? CARD7_ROW : CARD4_ROW);
         return (qd_rect){(int16_t)top, (int16_t)left, (int16_t)(top + h), (int16_t)(left + w)};
     }
     if (n == 3) {
@@ -84,6 +97,8 @@ static qd_rect card(int n, int i) {
 }
 
 static int name_top(int n, int i) {
+    if (n == 9)
+        return card(n, i).bottom + NAME9_BELOW;
     if (n >= 7)
         return NAME7_TOP0 + i / columns(n) * CARD7_ROW;
     return n >= 4 ? NAME4_TOP0 + i / columns(n) * CARD4_ROW : n == 3 ? NAME3_TOP : NAME_TOP;
@@ -94,7 +109,7 @@ static int name_top(int n, int i) {
    would touch its neighbour's, the card alone. */
 static int name_room(int n) {
     qd_rect a = card(n, 0), b = card(n, 1);
-    return n >= 7 ? rect_w(a) : b.left - a.left;
+    return four_across(n) ? rect_w(a) : b.left - a.left;
 }
 
 /* Where name (scale 2) breaks into two lines under a column room pixels
@@ -189,7 +204,7 @@ void picker_draw(const picker_entry *e, int n, int selected, uint8_t *screen) {
 int picker_hit(int n, int x, int y) {
     for (int i = 0; i < n && i < PICKER_MAX; i++) {
         qd_rect c = card(n, i);
-        int bottom = name_top(n, i) + 2 * FONT_H + (n >= 7 ? 2 * FONT_H + NAME_LEADING : 0);
+        int bottom = name_top(n, i) + 2 * FONT_H + (four_across(n) ? 2 * FONT_H + NAME_LEADING : 0);
         if (x >= c.left - BORDER && x < c.right + BORDER && y >= c.top - BORDER && y < bottom)
             return i;
     }

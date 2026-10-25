@@ -1,9 +1,10 @@
 #pragma once
 #include <stdint.h>
 
-/* The CoreAudio calls Mad Daedalus plays its sound with: an AUGraph of a
-   stereo mixer feeding the default output, AudioFiles read through the
-   game's own callbacks, and AudioConverters that decode them.
+/* The CoreAudio calls Mad Daedalus and FAIRY TOWER play their sound
+   with: an AUGraph of a stereo mixer feeding the default output,
+   AudioFiles read through the game's own callbacks, and AudioConverters
+   that decode them.
 
    The graph is one mixer ('aumx' 'smxr') connected to one output ('auou'
    'def '). The game sets the mixer's input count and, on an input, a
@@ -16,7 +17,10 @@
 
    The mixer's input format, which the game asks for and converts to, is
    16-bit signed big-endian interleaved stereo at MIX_RATE: integers, so
-   what is rendered is the same in every build.
+   what is rendered is the same in every build. The stream from the mixer
+   to the output (the mixer's output scope, the output's input scope) may
+   be set to that format or to CoreAudio's canonical 32-bit float, as FAIRY
+   TOWER sets it; only sound.c sees that stream, so either changes nothing.
 
    An AudioFile is an AIFF-C file of IMA4 (Apple's 'ima4') sound, read
    with the callbacks AudioFileOpenWithCallbacks is given: the header when

@@ -2673,6 +2673,69 @@ TEST(run_mad_daedalus_quits_from_its_own_menu) {
     CHECK(!strstr(out, "quit Apple Event"));
 }
 
+static void run_fairy_tower_headless(void *unused) {
+    (void)unused;
+    setenv("LOONY_FIXED_CLOCK", "1", 1);
+    setenv("LOONY_EXIT_AFTER", "600", 1);
+    setenv("LOONY_SCREENSHOT", shot, 1);
+    run_loony((void *)test_ft_app());
+}
+
+/* FAIRY TOWER 1.1.7 is built as Mad Daedalus is: it answers the same two
+   windows (Play Demo, then OK), plays through CoreAudio into a float
+   output stream, takes the display at 1024x768, 32 bits, and by tick 600
+   shows its table, waiting for Esc. */
+TEST(run_fairy_tower_plays_its_opening_headless) {
+    SKIP_UNLESS_FT();
+    tmp_name(shot, sizeof shot, "run");
+    char out[32768];
+    test_tmp_dir(run_data, sizeof run_data);
+    int status = test_run_child(run_fairy_tower_headless, NULL, out, sizeof out);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    size_t len = 0;
+    uint8_t *png = read_file(shot, &len);
+    unlink(shot);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "playing FAIRY TOWER from");
+    CHECK_CONTAINS(out, "Contents/MacOS/FAIRY TOWER: 172 imports, main at 0x3a410, 7 initializers");
+    CHECK_CONTAINS(out, "loony: nib window Welcome: command 'ok  ' (Play Demo)");
+    CHECK_CONTAINS(out, "loony: nib window Demo: command 'ok  ' (OK)");
+    CHECK_CONTAINS(out, "loony: display mode 1024x768, 32 bits");
+    CHECK_CONTAINS(out, "loony: exiting after 600 ticks (LOONY_EXIT_AFTER)");
+    CHECK(!strstr(out, "coreaudio:")); /* every sound opened and converted */
+    CHECK(!strstr(out, "not supported"));
+    CHECK(png != NULL);
+    CHECK(len > 33);
+    CHECK_EQ(rd_be32(png + 16), 1024);
+    CHECK_EQ(rd_be32(png + 20), 768);
+    uint32_t h = fnv1a32(png, len);
+    free(png);
+    CHECK_EQ(h, 0x1E2C61B1u); /* the table, "GAME OVER" and "PRESS ESC TO START" */
+}
+
+/* FAIRY TOWER's own QUIT, as Mad Daedalus's: Esc opens the menu, Up
+   wraps to QUIT, Return, and main returns with no quit Apple Event. */
+TEST(run_fairy_tower_quits_from_its_own_menu) {
+    SKIP_UNLESS_FT();
+    char out[32768];
+    int status = run_script_in(test_ft_app(), "620 down esc\n624 up esc\n1250 down up\n1254 up up\n"
+                                              "1400 down return\n1406 up return\n2400 quit\n",
+                               NULL, NULL, 0, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: main returned 0");
+    CHECK(!strstr(out, "quit Apple Event"));
+}
+
+/* Cmd-Q's path: the shim sends the quit Apple Event and the game ends. */
+TEST(run_fairy_tower_quits_on_the_quit_apple_event) {
+    SKIP_UNLESS_FT();
+    char out[32768];
+    int status = run_script_in(test_ft_app(), "900 quit\n", NULL, NULL, 0, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "sending the quit Apple Event");
+}
+
 static void run_angel_egg_headless(void *unused) {
     (void)unused;
     setenv("LOONY_FIXED_CLOCK", "1", 1);
@@ -3182,9 +3245,10 @@ TEST(run_the_picker_shows_seven_games_and_starts_golden_logres) {
     CHECK_STR(got, "3d2dec68");
 }
 
-/* Eight games: two rows of four, Tristan's card its title, PICT 900.
-   Picked, it starts from its folder, and Cmd-Q ends it before a game. */
-TEST(run_the_picker_shows_eight_games_and_starts_tristan) {
+/* Nine games, every one: three rows of three, Tristan's card, the last,
+   its title, PICT 900. Picked, it starts from its folder, and Cmd-Q ends
+   it before a game. */
+TEST(run_the_picker_shows_nine_games_and_starts_tristan) {
     SKIP_UNLESS_GAME();
     SKIP_UNLESS_CC();
     SKIP_UNLESS_MF();
@@ -3192,11 +3256,13 @@ TEST(run_the_picker_shows_eight_games_and_starts_tristan) {
     SKIP_UNLESS_MD();
     SKIP_UNLESS_AE();
     SKIP_UNLESS_GL();
+    SKIP_UNLESS_FT();
     SKIP_UNLESS_TR();
     test_tmp_dir(apps_dir, sizeof apps_dir);
     CHECK(both_games() && link_game("MONSTER FAIR.app", test_mf_app()) && link_game("Jinni Zeala", test_jz_dir()) &&
           link_game("Mad Daedalus.app", test_md_app()) && link_game("Angel Egg.app", test_ae_app()) &&
-          link_game("Golden Logres.app", test_gl_app()) && link_game("TRISTAN IE", test_tr_dir()));
+          link_game("Golden Logres.app", test_gl_app()) && link_game("FAIRY TOWER.app", test_ft_app()) &&
+          link_game("TRISTAN IE", test_tr_dir()));
     test_tmp_dir(run_data, sizeof run_data);
     tmp_name(pick_shot, sizeof pick_shot, "picker");
     char out[32768];
@@ -3219,7 +3285,47 @@ TEST(run_the_picker_shows_eight_games_and_starts_tristan) {
     CHECK_CONTAINS(out, "loony: sending the quit as Cmd-Q");
     CHECK_CONTAINS(out, "loony: ExitToShell");
     CHECK(!strstr(out, "back to the picker"));
-    CHECK_STR(got, "ed36166d"); /* the frame with Loony Labyrinth selected */
+    CHECK_STR(got, "d9ebd1f3"); /* the frame with Loony Labyrinth selected */
+}
+
+/* Eight games: two rows of four, FAIRY TOWER's card, the last, its
+   appl.png icon. Picked, it plays; the host's quit (Cmd-Q) quits the app. */
+TEST(run_the_picker_shows_eight_games_and_starts_fairy_tower) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_CC();
+    SKIP_UNLESS_MF();
+    SKIP_UNLESS_JZ();
+    SKIP_UNLESS_MD();
+    SKIP_UNLESS_AE();
+    SKIP_UNLESS_GL();
+    SKIP_UNLESS_FT();
+    test_tmp_dir(apps_dir, sizeof apps_dir);
+    CHECK(both_games() && link_game("MONSTER FAIR.app", test_mf_app()) && link_game("Jinni Zeala", test_jz_dir()) &&
+          link_game("Mad Daedalus.app", test_md_app()) && link_game("Angel Egg.app", test_ae_app()) &&
+          link_game("Golden Logres.app", test_gl_app()) && link_game("FAIRY TOWER.app", test_ft_app()));
+    test_tmp_dir(run_data, sizeof run_data);
+    tmp_name(pick_shot, sizeof pick_shot, "picker");
+    char out[32768];
+    int status = run_picker_with("fairy-tower", "900 quit\n", out, sizeof out);
+    size_t len = 0;
+    uint8_t *png = read_file(pick_shot, &len);
+    char got[16];
+    snprintf(got, sizeof got, "%08x", png ? fnv1a32(png, len) : 0);
+    free(png);
+    unlink(pick_shot);
+    pick_shot[0] = '\0';
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    test_remove_tree(apps_dir);
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "picker: can't")); /* every card's art loaded */
+    CHECK(!strstr(out, "picker: /"));
+    CHECK_CONTAINS(out, "loony: picker: fairy-tower");
+    CHECK_CONTAINS(out, "loony: playing FAIRY TOWER from ");
+    CHECK_CONTAINS(out, "loony: sending the quit Apple Event");
+    CHECK_CONTAINS(out, "loony: main returned 0");
+    CHECK(!strstr(out, "back to the picker"));
+    CHECK_STR(got, "c54d53f6");
 }
 
 /* Review Focus 1: the picker remembers the last game in the save root,
@@ -3458,6 +3564,11 @@ static const regression_start ae_start = {"900 down lcmd\n902 down n\n906 up n\n
 static const regression_start md_start = {
     "620 down esc\n624 up esc\n1250 down return\n1256 up return\n1500 down return\n1506 up return\n", 2000, {0}};
 
+/* FAIRY TOWER, as Mad Daedalus: one Esc opens the menu over the table;
+   Return picks NEW GAME, then 1 PLAYER. */
+static const regression_start ft_start = {
+    "620 down esc\n624 up esc\n1250 down return\n1256 up return\n1500 down return\n1506 up return\n", 2000, {0}};
+
 /* Golden Logres: Esc ends the story, Esc the title, Cmd-N starts a game.
    The demo ends a game after 60 seconds of ball in play, so Cmd-N starts
    another after the first one's GAME OVER. */
@@ -3649,6 +3760,30 @@ SLOW_TEST(run_three_minutes_of_mad_daedalus_match_the_recording) {
        balls are gone, GAME OVER at 155,300. Minute 3: the table plays its
        own demo, ball 1. */
     CHECK_STR(got, "ede7d3d1 af73d7df 3751c795 17b22851");
+}
+
+/* Three minutes of FAIRY TOWER, started from its menu as Mad Daedalus
+   is, with the same plunger, flippers and nudges. */
+SLOW_TEST(run_three_minutes_of_fairy_tower_match_the_recording) {
+    SKIP_UNLESS_FT();
+    uint32_t h[3], wh;
+    size_t len;
+    char out[32768];
+    int status = play_regression(test_ft_app(), &ft_start, h, &wh, &len, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "runtime error"));
+    CHECK(!strstr(out, "coreaudio:"));
+    /* Its clock moves in its own short sleeps, so the run ends at the first
+       pump past the last tick: up to a tick more sound. */
+    size_t want = 44 + (size_t)REGRESSION_TICKS * 44100 / 60 * 4;
+    CHECK(len >= want && len < want + 44100 / 60 * 4);
+    char got[64];
+    snprintf(got, sizeof got, "%08x %08x %08x %08x", h[0], h[1], h[2], wh);
+    /* Frames at minutes 1, 2 and 3, then the recording. Minute 1: ball 2,
+       58,000 points, 68 seconds of tryout time left. Minute 2: ball 3,
+       228,000, 30 seconds left. Minute 3: the tryout's time ran out, GAME
+       OVER at 249,200 and PRESS ESC TO START. */
+    CHECK_STR(got, "46ed4eb5 4d0508d4 026fcd08 ba004ec5");
 }
 
 /* Three minutes of Angel Egg, started with Cmd-N after its title, with

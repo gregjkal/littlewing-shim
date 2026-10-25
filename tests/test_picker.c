@@ -200,16 +200,16 @@ TEST(picker_keys_move_across_and_between_rows_of_five) {
     CHECK_EQ(picker_hit(5, 100, 400), -1);      /* beside the short row */
 }
 
-/* Eight games by title, for the layouts of up to eight cards. */
-static const game_info eight[8] = {
+/* Nine games by title, for the layouts of up to nine cards. */
+static const game_info nine[9] = {
     {.title = "Loony Labyrinth"}, {.title = "Crystal Caliburn"}, {.title = "Jinni Zeala"},
     {.title = "MONSTER FAIR"},    {.title = "Mad Daedalus"},     {.title = "Golden Logres"},
-    {.title = "Angel Egg"},       {.title = "Tristan"}};
+    {.title = "Angel Egg"},       {.title = "FAIRY TOWER"},      {.title = "Tristan"}};
 
 TEST(picker_draws_six_cards_in_two_rows_of_three) {
     picker_entry e[6];
     for (int i = 0; i < 6; i++)
-        e[i] = (picker_entry){&eight[i], NULL};
+        e[i] = (picker_entry){&nine[i], NULL};
     e[5].art = solid_art(0, 0, 0xFF);
     picker_draw(e, 6, 5, screen);
     free(e[5].art);
@@ -227,7 +227,7 @@ TEST(picker_draws_six_cards_in_two_rows_of_three) {
 TEST(picker_draws_seven_cards_in_rows_of_four_and_three) {
     picker_entry e[7];
     for (int i = 0; i < 7; i++)
-        e[i] = (picker_entry){&eight[i], NULL};
+        e[i] = (picker_entry){&nine[i], NULL};
     e[0].art = solid_art(0xFF, 0, 0);
     e[6].art = solid_art(0, 0, 0xFF);
     picker_draw(e, 7, 6, screen);
@@ -270,19 +270,74 @@ TEST(picker_keys_move_across_and_between_rows_of_seven) {
 TEST(picker_draws_eight_cards_in_two_rows_of_four) {
     picker_entry e[8];
     for (int i = 0; i < 8; i++)
-        e[i] = (picker_entry){&eight[i], NULL};
+        e[i] = (picker_entry){&nine[i], NULL};
     e[7].art = solid_art(0, 0, 0xFF);
     picker_draw(e, 8, 7, screen);
     free(e[7].art);
     CHECK_EQ(px(12 + 100, 108 + 80)[1], 0x22);   /* the first, where it is with seven */
-    CHECK_EQ(px(12 + 100, 308 + 80)[1], 0x22);   /* the fifth, under the first: a full row */
+    CHECK_EQ(px(12 + 100, 308 + 80)[1], 0x22);   /* the fifth, under the first: no short row */
     CHECK_EQ(px(612 + 100, 308 + 80)[3], 0xFF);  /* the eighth card's art */
     CHECK_EQ(px(612 - 2, 400)[1], 0xFF);         /* gold border: the eighth is selected */
+    CHECK_EQ(px(200, 400)[1], 0);                /* black between the columns */
+    /* FAIRY TOWER (176 pixels) fits its column on one line. */
+    bool second_line = false;
+    for (int y = 472; y < 488; y++)
+        for (int x = 612; x < 612 + 176; x++)
+            second_line |= px(x, y)[1] != 0;
+    CHECK(!second_line);
     bool choose = false;
     CHECK_EQ(picker_key(8, 3, SDL_SCANCODE_DOWN, &choose), 7);
     CHECK_EQ(picker_key(8, 7, SDL_SCANCODE_UP, &choose), 3);
+    CHECK_EQ(picker_key(8, 7, SDL_SCANCODE_DOWN, &choose), 7);
     CHECK_EQ(picker_key(8, 7, SDL_SCANCODE_RIGHT, &choose), 7);
+    CHECK_EQ(picker_key(8, 3, SDL_SCANCODE_RIGHT, &choose), 4);
+    CHECK(!choose);
     CHECK_EQ(picker_hit(8, 612 + 5, 308 + 5), 7);
+    CHECK_EQ(picker_hit(8, 12 + 5, 308 + 5), 4);
+}
+
+TEST(picker_draws_nine_cards_in_three_rows_of_three) {
+    picker_entry e[9];
+    for (int i = 0; i < 9; i++)
+        e[i] = (picker_entry){&nine[i], NULL};
+    e[0].art = solid_art(0xFF, 0, 0);
+    e[8].art = solid_art(0, 0, 0xFF);
+    picker_draw(e, 9, 8, screen);
+    free(e[0].art);
+    free(e[8].art);
+    CHECK_EQ(px(64, 100)[1], 0xFF);               /* the first card's art, reduced */
+    CHECK_EQ(px(64 + 143, 100 + 107)[1], 0xFF);
+    CHECK_EQ(px(328 + 70, 248 + 50)[1], 0x22);    /* the fifth, in the middle */
+    CHECK_EQ(px(592 + 70, 396 + 50)[3], 0xFF);    /* the ninth card's art */
+    CHECK_EQ(px(592 - 2, 450)[1], 0xFF);          /* gold border: the ninth is selected */
+    CHECK_EQ(px(250, 150)[1], 0);                 /* black between the columns */
+    CHECK_EQ(px(64 + 70, 100 + 108 + 6)[1], 0);   /* and between a card and its name */
+    /* Every name fits its column on one line: CRYSTAL CALIBURN (256 pixels)
+       is the widest, and nothing is drawn under a name, where a second
+       line would start, before the next row's borders. */
+    bool second_line = false;
+    for (int row = 0; row < 3; row++)
+        for (int y = 218 + row * 148 + 16; y < 218 + row * 148 + 26; y++)
+            for (int x = 0; x < 800; x++)
+                second_line |= px(x, y)[1] != 0;
+    CHECK(!second_line);
+    /* The names of neighbouring cards leave black between them. */
+    bool gap_dark = true;
+    for (int y = 218; y < 234; y++)
+        for (int x = 64 + 72 + 120; x < 328 + 72 - 128; x++)
+            gap_dark &= px(x, y)[1] == 0;
+    CHECK(gap_dark);
+    bool choose = false;
+    CHECK_EQ(picker_key(9, 1, SDL_SCANCODE_DOWN, &choose), 4);
+    CHECK_EQ(picker_key(9, 5, SDL_SCANCODE_DOWN, &choose), 8);
+    CHECK_EQ(picker_key(9, 8, SDL_SCANCODE_DOWN, &choose), 8);
+    CHECK_EQ(picker_key(9, 7, SDL_SCANCODE_UP, &choose), 4);
+    CHECK_EQ(picker_key(9, 2, SDL_SCANCODE_RIGHT, &choose), 3);
+    CHECK(!choose);
+    CHECK_EQ(picker_hit(9, 592 + 5, 396 + 5), 8);
+    CHECK_EQ(picker_hit(9, 328 + 70, 366 + 8), 4); /* the name under a card counts */
+    CHECK_EQ(picker_hit(9, 328 + 70, 240), -1);    /* between the rows */
+    CHECK_EQ(picker_hit(9, 250, 150), -1);         /* between the columns */
 }
 
 /* A 128x128 icon, its left half opaque red and its right half clear. */
@@ -485,6 +540,24 @@ TEST(picker_art_for_mad_daedalus_is_its_icon) {
     CHECK_STR(got, "4561d7ee"); /* the icon shown in the five-game picker */
 }
 
+/* FAIRY TOWER is a bundle like Mad Daedalus: its card is appl.png. */
+TEST(picker_art_for_fairy_tower_is_its_icon) {
+    SKIP_UNLESS_FT();
+    char path[1200], err[512] = "";
+    snprintf(path, sizeof path, "%s/Contents/Resources/appl.png", test_ft_app());
+    uint8_t *art = malloc(PICKER_ART_W * PICKER_ART_H * 4);
+    bool ok = picker_load_icon(path, art, err, sizeof err);
+    const uint8_t *corner = art + ((size_t)5 * PICKER_ART_W + 5) * 4;
+    bool around_is_card = corner[1] == 0x22 && corner[2] == 0x22 && corner[3] == 0x22;
+    char got[16];
+    snprintf(got, sizeof got, "%08x", fnv1a32(art, PICKER_ART_W * PICKER_ART_H * 4));
+    free(art);
+    CHECK(ok);
+    CHECK_STR(err, "");
+    CHECK(around_is_card);
+    CHECK_STR(got, "7a6db75e"); /* the icon shown in the nine-game picker */
+}
+
 /* Tristan's PICT 800 is its credits, and it has no icns 128: its card is
    its title, PICT 900 (348x301), reduced to 332x288 and centered. */
 TEST(picker_art_for_tristan_is_its_title) {
@@ -502,7 +575,7 @@ TEST(picker_art_for_tristan_is_its_title) {
     CHECK_STR(err, "");
     CHECK(beside_is_card);
     CHECK(title_is_drawn);
-    CHECK_STR(got, "648c7523"); /* the title shown in the eight-game picker */
+    CHECK_STR(got, "648c7523"); /* the title shown in the nine-game picker */
 }
 
 /* An empty version 1 picture whose frame is w by h. */
