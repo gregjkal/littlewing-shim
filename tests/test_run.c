@@ -2595,8 +2595,10 @@ TEST(run_tristan_quits_from_its_own_menu) {
 
 /* Tristan's Register: "Enter your Key-Code" in Alert 901 (at (392, 238))
    opens DLOG 911, which the game shows with ShowWindow on its DialogRef.
-   A made-up key code, then Certify (at (494, 236)), ends at Alert 902, the
-   bad key alert, and nothing is saved in the game's folder. The frame is
+   A key code too short for the game's own length test (the unlock drops the
+   verdict, so a full 24 digits would certify), then Certify (at (494, 236)),
+   ends at Alert 902, the bad key alert, and nothing is saved in the game's
+   folder. The frame is
    the filled-in form, without the OK button DITL 911 keeps below the box. */
 TEST(run_tristan_refuses_a_made_up_key_code) {
     SKIP_UNLESS_TR();
@@ -2606,7 +2608,7 @@ TEST(run_tristan_refuses_a_made_up_key_code) {
     char out[32768];
     int status = run_script_in(test_tr_dir(),
                                "130 click 392 238\n200 type someone@example.com\n210 down tab\n212 up tab\n"
-                               "220 type 123456789012345678901234\n250 click 494 236\n",
+                               "220 type 1234-5678\n250 click 494 236\n",
                                ticks, shots, 1, out, sizeof out);
     unsetenv("LOONY_EXIT_AFTER");
     real_alerts = false;
@@ -2614,7 +2616,7 @@ TEST(run_tristan_refuses_a_made_up_key_code) {
     CHECK_CONTAINS(out, "loony: Alert 901: answered item 4 (Enter your Key-Code)");
     CHECK_CONTAINS(out, "loony: GetNewDialog 911");
     CHECK_CONTAINS(out, "loony: Alert 902: OK | Sorry, your license counld not be certified.");
-    CHECK_EQ(shots[0], 0x072C7724u); /* DLOG 911, filled in */
+    CHECK_EQ(shots[0], 0x972EAF93u); /* DLOG 911, filled in */
     char p[1200];
     snprintf(p, sizeof p, "%s/TRISTAN IE Registration", test_tr_dir());
     CHECK(access(p, F_OK) != 0);
