@@ -199,16 +199,16 @@ TEST(picker_keys_move_across_and_between_rows_of_five) {
     CHECK_EQ(picker_hit(5, 100, 400), -1);      /* beside the short row */
 }
 
-/* Seven games by title, for the layouts past the games in the table. */
-static const game_info seven[7] = {
+/* Eight games by title, for the layouts past the games in the table. */
+static const game_info eight[8] = {
     {.title = "Loony Labyrinth"}, {.title = "Crystal Caliburn"}, {.title = "Jinni Zeala"},
     {.title = "MONSTER FAIR"},    {.title = "Mad Daedalus"},     {.title = "Golden Logres"},
-    {.title = "Angel Egg"}};
+    {.title = "Angel Egg"},       {.title = "FAIRY TOWER"}};
 
 TEST(picker_draws_six_cards_in_two_rows_of_three) {
     picker_entry e[6];
     for (int i = 0; i < 6; i++)
-        e[i] = (picker_entry){&seven[i], NULL};
+        e[i] = (picker_entry){&eight[i], NULL};
     e[5].art = solid_art(0, 0, 0xFF);
     picker_draw(e, 6, 5, screen);
     free(e[5].art);
@@ -226,7 +226,7 @@ TEST(picker_draws_six_cards_in_two_rows_of_three) {
 TEST(picker_draws_seven_cards_in_rows_of_four_and_three) {
     picker_entry e[7];
     for (int i = 0; i < 7; i++)
-        e[i] = (picker_entry){&seven[i], NULL};
+        e[i] = (picker_entry){&eight[i], NULL};
     e[0].art = solid_art(0xFF, 0, 0);
     e[6].art = solid_art(0, 0, 0xFF);
     picker_draw(e, 7, 6, screen);
@@ -264,6 +264,34 @@ TEST(picker_keys_move_across_and_between_rows_of_seven) {
     CHECK_EQ(picker_hit(7, 612 + 175, 108 + 131), 3);
     CHECK_EQ(picker_hit(7, 312 + 88, 480), 5); /* a name's second line counts */
     CHECK_EQ(picker_hit(7, 50, 400), -1);       /* beside the short row */
+}
+
+TEST(picker_draws_eight_cards_in_two_rows_of_four) {
+    picker_entry e[8];
+    for (int i = 0; i < 8; i++)
+        e[i] = (picker_entry){&eight[i], NULL};
+    e[7].art = solid_art(0, 0, 0xFF);
+    picker_draw(e, 8, 7, screen);
+    free(e[7].art);
+    CHECK_EQ(px(12 + 100, 108 + 80)[1], 0x22);   /* the first, where it is with seven */
+    CHECK_EQ(px(12 + 100, 308 + 80)[1], 0x22);   /* the fifth, under the first: no short row */
+    CHECK_EQ(px(612 + 100, 308 + 80)[3], 0xFF);  /* the eighth card's art */
+    CHECK_EQ(px(612 - 2, 400)[1], 0xFF);         /* gold border: the eighth is selected */
+    CHECK_EQ(px(200, 400)[1], 0);                /* black between the columns */
+    /* FAIRY TOWER (176 pixels) fits its column on one line. */
+    bool second_line = false;
+    for (int y = 472; y < 488; y++)
+        for (int x = 612; x < 612 + 176; x++)
+            second_line |= px(x, y)[1] != 0;
+    CHECK(!second_line);
+    bool choose = false;
+    CHECK_EQ(picker_key(8, 3, SDL_SCANCODE_DOWN, &choose), 7);
+    CHECK_EQ(picker_key(8, 7, SDL_SCANCODE_UP, &choose), 3);
+    CHECK_EQ(picker_key(8, 7, SDL_SCANCODE_DOWN, &choose), 7);
+    CHECK_EQ(picker_key(8, 3, SDL_SCANCODE_RIGHT, &choose), 4);
+    CHECK(!choose);
+    CHECK_EQ(picker_hit(8, 612 + 5, 308 + 5), 7);
+    CHECK_EQ(picker_hit(8, 12 + 5, 308 + 5), 4);
 }
 
 /* A 128x128 icon, its left half opaque red and its right half clear. */
@@ -464,6 +492,24 @@ TEST(picker_art_for_mad_daedalus_is_its_icon) {
     CHECK_STR(err, "");
     CHECK(around_is_card);
     CHECK_STR(got, "4561d7ee"); /* the icon shown in the five-game picker */
+}
+
+/* FAIRY TOWER is a bundle like Mad Daedalus: its card is appl.png. */
+TEST(picker_art_for_fairy_tower_is_its_icon) {
+    SKIP_UNLESS_FT();
+    char path[1200], err[512] = "";
+    snprintf(path, sizeof path, "%s/Contents/Resources/appl.png", test_ft_app());
+    uint8_t *art = malloc(PICKER_ART_W * PICKER_ART_H * 4);
+    bool ok = picker_load_icon(path, art, err, sizeof err);
+    const uint8_t *corner = art + ((size_t)5 * PICKER_ART_W + 5) * 4;
+    bool around_is_card = corner[1] == 0x22 && corner[2] == 0x22 && corner[3] == 0x22;
+    char got[16];
+    snprintf(got, sizeof got, "%08x", fnv1a32(art, PICKER_ART_W * PICKER_ART_H * 4));
+    free(art);
+    CHECK(ok);
+    CHECK_STR(err, "");
+    CHECK(around_is_card);
+    CHECK_STR(got, "7a6db75e"); /* the icon shown in the eight-game picker */
 }
 
 /* Golden Logres is a bundle without appl.png: its card is the 128x128

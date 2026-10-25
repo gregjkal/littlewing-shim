@@ -9,14 +9,15 @@
    installed: each game's title picture (PICT 800 in its own resource fork,
    read from the user's copy) on a card, its name under it, and the
    selection marked in gold. A bundle game (MONSTER FAIR, Mad Daedalus,
-   Golden Logres, Angel Egg) has no title picture the shim reads: its card
-   shows its icon centered, appl.png or, without one, the 128x128 image in
-   app.icns. Neither does a classic game without PICT 800 (Jinni Zeala),
-   whose card shows the 128x128 icon in its resource fork's icns 128. Two
-   games get two large cards side by side; three get three smaller ones
-   (240x180) in a row; four get two rows of two (224x168), five and six
-   two rows of three, and seven a row of four over three (176x132), each
-   row centered, the art reduced to fit. A name wider than its column
+   Golden Logres, Angel Egg, FAIRY TOWER) has no title picture the shim
+   reads: its card shows its icon centered, appl.png or, without one, the
+   128x128 image in app.icns. Neither does a classic game without PICT 800
+   (Jinni Zeala), whose card shows the 128x128 icon in its resource fork's
+   icns 128. Two games get two large cards side by side; three get three
+   smaller ones (240x180) in a row; four get two rows of two (224x168),
+   five and six two rows of three, seven a row of four over three and
+   eight two rows of four (176x132), each row centered, the art reduced to
+   fit. A name wider than its column
    (card and gap) breaks onto two lines at a space. This file draws and reads input; picker_run (Task 5) shows it.
    Pixels here are QuickDraw 32-bit: big-endian xRGB. */
 
@@ -24,7 +25,7 @@
 #define PICKER_H 600
 #define PICKER_ART_W 384 /* PICT 800 (512x384) at 3/4 */
 #define PICKER_ART_H 288
-#define PICKER_MAX 7     /* the layouts fit two to seven games */
+#define PICKER_MAX 8     /* the layouts fit two to eight games */
 
 typedef struct {
     const game_info *game;

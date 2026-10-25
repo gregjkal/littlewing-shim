@@ -33,8 +33,8 @@ static void restore_apps_dir(void) {
         unsetenv("LOONY_APPS_DIR");
 }
 
-TEST(game_table_knows_seven_games) {
-    CHECK_EQ(game_count(), 7);
+TEST(game_table_knows_eight_games) {
+    CHECK_EQ(game_count(), 8);
     CHECK_STR(game_at(0)->id, "loony-labyrinth");
     CHECK_STR(game_at(1)->id, "crystal-caliburn");
     CHECK_STR(game_at(2)->id, "monster-fair");
@@ -42,7 +42,8 @@ TEST(game_table_knows_seven_games) {
     CHECK_STR(game_at(4)->id, "mad-daedalus");
     CHECK_STR(game_at(5)->id, "angel-egg");
     CHECK_STR(game_at(6)->id, "golden-logres");
-    CHECK(game_at(7) == NULL);
+    CHECK_STR(game_at(7)->id, "fairy-tower");
+    CHECK(game_at(8) == NULL);
     CHECK_EQ(game_at(0)->kind, GAME_PEF_FOLDER);
     CHECK_EQ(game_at(1)->kind, GAME_PEF_FOLDER);
     const game_info *jz = game_by_id("jinni-zeala");
@@ -76,6 +77,13 @@ TEST(game_table_knows_seven_games) {
     CHECK_STR(gl->exe, "Contents/MacOS/Golden Logres");
     CHECK_EQ(gl->screen_width, 1024);
     CHECK_EQ(gl->screen_height, 768);
+    const game_info *ft = game_by_id("fairy-tower");
+    CHECK_EQ(ft->kind, GAME_MACHO_BUNDLE);
+    CHECK_STR(ft->title, "FAIRY TOWER");
+    CHECK_STR(ft->folder_name, "FAIRY TOWER.app");
+    CHECK_STR(ft->exe, "Contents/MacOS/FAIRY TOWER");
+    CHECK_EQ(ft->screen_width, 1024);
+    CHECK_EQ(ft->screen_height, 768);
     CHECK_EQ(mf->screen_width, 800);
     CHECK_EQ(mf->screen_height, 600);
     const game_info *cc = game_by_id("crystal-caliburn");

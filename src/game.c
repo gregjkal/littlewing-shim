@@ -28,6 +28,8 @@ static const game_info games[] = {
     /* It takes the screen at 1024x768 itself (BeginFullScreen). */
     {"golden-logres", "Golden Logres", "Golden Logres.app", "Contents/MacOS/Golden Logres",
      GAME_MACHO_BUNDLE, 1024, 768},
+    {"fairy-tower", "FAIRY TOWER", "FAIRY TOWER.app", "Contents/MacOS/FAIRY TOWER",
+     GAME_MACHO_BUNDLE, 1024, 768},
 };
 #define NGAMES (sizeof games / sizeof games[0])
 
