@@ -46,7 +46,7 @@
    centered under the first. */
 #define CARD5_GAP 56
 /* Seven or eight cards: smaller again, a row of four over a row of three
-   or four; a name wider than its column goes on two lines. */
+   or four; a name wider than its card goes on two lines. */
 #define ART7_W 176
 #define ART7_H 132
 #define CARD7_GAP 24
@@ -90,10 +90,11 @@ static int name_top(int n, int i) {
 }
 
 /* The widest a name may be before it takes two lines: a column, one card
-   and the gap beside it. */
+   and the gap beside it, or with four across, where a name that wide
+   would touch its neighbour's, the card alone. */
 static int name_room(int n) {
     qd_rect a = card(n, 0), b = card(n, 1);
-    return b.left - a.left;
+    return n >= 7 ? rect_w(a) : b.left - a.left;
 }
 
 /* Where name (scale 2) breaks into two lines under a column room pixels

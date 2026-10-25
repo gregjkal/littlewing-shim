@@ -3179,7 +3179,7 @@ TEST(run_the_picker_shows_seven_games_and_starts_golden_logres) {
     CHECK_CONTAINS(out, "loony: sending the quit Apple Event");
     CHECK_CONTAINS(out, "loony: main returned 0");
     CHECK(!strstr(out, "back to the picker"));
-    CHECK_STR(got, "2e5ea7c3");
+    CHECK_STR(got, "3d2dec68");
 }
 
 /* Eight games: two rows of four, Tristan's card its title, PICT 900.
@@ -3219,7 +3219,7 @@ TEST(run_the_picker_shows_eight_games_and_starts_tristan) {
     CHECK_CONTAINS(out, "loony: sending the quit as Cmd-Q");
     CHECK_CONTAINS(out, "loony: ExitToShell");
     CHECK(!strstr(out, "back to the picker"));
-    CHECK_STR(got, "0274622d"); /* the frame with Loony Labyrinth selected */
+    CHECK_STR(got, "ed36166d"); /* the frame with Loony Labyrinth selected */
 }
 
 /* Review Focus 1: the picker remembers the last game in the save root,

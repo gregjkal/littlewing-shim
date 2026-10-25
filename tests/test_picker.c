@@ -240,17 +240,17 @@ TEST(picker_draws_seven_cards_in_rows_of_four_and_three) {
     CHECK_EQ(px(512 - 2, 400)[1], 0xFF);          /* gold border: the seventh is selected */
     CHECK_EQ(px(200, 200)[1], 0);                 /* black between the columns */
     CHECK_EQ(px(50, 400)[1], 0);                  /* and beside the short row */
-    /* MAD DAEDALUS (192 pixels) fits its 200-pixel column on one line, so
-       nothing is drawn on a second; GOLDEN LOGRES (208) takes two. */
-    bool second_line_md = false, second_line_gl = false;
-    for (int y = 472; y < 488; y++)
-        for (int x = 112; x < 112 + 176; x++)
-            second_line_md |= px(x, y)[1] != 0;
-    for (int y = 472; y < 488; y++)
-        for (int x = 312; x < 312 + 176; x++)
-            second_line_gl |= px(x, y)[1] != 0;
-    CHECK(!second_line_md);
-    CHECK(second_line_gl);
+    /* ANGEL EGG (144 pixels) fits its 176-pixel card on one line, so
+       nothing is drawn on a second; GOLDEN LOGRES (208) takes two, and so
+       does MAD DAEDALUS (192), which would reach its neighbours on one. */
+    bool second_line[3] = {false, false, false}; /* MAD DAEDALUS, GOLDEN LOGRES, ANGEL EGG */
+    for (int c = 0; c < 3; c++)
+        for (int y = 472; y < 488; y++)
+            for (int x = 112 + c * 200; x < 112 + c * 200 + 176; x++)
+                second_line[c] |= px(x, y)[1] != 0;
+    CHECK(second_line[0]);
+    CHECK(second_line[1]);
+    CHECK(!second_line[2]);
 }
 
 TEST(picker_keys_move_across_and_between_rows_of_seven) {

@@ -18,8 +18,10 @@
    games get two large cards side by side; three get three smaller ones
    (240x180) in a row; four get two rows of two (224x168), five and six
    two rows of three, seven a row of four over three and eight two rows
-   of four (176x132), each row centered, the art reduced to fit. A name wider than its column
-   (card and gap) breaks onto two lines at a space. This file draws and reads input; picker_run (Task 5) shows it.
+   of four (176x132), each row centered, the art reduced to fit. A name
+   wider than its column (card and gap), or with four across wider than
+   its card, breaks onto two lines at a space. This file draws and reads
+   input; picker_run (Task 5) shows it.
    Pixels here are QuickDraw 32-bit: big-endian xRGB. */
 
 #define PICKER_W 800
