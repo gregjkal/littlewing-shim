@@ -28,6 +28,7 @@
 #define AU_INVALID_ELEMENT      (-10877)
 #define AU_INVALID_VALUE        (-10851)
 #define AUGRAPH_NODE_NOT_FOUND  (-10860)
+#define AU_FORMAT_NOT_SUPPORTED (-10868)
 #define FILE_UNSUPPORTED_TYPE   FOURCC('t', 'y', 'p', '?')
 #define FILE_UNSUPPORTED_FORMAT FOURCC('f', 'm', 't', '?')
 #define FILE_UNSUPPORTED_PROP   FOURCC('p', 't', 'y', '?')
@@ -41,6 +42,7 @@
 #define AU_PROP_ELEMENT_COUNT   11
 #define AU_PROP_RENDER_CALLBACK 23
 #define AU_SCOPE_INPUT          1
+#define AU_SCOPE_OUTPUT         2
 
 /* An AudioStreamBasicDescription: mSampleRate (a double), then mFormatID,
    mFormatFlags, mBytesPerPacket, mFramesPerPacket, mBytesPerFrame,
@@ -56,6 +58,11 @@ typedef struct {
 
 /* The mixer's input format: signed integer, big-endian, packed. */
 static const asbd mixer_format = {MIX_RATE, FOURCC('l', 'p', 'c', 'm'), 0xE, 4, 1, 4, 2, 16};
+/* The other format the mixer's output (the output's input) may be set to:
+   CoreAudio's canonical one, 32-bit float, big-endian, packed and not
+   interleaved. Only sound.c ever sees what the mixer puts out, so either
+   is taken and nothing else changes. */
+static const asbd float_format = {MIX_RATE, FOURCC('l', 'p', 'c', 'm'), 0x2B, 4, 1, 4, 2, 32};
 
 /* The guest scratch block the mixer and the converters pass the game's
    callbacks, allocated when the graph is initialized. */
@@ -97,6 +104,7 @@ static struct {
         uint32_t left_n, left_pos;
     } convs[MAX_CONVS];
     bool warned_prop;
+    bool out_float; /* the mixer's output was set to float_format */
 } CA;
 
 /* A snapshot's walk (snapshot.h): all of it is the game's; the counts and
@@ -149,6 +157,12 @@ static asbd read_asbd(uint32_t p) {
     for (uint32_t i = 0; i < 7; i++)
         *w[i] = gm_r32(p + 8 + 4 * i);
     return a;
+}
+
+static bool same_asbd(const asbd *a, const asbd *b) {
+    return a->rate == b->rate && a->format == b->format && a->flags == b->flags &&
+           a->bytes_per_packet == b->bytes_per_packet && a->frames_per_packet == b->frames_per_packet &&
+           a->bytes_per_frame == b->bytes_per_frame && a->channels == b->channels && a->bits == b->bits;
 }
 
 static asbd ima4_format(uint32_t nch) {
@@ -285,8 +299,20 @@ static void unsupported_property(const char *call, uint32_t unit, uint32_t prop,
     reply(AU_INVALID_PROPERTY);
 }
 
+/* Whether a unit's scope has a stream format: 1 for the mixer's inputs, 2
+   for the mixer's output and the output's input, which are one stream. */
+static int stream_between(uint32_t u, uint32_t scope) {
+    if (u == CA_UNIT_MIXER && scope == AU_SCOPE_INPUT)
+        return 1;
+    if ((u == CA_UNIT_MIXER && scope == AU_SCOPE_OUTPUT) || (u == CA_UNIT_OUTPUT && scope == AU_SCOPE_INPUT))
+        return 2;
+    return 0;
+}
+
 /* AudioUnitSetProperty(unit, id, scope, element, const void *data, size):
-   the mixer's input count and its inputs' render callbacks. */
+   the mixer's input count, its inputs' render callbacks, and the stream
+   formats: the mixer's inputs take only its own format, the stream from
+   the mixer to the output that or float_format. */
 static void h_audio_unit_set_property(void) {
     uint32_t u = trap_arg(0), prop = trap_arg(1), scope = trap_arg(2), elem = trap_arg(3);
     uint32_t data = trap_arg(4), size = trap_arg(5);
@@ -314,21 +340,41 @@ static void h_audio_unit_set_property(void) {
         reply(NO_ERR);
         return;
     }
+    if (prop == AU_PROP_STREAM_FORMAT && stream_between(u, scope) && size >= ASBD_SIZE) {
+        asbd a = read_asbd(data);
+        bool between = stream_between(u, scope) == 2;
+        if (same_asbd(&a, &mixer_format) || (between && same_asbd(&a, &float_format))) {
+            if (between)
+                CA.out_float = same_asbd(&a, &float_format);
+            reply(NO_ERR);
+            return;
+        }
+        log_msg("coreaudio: a stream format of %u Hz '%.4s' flags 0x%x, %u bytes a packet, %u "
+                "frames a packet, %u bytes a frame, %u channels of %u bits on the %s is not "
+                "the mixer's",
+                a.rate, (const char *)gm_ptr(data + 8, 4), a.flags, a.bytes_per_packet,
+                a.frames_per_packet, a.bytes_per_frame, a.channels, a.bits,
+                u == CA_UNIT_MIXER ? "mixer" : "output");
+        reply(AU_FORMAT_NOT_SUPPORTED);
+        return;
+    }
     unsupported_property("AudioUnitSetProperty", u, prop, scope);
 }
 
 /* AudioUnitGetProperty(unit, id, scope, element, void *outData, UInt32
-   *ioDataSize): the mixer's stream format. */
+   *ioDataSize): a stream format, the mixer's own unless the stream from
+   the mixer to the output was set to float_format. */
 static void h_audio_unit_get_property(void) {
     uint32_t u = trap_arg(0), prop = trap_arg(1), scope = trap_arg(2), out = trap_arg(4),
              size = trap_arg(5);
     need_unit("AudioUnitGetProperty", u);
-    if (u == CA_UNIT_MIXER && prop == AU_PROP_STREAM_FORMAT) {
+    int between = stream_between(u, scope);
+    if (prop == AU_PROP_STREAM_FORMAT && between) {
         if (gm_r32(size) < ASBD_SIZE) {
             reply(PARAM_ERR);
             return;
         }
-        write_asbd(out, &mixer_format);
+        write_asbd(out, between == 2 && CA.out_float ? &float_format : &mixer_format);
         gm_w32(size, ASBD_SIZE);
         reply(NO_ERR);
         return;
@@ -586,12 +632,6 @@ static int need_conv(const char *call, uint32_t c) {
     if (c < CA_CONV_BASE || (c & 15u) || i >= MAX_CONVS || !CA.convs[i].used)
         trap_crash("%s: 0x%08x is not an AudioConverter", call, c);
     return (int)i;
-}
-
-static bool same_asbd(const asbd *a, const asbd *b) {
-    return a->rate == b->rate && a->format == b->format && a->flags == b->flags &&
-           a->bytes_per_packet == b->bytes_per_packet && a->frames_per_packet == b->frames_per_packet &&
-           a->bytes_per_frame == b->bytes_per_frame && a->channels == b->channels && a->bits == b->bits;
 }
 
 /* AudioConverterNew(const ASBD *source, const ASBD *dest, AudioConverterRef

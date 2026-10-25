@@ -189,6 +189,8 @@ static uint32_t desc(uint32_t type, uint32_t sub) {
     return d;
 }
 
+static uint32_t output_unit; /* the default output of the last graph built */
+
 /* The game's graph: a mixer of ninputs inputs into the default output.
    Returns the mixer unit. */
 static uint32_t build_graph(uint32_t ninputs) {
@@ -203,6 +205,8 @@ static uint32_t build_graph(uint32_t ninputs) {
     must(call_import("AUGraphConnectNodeInput", 5, g, gm_r32(mix_node), 0, gm_r32(out_node), 0), "AUGraphConnectNodeInput");
     must(call_import("AUGraphGetNodeInfo", 6, g, gm_r32(mix_node), 0, 0, 0, unit), "AUGraphGetNodeInfo");
     uint32_t mixer = gm_r32(unit);
+    must(call_import("AUGraphGetNodeInfo", 6, g, gm_r32(out_node), 0, 0, 0, unit), "AUGraphGetNodeInfo");
+    output_unit = gm_r32(unit);
     gm_w32(count, ninputs);
     must(call_import("AudioUnitSetProperty", 6, mixer, 11, 1, 0, count, 4), "AudioUnitSetProperty");
     must(call_import("AUGraphInitialize", 1, g), "AUGraphInitialize");
@@ -235,6 +239,42 @@ TEST(coreaudio_mixer_takes_16_bit_big_endian_stereo) {
     CHECK_EQ(call_import("AudioUnitGetProperty", 6, mixer, 8, 1, 0, asbd, size), (uint32_t)-50);
     CHECK_EQ(call_import("AudioUnitGetProperty", 6, mixer, 1234, 1, 0, asbd, size), (uint32_t)-10879);
     CHECK_EQ(render_callback(mixer, 4, "RenderA"), (uint32_t)-10877); /* past the inputs */
+}
+
+/* FAIRY TOWER reads the output's input format, makes it CoreAudio's
+   canonical 32-bit float (big-endian, packed, not interleaved), and sets
+   it there and on the mixer's output: the one stream between them. The
+   mixer's inputs keep its own format, and it still mixes them. */
+TEST(coreaudio_stream_to_the_output_may_be_float) {
+    setup();
+    uint32_t mixer = build_graph(1);
+    uint32_t asbd = scratch(40), size = word();
+    gm_w32(size, 40);
+    CHECK_EQ(call_import("AudioUnitGetProperty", 6, output_unit, 8, 1, 0, asbd, size), 0);
+    CHECK_EQ(gm_r32(asbd + 12), 0xE); /* the mixer's until it is set */
+    CHECK_EQ(gm_r32(asbd + 32), 16);
+    gm_w32(asbd + 12, 0x2B); /* float, big-endian, packed, non-interleaved */
+    gm_w32(asbd + 32, 32);
+    CHECK_EQ(call_import("AudioUnitSetProperty", 6, output_unit, 8, 1, 0, asbd, 40), 0);
+    CHECK_EQ(call_import("AudioUnitSetProperty", 6, mixer, 8, 2, 0, asbd, 40), 0);
+    CHECK_EQ(call_import("AudioUnitSetProperty", 6, mixer, 8, 1, 0, asbd, 40), (uint32_t)-10868);
+    uint32_t back = scratch(40);
+    CHECK_EQ(call_import("AudioUnitGetProperty", 6, output_unit, 8, 1, 0, back, size), 0);
+    CHECK_EQ(gm_r32(back + 12), 0x2B);
+    CHECK_EQ(gm_r32(back + 32), 32);
+    CHECK_EQ(call_import("AudioUnitGetProperty", 6, mixer, 8, 2, 0, back, size), 0);
+    CHECK_EQ(gm_r32(back + 12), 0x2B);
+    CHECK_EQ(call_import("AudioUnitGetProperty", 6, mixer, 8, 1, 0, back, size), 0);
+    CHECK_EQ(gm_r32(back + 12), 0xE); /* the inputs are still the mixer's own */
+    /* Any other format is refused, and the output's other scope has none. */
+    gm_w32(asbd + 28, 1); /* mono */
+    CHECK_EQ(call_import("AudioUnitSetProperty", 6, output_unit, 8, 1, 0, asbd, 40), (uint32_t)-10868);
+    CHECK_EQ(call_import("AudioUnitGetProperty", 6, output_unit, 8, 2, 0, back, size), (uint32_t)-10879);
+    CHECK_EQ(render_callback(mixer, 0, "RenderA"), 0);
+    int16_t out[2 * 4] = {0};
+    coreaudio_render(out, 4);
+    CHECK_EQ(out[0], 1000);
+    CHECK_EQ(out[1], -1000);
 }
 
 TEST(coreaudio_mixer_sums_the_inputs_callbacks_a_slice_at_a_time) {
