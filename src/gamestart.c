@@ -5,8 +5,6 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <limits.h>
-#include <mach-o/dyld.h>
-#include <mach-o/loader.h>
 #include <mach/mach.h>
 #include <pthread/spawn.h>
 #include <errno.h>
@@ -34,16 +32,18 @@
 #include "util.h"
 
 /* The section's header, all little-endian: magic and version (32 bits
-   each), the build's UUID (16 bytes), the recording's identity (32), the
+   each), the snapshot's key (snapshot_layout and
+   GAMESTART_SNAPSHOT_VERSION, 32 bits each), the recording's identity (32), the
    baseline's clock and trap entry (64 bits each) and its hash (32 bytes),
    the game's start's clock and trap entry (64 bits each), the resources
    left out (a count, 32 bits, then for each its index in the fork, its
    guest address and its length, 32 bits each), the snapshot
    (snapshot_encode's bytes, after their length, 64 bits). Version 1
    ended in an HMAC under the install's own key, as only that install's
-   were used. */
+   were used; version 2 had the build's UUID (LC_UUID) in place of the
+   key, so every build ignored every other build's. */
 #define SECTION_MAGIC 0x4C574753u /* 'LWGS' */
-#define SECTION_VERSION 2u
+#define SECTION_VERSION 3u
 #define HASH_LEN CC_SHA256_DIGEST_LENGTH
 
 typedef struct {
@@ -52,7 +52,8 @@ typedef struct {
 
 /* A section, parsed; its refills and body point into the bytes parsed. */
 typedef struct {
-    uint8_t build[16], identity[HASH_LEN], base_hash[HASH_LEN];
+    uint32_t layout, version;
+    uint8_t identity[HASH_LEN], base_hash[HASH_LEN];
     uint64_t base_clock, base_entries, start_clock, start_entries;
     uint32_t nrefills;
     const uint8_t *refills; /* nrefills * 12 bytes */
@@ -71,6 +72,7 @@ static struct {
     uint64_t base_clock, base_entries;
     snapshot *loaded;   /* verifying: the snapshot decoded */
     uint64_t start_entries;
+    bool used;          /* the replay went to the game's start from the recording's snapshot */
 } G = {.limit_us = UINT64_MAX};
 
 static double secs(uint64_t us) { return (double)us / 1e6; }
@@ -78,23 +80,6 @@ static double secs(uint64_t us) { return (double)us / 1e6; }
 static double process_start; /* wall_seconds() before main */
 
 __attribute__((constructor)) static void note_process_start(void) { process_start = wall_seconds(); }
-
-/* This build's UUID (LC_UUID), or zeros. */
-static void build_id(uint8_t out[16]) {
-    memset(out, 0, 16);
-    const struct mach_header_64 *h = (const struct mach_header_64 *)_dyld_get_image_header(0);
-    if (!h || h->magic != MH_MAGIC_64)
-        return;
-    const uint8_t *p = (const uint8_t *)(h + 1);
-    for (uint32_t i = 0; i < h->ncmds; i++) {
-        const struct load_command *lc = (const struct load_command *)p;
-        if (lc->cmd == LC_UUID) {
-            memcpy(out, ((const struct uuid_command *)lc)->uuid, 16);
-            return;
-        }
-        p += lc->cmdsize;
-    }
-}
 
 typedef struct {
     uint32_t addr, len;
@@ -236,14 +221,15 @@ static uint64_t le(const uint8_t *p, int bytes) {
 /* Parses the section in [p, p + len) into s. False, with why, if it isn't
    one this version reads. */
 static bool parse(const uint8_t *p, size_t len, section *s, char *why, size_t cap) {
-    size_t fixed = 8 + 16 + HASH_LEN + 16 + HASH_LEN + 16 + 4;
+    size_t fixed = 8 + 8 + HASH_LEN + 16 + HASH_LEN + 16 + 4;
     if (len < fixed + 8 || le(p, 4) != SECTION_MAGIC || le(p + 4, 4) != SECTION_VERSION) {
         snprintf(why, cap, "it isn't one this version of LittleWing reads");
         return false;
     }
     const uint8_t *q = p + 8;
-    memcpy(s->build, q, 16);
-    q += 16;
+    s->layout = (uint32_t)le(q, 4);
+    s->version = (uint32_t)le(q + 4, 4);
+    q += 8;
     memcpy(s->identity, q, HASH_LEN);
     q += HASH_LEN;
     s->base_clock = le(q, 8);
@@ -274,13 +260,14 @@ static bool parse(const uint8_t *p, size_t len, section *s, char *why, size_t ca
     return true;
 }
 
-/* Whether s was taken by this build, of the recording whose identity is
-   identity (replay_identity); if not, why. */
+/* Whether s was taken by a build whose snapshots this one reads, of the
+   recording whose identity is identity (replay_identity); if not, why. */
 static bool same_recording(const section *s, const uint8_t identity[HASH_LEN], char *why, size_t cap) {
-    uint8_t build[16];
-    build_id(build);
-    if (memcmp(build, s->build, 16) != 0) {
-        snprintf(why, cap, "it was taken by another build of LittleWing");
+    if (s->layout != snapshot_layout() || s->version != GAMESTART_SNAPSHOT_VERSION) {
+        snprintf(why, cap,
+                 "it was taken by a version of LittleWing whose snapshots differ (key %08x "
+                 "version %u, not %08x version %u)",
+                 s->layout, s->version, snapshot_layout(), GAMESTART_SNAPSHOT_VERSION);
         return false;
     }
     if (memcmp(identity, s->identity, HASH_LEN) != 0) {
@@ -377,6 +364,7 @@ static void at_baseline(uint32_t index) {
                     "%.3f s after the process started (decoded in %.1f ms)",
                     secs(s.start_clock), secs(G.base_clock), wall_seconds() - process_start,
                     (wall_seconds() - t0) * 1000);
+            G.used = true;
             done();
             seek_enter(snap);
         }
@@ -447,10 +435,10 @@ static void at_start(uint32_t index) {
     buf b = {0};
     add_le(&b, SECTION_MAGIC, 4);
     add_le(&b, SECTION_VERSION, 4);
-    uint8_t build[16], identity[HASH_LEN];
-    build_id(build);
+    uint8_t identity[HASH_LEN];
     replay_identity(identity);
-    add(&b, build, 16);
+    add_le(&b, snapshot_layout(), 4);
+    add_le(&b, GAMESTART_SNAPSHOT_VERSION, 4);
     add(&b, identity, HASH_LEN);
     add_le(&b, G.base_clock, 8);
     add_le(&b, G.base_entries, 8);
@@ -590,6 +578,16 @@ void gamestart_limit(uint64_t clock_us) {
 }
 
 void gamestart_memory_hash(uint8_t out[HASH_LEN]) { memory_hash(out); }
+
+bool gamestart_drop(void) {
+    if (!G.used)
+        return false;
+    G.used = false;
+    log_msg("gamestart: the replay went out of step after going to the game's start from the "
+            "recording's snapshot, so the snapshot is dropped, for a replay from launch to take "
+            "it again (a change to what a snapshot holds needs GAMESTART_SNAPSHOT_VERSION bumped)");
+    return replay_set_snapshot(NULL, 0);
+}
 
 bool gamestart_in_file(const char *path) {
     uint8_t *section, identity[HASH_LEN];

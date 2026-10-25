@@ -217,6 +217,8 @@ void replay_reset(void) {
 
 static uint32_t tick(void) { return (uint32_t)(R.clock_ms * 60 / 1000); }
 
+static void (*retry)(void); /* replay_set_retry's */
+
 _Noreturn void replay_desync(const char *fmt, ...) {
     char msg[512];
     va_list ap;
@@ -224,6 +226,8 @@ _Noreturn void replay_desync(const char *fmt, ...) {
     vsnprintf(msg, sizeof msg, fmt, ap);
     va_end(ap);
     log_msg("replay: desync at step %llu (tick %u): %s", (unsigned long long)R.step, tick(), msg);
+    if (retry)
+        retry();
     R.mode = OFF; /* nothing more to report at exit */
     R.desynced = true;
     if (R.desync)
@@ -234,6 +238,7 @@ _Noreturn void replay_desync(const char *fmt, ...) {
 void replay_set_pace(void (*fn)(uint64_t clock_us)) { R.pace = fn; }
 void replay_set_end(void (*fn)(void)) { R.end = fn; }
 void replay_set_desync(void (*fn)(const char *msg)) { R.desync = fn; }
+void replay_set_retry(void (*fn)(void)) { retry = fn; }
 
 bool replay_desynced(void) { return R.desynced; }
 bool replay_reached_end(void) { return R.reached_end; }
@@ -1056,7 +1061,7 @@ bool replay_set_snapshot(const uint8_t *section, size_t len) {
         log_msg("replay: the recording has no end record, so no snapshot is kept in it");
         return false;
     }
-    if (holds_license(section, len, &R.h)) {
+    if (section && holds_license(section, len, &R.h)) {
         log_msg("replay: the snapshot of the game's start holds the license, so it isn't kept");
         return false;
     }
@@ -1091,7 +1096,7 @@ bool replay_set_snapshot(const uint8_t *section, size_t len) {
               gzwrite(f, R.data + 9, (unsigned)(R.records_at - 9)) == (int)(R.records_at - 9) &&
               gzwrite(f, R.data + R.records_at, (unsigned)(R.in.len - R.records_at)) ==
                   (int)(R.in.len - R.records_at) &&
-              write_section(f, section, len);
+              (!section || write_section(f, section, len));
     if (f ? gzclose(f) != Z_OK : close(fd) != 0)
         ok = false;
     struct timespec times[2] = {st.st_atimespec, st.st_mtimespec};

@@ -46,7 +46,7 @@ file:
 | Angel Egg | `/Applications/Angel Egg.app` | `Contents/MacOS/Angel Egg` | the Mac OS X version, 3.0.1 |
 | Golden Logres | `/Applications/Golden Logres.app` | `Contents/MacOS/Golden Logres` | the Mac OS X version, 3.0.4 |
 | FAIRY TOWER | `/Applications/FAIRY TOWER.app` | `Contents/MacOS/FAIRY TOWER` | the Mac OS X version, 1.1.7 |
-| Tristan | `/Applications/TRISTAN IE` | `TRISTAN IE 2.5.1` | the Mac version, 2.5.1 (a demo: no key code is known) |
+| Tristan | `/Applications/TRISTAN IE` | `TRISTAN IE 2.5.1` | the Mac version, 2.5.1 |
 
 To get a game, download it from LittleWing's [download
 page](http://www.littlewingpinball.com/doc/en/downloads/index.html), open the
@@ -413,11 +413,16 @@ unseen, and keeps the snapshot. The snapshot holds what changed since a
 point shortly after launch that every replay of the file reaches by
 itself, less the game's own sounds and art, which come from your copy of
 the game, and never your registration. A snapshot works on any Mac with
-the same copy of the game and the same version of LittleWing, whoever's
-registration it has, so a shared replay carries its snapshot (below). One
-taken by another version of LittleWing, or that doesn't fit (another copy
-of the game, a damaged file), is ignored with a line in the log saying
-why: the replay plays from launch and takes it again. A snapshot is the
+the same copy of the game, whoever's registration it has, so a shared
+replay carries its snapshot (below), and it keeps working after an update
+to LittleWing unless that update changed what a snapshot holds. One taken
+by a version whose snapshots differ, or that doesn't fit (another copy of
+the game, a damaged file), is ignored with a line in the log saying why:
+the replay plays from launch and takes it again. If a replay that started
+from a snapshot goes out of step with the recording, the snapshot is
+dropped and the replay starts again from launch, by itself, which takes
+it again (an export fails instead, and the next export plays from
+launch). A snapshot is the
 state of the whole emulator, so one that would change the game's code, or
 run anything but the game's own code, is refused the same way. A game that
 starts within 20 seconds of launch gets none, and neither does a recording

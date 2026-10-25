@@ -106,6 +106,16 @@ uint8_t *snapshot_encode(const snapshot *s, const snapshot *base, const snapshot
    size. */
 snapshot *snapshot_decode(const uint8_t *data, size_t len, char *err, size_t errlen);
 
+/* A hash of what decides how this build lays a snapshot out: the
+   encoding's version, the module state's, and the inventory's layout (its
+   blocks' names and struct sizes, in order). An encoding from a build
+   with another can't be put back here: putting its module state back
+   would fail hard. It doesn't see a change that keeps every size, such as
+   a walk listing other fields or a field's meaning changing, so a
+   recording's snapshot is also keyed to GAMESTART_SNAPSHOT_VERSION
+   (gamestart.h). */
+uint32_t snapshot_layout(void);
+
 /* For a snapshot decoded from a file another install may have written
    (gamestart.h): whether it brings the emulator data and register values
    alone, never code. Its guest memory must be the same as now in the

@@ -31,8 +31,8 @@
    put back. The module state never holds the license
    (cf_keep_out_of_snapshots), and a snapshot whose guest memory holds it
    where it changed since the baseline isn't kept. The section's header
-   says which build of LittleWing took it (the UUID the linker gave the
-   program), which recording it is of (replay_identity), the baseline's
+   says how the build that took it lays snapshots out (Which builds),
+   which recording it is of (replay_identity), the baseline's
    clock, trap entry and a SHA-256 of its guest memory (every page that
    isn't zeros, with its offset, the license blanked: below), and the
    game's start's clock and trap entry.
@@ -47,6 +47,28 @@
    baseline but saved registers and zeros. So a recording's baseline hashes
    the same under any license, and a shared copy's snapshot fits the
    recipient's replay.
+
+   Which builds. A snapshot is keyed to what it means, not to the build
+   that took it, so one taken before an update, or a rebuild, still goes
+   to the game's start after it. Three things must match. The layout
+   (snapshot_layout) changes by itself with any module state struct's
+   size, or the encoding's version. GAMESTART_SNAPSHOT_VERSION is bumped
+   by hand for a change the layout doesn't see that the snapshot would:
+   a walk saving other fields at the same sizes, a field's meaning
+   changing, or a change to what the shim writes into guest memory or
+   tells the game between the baseline and the game's start. The baseline
+   (its clock, trap entry and hash) catches most changes before it, and
+   any to the game's files. A change to how the game runs after the
+   game's start needs no bump: the snapshot holds nothing of it.
+
+   A forgotten bump. A replay that goes out of step after it went to the
+   game's start from the recording's snapshot drops the snapshot from the
+   recording (gamestart_drop) and starts again from launch, in a new
+   process (main.c), which takes it again; an export fails as before, and
+   the next one plays from launch. So a snapshot that no longer
+   means what it did costs a slow open, not a broken replay; the log says
+   so, and the version wants a bump. A replay from launch that goes out
+   of step is a desync as before.
 
    Whose. Any install's: a shared copy keeps its snapshot (replay_share),
    and a share of a recording without one takes one first, from the shared
@@ -78,11 +100,11 @@
    still stops at a desync.
 
    Using it. At the baseline, a replay of a recording with a snapshot
-   checks its header against the build, the recording and the baseline as
+   checks its header against the build's key, the recording and the baseline as
    the replay has it, decodes it against guest memory there, fills in the
    resources, checks it brings no code, and goes to it from main
    (seek_enter): the replay goes on from the game's start. Anything that
-   doesn't fit (another build, another copy of the game, a damaged or
+   doesn't fit (a build whose snapshots differ, another copy of the game, a damaged or
    crafted file) is logged with why, and the replay plays from launch and
    takes the snapshot again to replace it. gamestart_limit keeps a
    snapshot from being used past a time a replay needs to see.
@@ -96,6 +118,9 @@
    LOONY_GAMESTART=0 neither uses a snapshot nor takes one. */
 
 #define GAMESTART_BASELINE_US 8000000ull
+/* Bumped by hand (Which builds, above) for a change to what a snapshot
+   means that its layout doesn't show. */
+#define GAMESTART_SNAPSHOT_VERSION 1u
 #define GAMESTART_MIN_PRELUDE_US 20000000ull
 
 /* After seek_start, on a replay: reads LOONY_GAMESTART (0: off; take:
@@ -109,6 +134,12 @@ void gamestart_limit(uint64_t clock_us);
 /* Whether this replay is a take (LOONY_GAMESTART=take): the screen goes to
    no window. */
 bool gamestart_taking(void);
+
+/* At a desync: if this replay went to the game's start from the
+   recording's snapshot, removes the snapshot from the recording and
+   returns whether that worked, for the replay to start again from launch
+   (A forgotten bump, above). False, at once, if it didn't. */
+bool gamestart_drop(void);
 
 /* For tests: the hash a baseline would have now, the license blanked. */
 void gamestart_memory_hash(uint8_t out[32]);

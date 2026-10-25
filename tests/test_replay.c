@@ -1968,6 +1968,14 @@ TEST(replay_keeps_a_snapshot_after_the_records) {
     CHECK(play_again());
     got = replay_snapshot(&len);
     CHECK(got && len == 5 && memcmp(got, "again", 5) == 0);
+    /* Dropped (gamestart_drop), the file has none, the same records, and
+       its last write still. */
+    CHECK(replay_set_snapshot(NULL, 0));
+    CHECK_EQ(mtime_of(file), 1700000000);
+    CHECK(play_again());
+    CHECK(replay_snapshot(&len) == NULL);
+    replay_identity(after);
+    CHECK(memcmp(before, after, 32) == 0);
 }
 
 /* Never a snapshot holding the license, in any case. */

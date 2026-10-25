@@ -1,6 +1,7 @@
 #include <SDL3/SDL.h>
 #include <errno.h>
 #include <limits.h>
+#include <crt_externs.h>
 #include <mach-o/dyld.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -191,9 +192,10 @@ static uint32_t macho_data_symbol(const char *name) {
 static bool return_to_picker;
 
 /* Restarts this program in place, in the same window mode and log, for
-   why (logged): the emulator's state can't be reset in place. Returns only
-   if it can't. */
-static void restart_self(const char *why) {
+   why (logged): the emulator's state can't be reset in place. With
+   same_args, with the arguments it was started with; otherwise with none.
+   Returns only if it can't. */
+static void restart_self(const char *why, bool same_args) {
     char self[PATH_MAX];
     uint32_t size = sizeof self;
     if (_NSGetExecutablePath(self, &size) != 0) {
@@ -208,7 +210,7 @@ static void restart_self(const char *why) {
     gamestart_take_end();
     log_msg("%s", why);
     fflush(stderr);
-    execv(self, (char *const[]){self, NULL});
+    execv(self, same_args ? *_NSGetArgv() : (char *const[]){self, NULL});
     log_msg("can't restart: %s", strerror(errno));
 }
 
@@ -226,7 +228,7 @@ static void back_to_picker(void) {
     unsetenv("LOONY_RECORD"); /* the next game doesn't record over this one */
     unsetenv("LOONY_REPLAY");
     unsetenv("LOONY_WATCH");
-    restart_self("back to the picker");
+    restart_self("back to the picker", false);
 }
 
 /* A recording opened from Finder, dropped on the window or chosen from the
@@ -260,7 +262,7 @@ static void open_replay_at(const char *path, uint32_t from_ticks) {
         cf_save_prefs();
     watch_stop_export(); /* it would go on unseen */
     recordings_watch_env(full, from_ticks);
-    restart_self("watch: opening a replay");
+    restart_self("watch: opening a replay", false);
 }
 
 /* The recording being watched was deleted (recordings_delete): the
@@ -270,7 +272,18 @@ static void close_replay(const char *why) {
     watch_stop_export(); /* it would go on unseen */
     recordings_leave_env();
     setenv("LOONY_FLASH", why, 1);
-    restart_self("watch: closing the replay");
+    restart_self("watch: closing the replay", false);
+}
+
+/* A desync (replay_set_retry): a replay that started from the
+   recording's snapshot of the game's start plays again from launch, in
+   the same window and with what it was started with, which takes the
+   snapshot again (gamestart.h). An export fails as before, since a
+   restart would leave its clip half written, and the next one plays from
+   launch. */
+static void retry_from_launch(void) {
+    if (gamestart_drop() && !clip_on())
+        restart_self("replay: starting again from launch", true);
 }
 
 int main(int argc, char **argv) {
@@ -491,6 +504,7 @@ int main(int argc, char **argv) {
         seek_start(NULL); /* snapshots to verify, and no seeks */
     }
     gamestart_init(); /* after seek_start: its hook runs seek's */
+    replay_set_retry(retry_from_launch);
     const char *script = getenv("LOONY_SCRIPT");
     if (script && *script && !script_load(script, err, sizeof err)) {
         fprintf(stderr, "loony: can't load the script %s: %s\n", script, err);

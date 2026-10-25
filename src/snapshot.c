@@ -683,6 +683,11 @@ void snapshot_reenter(const snapshot *s, void (*after)(void)) {
 #define CODEC_MAGIC 0x4C57736Bu /* 'LWsk' */
 #define CODEC_VERSION 1u
 
+uint32_t snapshot_layout(void) {
+    uint32_t words[3] = {CODEC_VERSION, STATE_VERSION, layout_hash()};
+    return fnv1a32(words, sizeof words);
+}
+
 typedef struct {
     uint8_t *p;
     size_t len, cap;
