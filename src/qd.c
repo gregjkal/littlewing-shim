@@ -952,6 +952,13 @@ static void h_qd_error(void) { trap_return(QD_NO_ERR); }
 
 static void h_get_window_list(void) { trap_return(window_behind(0)); }
 static void h_front_window(void) { trap_return(front_visible_window()); }
+
+uint32_t qd_front_window(void) { return front_visible_window(); }
+
+bool qd_is_window(uint32_t w) {
+    const port_info *p = find_port(w);
+    return p && p->kind == KIND_WINDOW;
+}
 static void h_get_next_window(void) { trap_return(window_behind(need_window("GetNextWindow", trap_arg(0))->addr)); }
 
 /* GetFrontWindowOfClass(WindowClass, Boolean mustBeVisible) */
@@ -1364,10 +1371,11 @@ static void h_begin_full_screen(void) {
     trap_return(QD_NO_ERR);
 }
 
-/* EndFullScreen(Ptr restoreState, long flags): disposes of the window and
-   restores the screen size. */
+/* EndFullScreen(Ptr restoreState, long flags): disposes of the window (its
+   event handlers go with it) and restores the screen size. */
 static void h_end_full_screen(void) {
     port_info *info = need_port("EndFullScreen", trap_arg(0));
+    events_forget_window(info->addr);
     dispose_port(info);
     uint32_t pm = gm_r32(Q.screen_pm);
     if (Q.saved_w && Q.saved_h)

@@ -153,6 +153,11 @@ uint32_t qd_pending_update(void);
 typedef void (*qd_window_fn)(uint32_t window, qd_window_change change, uint32_t arg);
 void qd_set_window_hook(qd_window_fn fn);
 
+/* The front visible window (FrontWindow), or 0; and whether w is a window
+   that hasn't been disposed of. */
+uint32_t qd_front_window(void);
+bool qd_is_window(uint32_t w);
+
 /* For the modules that draw into ports (pen.c): calls fn with the current
    port's pixels and each rectangle drawing there is clipped to (its
    portRect, within its clip region, and within the region mask unless it
