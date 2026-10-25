@@ -144,6 +144,39 @@ TEST(run_jinni_zeala_plays_its_opening_headless) {
     free(png);
 }
 
+/* Tristan 2.5.1, a classic pre-Carbon program: its two demo alerts
+   answered, the 135 calls it makes, and its 640x480 screen. */
+TEST(run_tristan_plays_its_opening_headless) {
+    SKIP_UNLESS_TR();
+    const char *t = getenv("TMPDIR");
+    snprintf(shot, sizeof shot, "%s/loony-run-XXXXXX", t && *t ? t : "/tmp");
+    int fd = mkstemp(shot);
+    CHECK(fd >= 0);
+    close(fd);
+    char out[32768];
+    test_tmp_dir(run_data, sizeof run_data);
+    int status = test_run_child(run_loony_headless, (void *)test_tr_dir(), out, sizeof out);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    size_t len = 0;
+    uint8_t *png = read_file(shot, &len);
+    unlink(shot);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "playing Tristan from");
+    CHECK_CONTAINS(out, "TRISTAN IE 2.5.1: 135 imports");
+    CHECK_CONTAINS(out, "loony: Alert 901 (answering item 1): Start Demo");
+    CHECK_CONTAINS(out, "LittleWing PINBALL TRISTAN");
+    CHECK_CONTAINS(out, "loony: Alert 900 (answering item 1): OK");
+    CHECK_CONTAINS(out, "loony: exiting after 240 ticks (LOONY_EXIT_AFTER)");
+    CHECK(!strstr(out, "unknown selector"));
+    CHECK(!strstr(out, "not supported"));
+    CHECK(png != NULL);
+    CHECK(len > 33);
+    CHECK_EQ(rd_be32(png + 16), 640);
+    CHECK_EQ(rd_be32(png + 20), 480);
+    free(png);
+}
+
 /* Fixed-clock runs are deterministic, so their frames can be compared with
    golden hashes (FNV-1a32 of the PNG file, which is uncompressed). The user
    approved the golden frames on 2026-10-02: the LittleWing logo, the title,
@@ -2561,6 +2594,31 @@ TEST(run_jinni_zeala_quits_from_its_own_menu) {
     CHECK(!strstr(out, "quit Apple Event"));
 }
 
+/* Tristan's File menu has Quit on Cmd-Q, enabled while no game is in play:
+   it ends the game with ExitToShell. The late quit ends a run whose Cmd-Q
+   missed, and says so. */
+TEST(run_tristan_quits_from_its_own_menu) {
+    SKIP_UNLESS_TR();
+    char out[32768];
+    int status = run_script_in(test_tr_dir(), "700 down lcmd\n702 down q\n708 up q\n710 up lcmd\n2400 quit\n", NULL,
+                               NULL, 0, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: ExitToShell");
+    CHECK(!strstr(out, "sending the quit"));
+}
+
+/* Tristan takes no Apple Events, so Cmd-Q in the app (a script's quit)
+   reaches it as the Cmd-Q of its File menu. */
+TEST(run_tristan_quits_on_cmd_q_from_the_host) {
+    SKIP_UNLESS_TR();
+    char out[32768];
+    int status = run_script_in(test_tr_dir(), "700 quit\n", NULL, NULL, 0, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: sending the quit as Cmd-Q; the game takes no Apple Events");
+    CHECK_CONTAINS(out, "loony: ExitToShell");
+    CHECK(!strstr(out, "didn't quit"));
+}
+
 static void run_mad_daedalus_headless(void *unused) {
     (void)unused;
     setenv("LOONY_FIXED_CLOCK", "1", 1);
@@ -3124,6 +3182,46 @@ TEST(run_the_picker_shows_seven_games_and_starts_golden_logres) {
     CHECK_STR(got, "2e5ea7c3");
 }
 
+/* Eight games: two rows of four, Tristan's card its title, PICT 900.
+   Picked, it starts from its folder, and Cmd-Q ends it before a game. */
+TEST(run_the_picker_shows_eight_games_and_starts_tristan) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_CC();
+    SKIP_UNLESS_MF();
+    SKIP_UNLESS_JZ();
+    SKIP_UNLESS_MD();
+    SKIP_UNLESS_AE();
+    SKIP_UNLESS_GL();
+    SKIP_UNLESS_TR();
+    test_tmp_dir(apps_dir, sizeof apps_dir);
+    CHECK(both_games() && link_game("MONSTER FAIR.app", test_mf_app()) && link_game("Jinni Zeala", test_jz_dir()) &&
+          link_game("Mad Daedalus.app", test_md_app()) && link_game("Angel Egg.app", test_ae_app()) &&
+          link_game("Golden Logres.app", test_gl_app()) && link_game("TRISTAN IE", test_tr_dir()));
+    test_tmp_dir(run_data, sizeof run_data);
+    tmp_name(pick_shot, sizeof pick_shot, "picker");
+    char out[32768];
+    int status = run_picker_with("tristan", "700 quit\n", out, sizeof out);
+    size_t len = 0;
+    uint8_t *png = read_file(pick_shot, &len);
+    char got[16];
+    snprintf(got, sizeof got, "%08x", png ? fnv1a32(png, len) : 0);
+    free(png);
+    unlink(pick_shot);
+    pick_shot[0] = '\0';
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    test_remove_tree(apps_dir);
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "picker: can't")); /* every card's art loaded */
+    CHECK(!strstr(out, "picker: /"));
+    CHECK_CONTAINS(out, "loony: picker: tristan");
+    CHECK_CONTAINS(out, "loony: playing Tristan from ");
+    CHECK_CONTAINS(out, "loony: sending the quit as Cmd-Q");
+    CHECK_CONTAINS(out, "loony: ExitToShell");
+    CHECK(!strstr(out, "back to the picker"));
+    CHECK_STR(got, "0274622d"); /* the frame with Loony Labyrinth selected */
+}
+
 /* Review Focus 1: the picker remembers the last game in the save root,
    and each game's preferences land in its own folder. */
 static void run_picker_home(void *unused) {
@@ -3369,6 +3467,11 @@ static const regression_start gl_start = {
     1250,
     {8000, 0}};
 
+/* Tristan: Cmd-N is File > New Game. Its demo ends a game after 60
+   seconds of ball in play, so Cmd-N starts another after the first one's
+   TIME UP. */
+static const regression_start tr_start = {"700 down lcmd\n702 down n\n708 up n\n710 up lcmd\n", 1000, {5000, 0}};
+
 static void write_regression_script(const char *path, const regression_start *start, char shots[3][1024]) {
     FILE *f = fopen(path, "w");
     fputs(start->keys, f);
@@ -3484,6 +3587,25 @@ SLOW_TEST(run_three_minutes_of_jinni_zeala_match_the_recording) {
        201,900 points, 36 seconds left. Minute 3: the time ran out, GAME
        OVER and the best scores. */
     CHECK_STR(got, "6a123811 e569cd02 18e95058 72ae1f12");
+}
+
+/* The same three minutes in Tristan, started with Cmd-N. */
+SLOW_TEST(run_three_minutes_of_tristan_match_the_recording) {
+    SKIP_UNLESS_TR();
+    uint32_t h[3], wh;
+    size_t len;
+    char out[32768];
+    int status = play_regression(test_tr_dir(), &tr_start, h, &wh, &len, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "runtime error"));
+    CHECK_EQ(len, 44 + (size_t)REGRESSION_TICKS * 44100 / 60 * 4);
+    char got[64];
+    snprintf(got, sizeof got, "%08x %08x %08x %08x", h[0], h[1], h[2], wh);
+    /* Frames at minutes 1, 2 and 3, then the recording. Minute 1: the
+       first game, ball 3, 12 seconds of demo time left. Minute 2: the
+       second game, ball 3, 28 seconds left. Minute 3: the time ran out,
+       TIME UP, BY LITTLEWING. */
+    CHECK_STR(got, "536e1797 3dae4ac8 aadf91c8 54a37ce6");
 }
 
 /* Three minutes of MONSTER FAIR, started from its menu, with the same

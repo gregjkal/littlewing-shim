@@ -77,6 +77,13 @@ TEST(game_table_knows_eight_games) {
     CHECK_STR(gl->exe, "Contents/MacOS/Golden Logres");
     CHECK_EQ(gl->screen_width, 1024);
     CHECK_EQ(gl->screen_height, 768);
+    const game_info *tr = game_by_id("tristan");
+    CHECK_EQ(tr->kind, GAME_PEF_FOLDER);
+    CHECK_STR(tr->title, "Tristan");
+    CHECK_STR(tr->folder_name, "TRISTAN IE");
+    CHECK_STR(tr->exe, "TRISTAN IE 2.5.1");
+    CHECK_EQ(tr->screen_width, 640);
+    CHECK_EQ(tr->screen_height, 480);
     CHECK_EQ(mf->screen_width, 800);
     CHECK_EQ(mf->screen_height, 600);
     const game_info *cc = game_by_id("crystal-caliburn");

@@ -484,6 +484,26 @@ TEST(picker_art_for_mad_daedalus_is_its_icon) {
     CHECK_STR(got, "4561d7ee"); /* the icon shown in the five-game picker */
 }
 
+/* Tristan's PICT 800 is its credits, and it has no icns 128: its card is
+   its title, PICT 900 (348x301), reduced to 332x288 and centered. */
+TEST(picker_art_for_tristan_is_its_title) {
+    SKIP_UNLESS_TR();
+    char err[512] = "";
+    uint8_t *art = malloc(PICKER_ART_W * PICKER_ART_H * 4);
+    bool ok = picker_load_art(test_tr_exe_path(), art, err, sizeof err);
+    const uint8_t *side = art + ((size_t)144 * PICKER_ART_W + 25) * 4, *in = side + 2 * 4;
+    bool beside_is_card = side[1] == 0x22 && side[2] == 0x22 && side[3] == 0x22;
+    bool title_is_drawn = !(in[1] == 0x22 && in[2] == 0x22 && in[3] == 0x22);
+    char got[16];
+    snprintf(got, sizeof got, "%08x", fnv1a32(art, PICKER_ART_W * PICKER_ART_H * 4));
+    free(art);
+    CHECK(ok);
+    CHECK_STR(err, "");
+    CHECK(beside_is_card);
+    CHECK(title_is_drawn);
+    CHECK_STR(got, "648c7523"); /* the title shown in the eight-game picker */
+}
+
 /* Golden Logres is a bundle without appl.png: its card is the 128x128
    image in its app.icns. */
 TEST(picker_art_for_golden_logres_is_its_icon) {

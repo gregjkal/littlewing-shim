@@ -153,6 +153,21 @@ bool test_gl_present(void) {
     return access(test_gl_exe_path(), R_OK) == 0;
 }
 
+const char *test_tr_dir(void) {
+    static char dir[1024];
+    return game_dir("LOONY_TR_DIR", "tristan", dir, sizeof dir);
+}
+
+const char *test_tr_exe_path(void) {
+    static char path[1100];
+    snprintf(path, sizeof path, "%s/TRISTAN IE 2.5.1", test_tr_dir());
+    return path;
+}
+
+bool test_tr_present(void) {
+    return access(test_tr_exe_path(), R_OK) == 0;
+}
+
 bool test_slow_enabled(void) {
     const char *s = getenv("LOONY_SLOW_TESTS");
     return s && *s && strcmp(s, "0") != 0;
