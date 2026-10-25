@@ -266,6 +266,8 @@ TEST(coreaudio_stream_to_the_output_may_be_float) {
     CHECK_EQ(gm_r32(back + 12), 0x2B);
     CHECK_EQ(call_import("AudioUnitGetProperty", 6, mixer, 8, 1, 0, back, size), 0);
     CHECK_EQ(gm_r32(back + 12), 0xE); /* the inputs are still the mixer's own */
+    CHECK_EQ(call_import("AudioUnitGetProperty", 6, mixer, 8, 0, 0, back, size), 0);
+    CHECK_EQ(gm_r32(back + 12), 0xE); /* so is its global scope */
     /* Any other format is refused, and the output's other scope has none. */
     gm_w32(asbd + 28, 1); /* mono */
     CHECK_EQ(call_import("AudioUnitSetProperty", 6, output_unit, 8, 1, 0, asbd, 40), (uint32_t)-10868);

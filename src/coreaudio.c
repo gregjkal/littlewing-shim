@@ -363,13 +363,14 @@ static void h_audio_unit_set_property(void) {
 
 /* AudioUnitGetProperty(unit, id, scope, element, void *outData, UInt32
    *ioDataSize): a stream format, the mixer's own unless the stream from
-   the mixer to the output was set to float_format. */
+   the mixer to the output was set to float_format. The mixer answers its
+   own format on any other scope too. */
 static void h_audio_unit_get_property(void) {
     uint32_t u = trap_arg(0), prop = trap_arg(1), scope = trap_arg(2), out = trap_arg(4),
              size = trap_arg(5);
     need_unit("AudioUnitGetProperty", u);
     int between = stream_between(u, scope);
-    if (prop == AU_PROP_STREAM_FORMAT && between) {
+    if (prop == AU_PROP_STREAM_FORMAT && (between || u == CA_UNIT_MIXER)) {
         if (gm_r32(size) < ASBD_SIZE) {
             reply(PARAM_ERR);
             return;
