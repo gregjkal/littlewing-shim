@@ -11,6 +11,7 @@ static const char *const names[] = {
     "HNoPurge", "MoveHHi", "HGetState", "HSetState", "MemError", "SetHandleSize", "EmptyHandle",
     "HLockHi", "TempNewHandle", "MaxBlock", "MoreMasterPointers", "NewGrowZoneUPP",
     "DisposeGrowZoneUPP", "SetGrowZone", "GZSaveHnd", "FreeMem", "ReserveMem",
+    "MoreMasters", "GetApplLimit", "SetApplLimit", "MaxApplZone",
 };
 
 static void setup(void) {
@@ -222,4 +223,20 @@ TEST(mmcall_reserve_mem_succeeds) {
     call_import("NewPtr", 1, 0x7FFFFFFFu);
     call_import("ReserveMem", 1, 4096u);
     CHECK_EQ(mem_error(), 0);
+}
+
+/* A classic program's start: the limit is the heap's end, and the calls
+   that move it or grow the heap leave it all as it was. */
+TEST(mmcall_appl_limit_is_the_heap_end) {
+    setup();
+    uint32_t limit = call_import("GetApplLimit", 0);
+    CHECK_EQ(limit, gm_heap_base() + gm_heap_size());
+    uint32_t free_before = mm_free_bytes();
+    call_import("SetApplLimit", 1, limit - 0x10000u);
+    CHECK_EQ(mem_error(), 0);
+    call_import("MaxApplZone", 0);
+    call_import("MoreMasters", 0);
+    CHECK_EQ(mem_error(), 0);
+    CHECK_EQ(call_import("GetApplLimit", 0), limit);
+    CHECK_EQ(mm_free_bytes(), free_before);
 }

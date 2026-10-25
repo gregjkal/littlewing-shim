@@ -309,39 +309,34 @@ static void join(const char *dir, const char *name, char *out, size_t cap) {
         trap_crash("the path %s/%s is too long", dir, name);
 }
 
-/* FSMakeFSSpec(vRefNum, dirID, fileName, FSSpec *spec) -> OSErr. A leading
-   ':' means relative; each further empty component ("::") goes up one
-   folder, but never above the game folder. */
-static void h_fs_make_fsspec(void) {
-    int16_t vref = (int16_t)trap_arg(0);
-    uint32_t dir = trap_arg(1), name_p = trap_arg(2), spec = trap_arg(3);
+/* Where (vRefNum, dirID, name) is: the folder rel_dir, relative to the
+   game folder, and the name leaf in it (Mac Roman). A leading ':' means
+   relative; each further empty component ("::") goes up one folder, but
+   never above the game folder. Returns 0, or an OSErr if the folder isn't
+   there or a name is bad. */
+static int16_t resolve(const char *call, int16_t vref, uint32_t dir, const char *mac, char *rel_dir,
+                       char *leaf) {
     if (vref != 0 && vref != FILES_VREFNUM)
-        trap_crash("FSMakeFSSpec: unknown volume %d", vref);
+        trap_crash("%s: unknown volume %d", call, vref);
     if (dir == 0)
         dir = dir_id(F.default_dir);
     const char *base = dir_path(dir);
     if (!base)
-        trap_crash("FSMakeFSSpec: unknown directory ID %u", dir);
-    char mac[256];
-    gm_read_pstr(name_p, mac);
+        trap_crash("%s: unknown directory ID %u", call, dir);
     char rel[REL_CAP], comp[256], utf[REL_CAP];
     snprintf(rel, sizeof rel, "%s", base);
     const char *p = mac[0] == ':' ? mac + 1 : mac;
     if (strchr(mac, ':') && mac[0] != ':')
-        trap_crash("FSMakeFSSpec: full path names (\"%s\") are not supported", mac);
+        trap_crash("%s: full path names (\"%s\") are not supported", call, mac);
     for (;;) {
         const char *colon = strchr(p, ':');
         size_t n = colon ? (size_t)(colon - p) : strlen(p);
-        if (n > 63) {
-            trap_return((uint32_t)FILES_BD_NAM_ERR);
-            return;
-        }
+        if (n > 63)
+            return FILES_BD_NAM_ERR;
         if (n == 0 && colon) { /* "::": the parent folder */
             char *slash = strrchr(rel, '/');
-            if (!*rel) {
-                trap_return((uint32_t)FILES_DIR_NF_ERR);
-                return;
-            }
+            if (!*rel)
+                return FILES_DIR_NF_ERR;
             if (slash)
                 *slash = '\0';
             else
@@ -352,31 +347,58 @@ static void h_fs_make_fsspec(void) {
         memcpy(comp, p, n);
         comp[n] = '\0';
         /* "." and ".." are ordinary Mac names but would move around on the host. */
-        if (n == 0 || strcmp(comp, ".") == 0 || strcmp(comp, "..") == 0) {
-            trap_return((uint32_t)FILES_BD_NAM_ERR);
-            return;
-        }
+        if (n == 0 || strcmp(comp, ".") == 0 || strcmp(comp, "..") == 0)
+            return FILES_BD_NAM_ERR;
         if (!colon)
             break;
         files_mac_to_utf8(comp, utf, sizeof utf);
         char next[REL_CAP];
         join(rel, utf, next, sizeof next);
-        if (!is_dir(next)) {
-            trap_return((uint32_t)FILES_DIR_NF_ERR);
-            return;
-        }
+        if (!is_dir(next))
+            return FILES_DIR_NF_ERR;
         snprintf(rel, sizeof rel, "%s", next);
         p = colon + 1;
+    }
+    snprintf(rel_dir, REL_CAP, "%s", rel);
+    snprintf(leaf, 256, "%s", comp);
+    return 0;
+}
+
+static bool file_exists(const char *rel) {
+    char hp[PATH_CAP];
+    locate(rel, false, hp, sizeof hp);
+    return exists(hp, false);
+}
+
+/* FSMakeFSSpec(vRefNum, dirID, fileName, FSSpec *spec) -> OSErr, fnfErr
+   for a file that isn't there (yet). */
+static void h_fs_make_fsspec(void) {
+    uint32_t name_p = trap_arg(2), spec = trap_arg(3);
+    char mac[256], rel[REL_CAP], leaf[256], utf[REL_CAP], file_rel[REL_CAP];
+    gm_read_pstr(name_p, mac);
+    int16_t err = resolve("FSMakeFSSpec", (int16_t)trap_arg(0), trap_arg(1), mac, rel, leaf);
+    if (err) {
+        trap_return((uint32_t)(int32_t)err);
+        return;
     }
     gm_w16(spec, (uint16_t)FILES_VREFNUM);
     gm_w32(spec + 2, dir_id(rel));
     memset(gm_ptr(spec + 6, 64), 0, 64);
-    gm_write_pstr(spec + 6, comp);
-    files_mac_to_utf8(comp, utf, sizeof utf);
-    char file_rel[REL_CAP], hp[PATH_CAP];
+    gm_write_pstr(spec + 6, leaf);
+    files_mac_to_utf8(leaf, utf, sizeof utf);
     join(rel, utf, file_rel, sizeof file_rel);
-    locate(file_rel, false, hp, sizeof hp);
-    trap_return(exists(hp, false) ? 0 : (uint32_t)FILES_FNF_ERR);
+    trap_return(file_exists(file_rel) ? 0 : (uint32_t)FILES_FNF_ERR);
+}
+
+int16_t files_name_rel(const char *call, int16_t vref, uint32_t name, char *out, size_t cap) {
+    char mac[256], rel[REL_CAP], leaf[256], utf[REL_CAP];
+    gm_read_pstr(name, mac);
+    int16_t err = resolve(call, vref, 0, mac, rel, leaf);
+    if (err)
+        return err;
+    files_mac_to_utf8(leaf, utf, sizeof utf);
+    join(rel, utf, out, cap);
+    return 0;
 }
 
 /* The path of spec's file relative to the game folder. */
@@ -401,30 +423,32 @@ static int16_t no_data_dir(const char *call) {
     return FILES_WR_PERM_ERR;
 }
 
-/* FSpCreate(const FSSpec *spec, OSType creator, OSType fileType, ScriptCode) -> OSErr */
-static void h_fsp_create(void) {
-    char rel[REL_CAP], path[PATH_CAP];
-    spec_rel_path(trap_arg(0), rel, sizeof rel);
+/* Creates rel, empty, in the data folder. Returns an OSErr: dupFNErr if
+   it is already there. */
+static int16_t create_file(const char *call, const char *rel) {
+    char path[PATH_CAP];
     locate(rel, false, path, sizeof path);
-    if (exists(path, false)) {
-        trap_return((uint32_t)FILES_DUP_FN_ERR);
-        return;
-    }
-    if (!F.data_dir[0]) {
-        trap_return((uint32_t)no_data_dir("FSpCreate"));
-        return;
-    }
+    if (exists(path, false))
+        return FILES_DUP_FN_ERR;
+    if (!F.data_dir[0])
+        return no_data_dir(call);
     under(F.data_dir, rel, path, sizeof path);
     char parent[PATH_CAP];
     snprintf(parent, sizeof parent, "%s", path);
     *strrchr(parent, '/') = '\0';
     FILE *f = make_dirs(parent) ? fopen(path, "wb") : NULL;
     if (!f || fclose(f) != 0) {
-        log_msg("FSpCreate: can't create %s: %s", path, strerror(errno));
-        trap_return((uint32_t)FILES_IO_ERR);
-        return;
+        log_msg("%s: can't create %s: %s", call, path, strerror(errno));
+        return FILES_IO_ERR;
     }
-    trap_return(0);
+    return 0;
+}
+
+/* FSpCreate(const FSSpec *spec, OSType creator, OSType fileType, ScriptCode) -> OSErr */
+static void h_fsp_create(void) {
+    char rel[REL_CAP];
+    spec_rel_path(trap_arg(0), rel, sizeof rel);
+    trap_return((uint32_t)(int32_t)create_file("FSpCreate", rel));
 }
 
 /* Opens the data fork of rel (relative to the game folder) and writes its
@@ -678,6 +702,66 @@ int16_t files_write_rsrc_fork(const char *rel, const uint8_t *data, size_t len) 
         return FILES_IO_ERR;
     }
     return 0;
+}
+
+/* ---- the calls before FSSpecs: a name, partial path or not, in a
+   volume (0 for the default directory, or the volume's refnum for its
+   top, which is the game folder) ---- */
+
+/* Create(fileName, vRefNum, creator, fileType) -> OSErr */
+static void h_create(void) {
+    char rel[REL_CAP];
+    int16_t err = files_name_rel("Create", (int16_t)trap_arg(1), trap_arg(0), rel, sizeof rel);
+    trap_return((uint32_t)(int32_t)(err ? err : create_file("Create", rel)));
+}
+
+/* FSOpen(fileName, vRefNum, short *refNum) -> OSErr, with fsCurPerm. */
+static void h_fs_open(void) {
+    char rel[REL_CAP];
+    int16_t err = files_name_rel("FSOpen", (int16_t)trap_arg(1), trap_arg(0), rel, sizeof rel);
+    trap_return((uint32_t)(int32_t)(err ? err : open_data_fork("FSOpen", rel, 0, trap_arg(2))));
+}
+
+/* FSDelete(fileName, vRefNum) -> OSErr. Only a file the game made or
+   saved, which is in the data folder, can go; the game folder's files
+   are locked. */
+static void h_fs_delete(void) {
+    char rel[REL_CAP], path[PATH_CAP];
+    int16_t err = files_name_rel("FSDelete", (int16_t)trap_arg(1), trap_arg(0), rel, sizeof rel);
+    if (err) {
+        trap_return((uint32_t)(int32_t)err);
+        return;
+    }
+    for (int i = 0; i < MAX_FILES; i++)
+        if (F.files[i].f && strcmp(F.files[i].rel, rel) == 0) {
+            trap_return((uint32_t)FILES_BUSY_ERR);
+            return;
+        }
+    bool in_data = locate(rel, false, path, sizeof path);
+    if (!exists(path, false))
+        err = FILES_FNF_ERR;
+    else if (!in_data)
+        err = FILES_LOCKED_ERR;
+    else if (unlink(path) != 0)
+        err = FILES_IO_ERR;
+    trap_return((uint32_t)(int32_t)err);
+}
+
+/* GetVRefNum(refNum, short *vRefNum) -> OSErr: the one volume. */
+static void h_get_vref_num(void) {
+    if (!file_of((int16_t)trap_arg(0))) {
+        trap_return((uint32_t)FILES_RF_NUM_ERR);
+        return;
+    }
+    gm_w16(trap_arg(1), (uint16_t)FILES_VREFNUM);
+    trap_return(0);
+}
+
+/* SetVol(volName, vRefNum) -> OSErr: the one volume is the default
+   already, and its top is the default directory. */
+static void h_set_vol(void) {
+    int16_t vref = (int16_t)trap_arg(1);
+    trap_return(vref == 0 || vref == FILES_VREFNUM ? 0 : (uint32_t)FILES_NSV_ERR);
 }
 
 /* Moves the mark; returns an OSErr. */
@@ -990,6 +1074,11 @@ void files_register(void) {
     trap_register("SetFPos", h_set_fpos);
     trap_register("GetFPos", h_get_fpos);
     trap_register("FSClose", h_fs_close);
+    trap_register("Create", h_create);
+    trap_register("FSOpen", h_fs_open);
+    trap_register("FSDelete", h_fs_delete);
+    trap_register("GetVRefNum", h_get_vref_num);
+    trap_register("SetVol", h_set_vol);
     trap_register("FSPathMakeRef", h_fs_path_make_ref);
     trap_register("FSGetDataForkName", h_fs_get_data_fork_name);
     trap_register("FSOpenFork", h_fs_open_fork);

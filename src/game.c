@@ -28,6 +28,7 @@ static const game_info games[] = {
     /* It takes the screen at 1024x768 itself (BeginFullScreen). */
     {"golden-logres", "Golden Logres", "Golden Logres.app", "Contents/MacOS/Golden Logres",
      GAME_MACHO_BUNDLE, 1024, 768},
+    {"tristan", "Tristan", "TRISTAN IE", "TRISTAN IE 2.5.1", GAME_PEF_FOLDER, 640, 480},
 };
 #define NGAMES (sizeof games / sizeof games[0])
 

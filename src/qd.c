@@ -8,6 +8,7 @@
 #include "hd.h"
 #include "snapshot.h"
 #include "memmgr.h"
+#include "pen.h"
 #include "pict.h"
 #include "region.h"
 #include "rsrc.h"
@@ -17,7 +18,8 @@
 #define MAX_PORTS 256
 #define WIDE_OPEN ((qd_rect){-32768, -32768, 32767, 32767})
 
-typedef enum { KIND_SCREEN, KIND_GWORLD, KIND_WINDOW } port_kind;
+/* KIND_PORT: a port in the game's own memory, which OpenCPort made. */
+typedef enum { KIND_SCREEN, KIND_GWORLD, KIND_WINDOW, KIND_PORT } port_kind;
 
 typedef struct {
     uint32_t addr;
@@ -50,7 +52,8 @@ static struct {
     bool window_sized;    /* CreateNewWindow has sized the screen */
     uint32_t next_order;
     uint32_t gray_rgn;    /* GetGrayRgn's, made the first time */
-    uint32_t rand_seed;   /* QuickDraw's randSeed, for Random */
+    uint32_t rand_seed;   /* QuickDraw's randSeed, for Random, until InitGraf */
+    uint32_t qd_globals;  /* InitGraf's: the game's QDGlobals, or 0 */
 } Q;
 
 /* A snapshot's walk (snapshot.h): dialogs' hook is the host's. */
@@ -217,6 +220,13 @@ void qd_bits(const char *call, uint32_t bits, qd_pixels *out, qd_palette *pal) {
 
 /* ---- ports ---- */
 
+/* Makes port current, and keeps the game's qd.thePort in step. */
+static void set_cur_port(uint32_t port) {
+    Q.cur_port = port;
+    if (Q.qd_globals)
+        gm_w32(Q.qd_globals + QDG_THE_PORT, port);
+}
+
 static port_info *find_port(uint32_t addr) {
     for (int i = 0; i < Q.nports; i++)
         if (Q.ports[i].addr == addr)
@@ -231,12 +241,12 @@ static port_info *need_port(const char *call, uint32_t addr) {
     return p;
 }
 
-static uint32_t new_port(uint32_t pm_h, qd_rect port_rect, port_kind kind) {
+/* Makes the CGrafPort at p a port, as OpenCPort does: its PixMap pm_h,
+   portRect and visible region port_rect, no clipping, black on white. */
+static void init_port(uint32_t p, uint32_t pm_h, qd_rect port_rect, port_kind kind) {
     if (Q.nports == MAX_PORTS)
         trap_crash("more than %d ports", MAX_PORTS);
-    uint32_t p = mm_new_ptr(CGRAFPORT_SIZE, true);
-    if (!p)
-        trap_crash("out of guest memory for a port");
+    memset(gm_ptr(p, CGRAFPORT_SIZE), 0, CGRAFPORT_SIZE);
     gm_w32(p + PORT_PIXMAP, pm_h);
     gm_w16(p + PORT_VERSION, 0xC000);
     qd_write_rect(p + PORT_RECT, port_rect);
@@ -251,23 +261,33 @@ static uint32_t new_port(uint32_t pm_h, qd_rect port_rect, port_kind kind) {
     gm_w32(p + PORT_BK_COLOR, 30); /* whiteColor */
     Q.ports[Q.nports++] = (port_info){.addr = p, .kind = kind, .visible = kind != KIND_GWORLD,
                                       .order = ++Q.next_order, .oh = port_rect.left, .ov = port_rect.top};
+}
+
+static uint32_t new_port(uint32_t pm_h, qd_rect port_rect, port_kind kind) {
+    uint32_t p = mm_new_ptr(CGRAFPORT_SIZE, true);
+    if (!p)
+        trap_crash("out of guest memory for a port");
+    init_port(p, pm_h, port_rect, kind);
     return p;
 }
 
 static void dispose_port(port_info *info) {
     uint32_t p = info->addr;
-    if (info->kind == KIND_WINDOW)
-        mm_dispose_handle(gm_r32(p + PORT_PIXMAP)); /* its pixels and colors are the screen's */
+    /* A window's pixels and colors are the screen's; a port's PixMap is
+       the game's to set up, and its pixels and colors are the game's. */
+    if (info->kind == KIND_WINDOW || info->kind == KIND_PORT)
+        mm_dispose_handle(gm_r32(p + PORT_PIXMAP));
     mm_dispose_handle(gm_r32(p + PORT_VIS_RGN));
     mm_dispose_handle(gm_r32(p + PORT_CLIP_RGN));
     if (gm_r32(p + PORT_BK_PIXPAT))
         mm_dispose_handle(gm_r32(p + PORT_BK_PIXPAT));
     if (gm_r32(p + PORT_PN_PIXPAT))
         mm_dispose_handle(gm_r32(p + PORT_PN_PIXPAT));
-    mm_dispose_ptr(p);
+    if (info->kind != KIND_PORT)
+        mm_dispose_ptr(p);
     *info = Q.ports[--Q.nports];
     if (Q.cur_port == p)
-        Q.cur_port = Q.screen_port;
+        set_cur_port(Q.screen_port);
 }
 
 static uint32_t port_pixmap(uint32_t port) { return gm_r32(gm_r32(port + PORT_PIXMAP)); }
@@ -357,6 +377,14 @@ static void size_port(const port_info *p, int width, int height) {
     rgn_free(&vis);
 }
 
+/* The screen as a BitMap (qd.screenBits): baseAddr, rowBytes, bounds. */
+static void write_screen_bits(uint32_t out) {
+    uint32_t pm = gm_r32(Q.screen_pm);
+    gm_w32(out, gm_r32(pm + PM_BASE_ADDR));
+    gm_w16(out + 4, gm_r16(pm + PM_ROW_BYTES) & 0x3FFF);
+    qd_write_rect(out + 6, qd_read_rect(pm + PM_BOUNDS));
+}
+
 static void make_screen(int w, int h, int depth) {
     qd_rect b = {0, 0, (int16_t)h, (int16_t)w};
     setup_pixmap(Q.screen_pm, depth, b, std_ctab(depth), row_bytes_for(w, depth));
@@ -370,6 +398,8 @@ static void make_screen(int w, int h, int depth) {
         if (p->kind == KIND_WINDOW)
             place_window_pixels(p);
     }
+    if (Q.qd_globals)
+        write_screen_bits(Q.qd_globals + QDG_SCREEN_BITS);
     Q.dirty = true;
 }
 
@@ -498,10 +528,16 @@ static void h_color2index(void) {
 }
 
 /* Random() -> short: QuickDraw's generator, randSeed times 16807 modulo
-   2^31 - 1, its low word, with -32768 made 0. */
+   2^31 - 1, its low word, with -32768 made 0. After InitGraf the seed is
+   the game's qd.randSeed, which it may set itself. */
 static void h_random(void) {
-    Q.rand_seed = (uint32_t)((uint64_t)Q.rand_seed * 16807 % 0x7FFFFFFF);
-    int16_t v = (int16_t)(Q.rand_seed & 0xFFFF);
+    uint32_t seed = Q.qd_globals ? gm_r32(Q.qd_globals + QDG_RAND_SEED) : Q.rand_seed;
+    seed = (uint32_t)((uint64_t)seed * 16807 % 0x7FFFFFFF);
+    if (Q.qd_globals)
+        gm_w32(Q.qd_globals + QDG_RAND_SEED, seed);
+    else
+        Q.rand_seed = seed;
+    int16_t v = (int16_t)(seed & 0xFFFF);
     trap_return((uint32_t)(int32_t)(v == -32768 ? 0 : v));
 }
 
@@ -549,6 +585,116 @@ static void h_set_depth(void) {
     qd_rect b = qd_read_rect(gm_r32(Q.screen_pm) + PM_BOUNDS);
     resize_screen(rect_w(b), rect_h(b), depth);
     trap_return(QD_NO_ERR);
+}
+
+/* A device's color table, changed: its seed moves on, so a game that
+   compares seeds sees it, and the screen is drawn again. */
+static uint32_t device_ctab(const char *call, uint32_t gd) {
+    gd = gd ? gd : Q.main_device;
+    if (gd != Q.main_device)
+        trap_crash("%s: 0x%08x is not the main device", call, gd);
+    uint32_t pm = gm_r32(Q.screen_pm);
+    if (gm_r16(pm + PM_PIXEL_SIZE) > 8)
+        return 0;
+    return gm_r32(pm + PM_TABLE);
+}
+
+static void changed_ctab(uint32_t ctab) {
+    uint32_t t = gm_r32(ctab);
+    gm_w32(t, gm_r32(t) + 1);
+    Q.dirty = true;
+}
+
+/* RestoreDeviceClut(GDHandle): the device's standard colors back (NULL
+   is every device, the main one here). */
+static void h_restore_device_clut(void) {
+    uint32_t ctab = device_ctab("RestoreDeviceClut", trap_arg(0));
+    if (!ctab)
+        return;
+    qd_palette pal;
+    qd_std_palette(gm_r16(gm_r32(Q.screen_pm) + PM_PIXEL_SIZE), &pal);
+    uint32_t t = gm_r32(ctab), n = (uint16_t)(gm_r16(t + 6) + 1u);
+    for (uint32_t i = 0; i < n && i < (uint32_t)pal.n; i++)
+        qd_write_rgb(t + CTAB_HEADER + 8 * i + 2, pal.c[i]);
+    changed_ctab(ctab);
+}
+
+/* SetEntries(start, count, CSpecArray): count + 1 colors of the current
+   device's table from start, or, with start -1, at the indices in each
+   ColorSpec's value. Out of range entries are left out. */
+static void h_set_entries(void) {
+    int start = (int16_t)trap_arg(0), count = (int16_t)trap_arg(1) + 1;
+    uint32_t specs = trap_arg(2);
+    uint32_t ctab = device_ctab("SetEntries", Q.cur_device);
+    if (!ctab)
+        return;
+    uint32_t t = gm_r32(ctab), n = (uint16_t)(gm_r16(t + 6) + 1u);
+    for (int i = 0; i < count; i++) {
+        uint32_t spec = specs + 8u * (uint32_t)i;
+        int at = start < 0 ? (int)gm_r16(spec) : start + i;
+        if (at >= 0 && (uint32_t)at < n)
+            qd_write_rgb(t + CTAB_HEADER + 8u * (uint32_t)at + 2, qd_read_rgb(spec + 2));
+    }
+    changed_ctab(ctab);
+}
+
+/* ---- guest calls: ports in the game's memory, and PixMaps ---- */
+
+/* A new PixMap handle, a copy of the current device's, with a copy of
+   its color table. */
+static uint32_t copy_device_pixmap(bool own_ctab) {
+    uint32_t pm_h = mm_new_handle(PIXMAP_SIZE, true);
+    if (!pm_h)
+        trap_crash("out of guest memory for a PixMap");
+    uint32_t dev = gm_r32(gm_r32(gm_r32(Q.cur_device) + GD_PMAP)), pm = gm_r32(pm_h);
+    memcpy(gm_ptr(pm, PIXMAP_SIZE), gm_ptr(dev, PIXMAP_SIZE), PIXMAP_SIZE);
+    uint32_t ctab = gm_r32(dev + PM_TABLE);
+    if (own_ctab && ctab) {
+        uint32_t n = mm_handle_size(ctab), copy = mm_new_handle(n, false);
+        if (!copy)
+            trap_crash("out of guest memory for a color table");
+        memcpy(gm_ptr(gm_r32(copy), n), gm_ptr(gm_r32(ctab), n), n);
+        gm_w32(gm_r32(pm_h) + PM_TABLE, copy);
+    }
+    return pm_h;
+}
+
+/* NewPixMap() -> PixMapHandle: the current device's, with a color table
+   of its own. The game sets its pixels and bounds. */
+static void h_new_pixmap(void) { trap_return(copy_device_pixmap(true)); }
+
+/* OpenCPort(CGrafPtr): the game's memory made a port drawing on the
+   screen (a PixMap of its own copied from the current device's, sharing
+   its pixels and colors), which becomes the current port. A game sets
+   its own PixMap with SetPortPix to draw offscreen. */
+static void h_open_cport(void) {
+    uint32_t p = trap_arg(0);
+    if (find_port(p))
+        trap_crash("OpenCPort: 0x%08x is a port already", p);
+    uint32_t pm_h = copy_device_pixmap(false);
+    init_port(p, pm_h, qd_read_rect(gm_r32(pm_h) + PM_BOUNDS), KIND_PORT);
+    set_cur_port(p);
+}
+
+/* CloseCPort(CGrafPtr): its regions, patterns and PixMap handle are
+   disposed of; the port's memory, the pixels and the color table stay
+   the game's. */
+static void h_close_cport(void) {
+    port_info *info = need_port("CloseCPort", trap_arg(0));
+    if (info->kind != KIND_PORT)
+        trap_crash("CloseCPort: 0x%08x is not a port OpenCPort made", trap_arg(0));
+    dispose_port(info);
+}
+
+/* SetPortPix(PixMapHandle): the current port's PixMap. */
+static void h_set_port_pix(void) { gm_w32(Q.cur_port + PORT_PIXMAP, trap_arg(0)); }
+
+/* PortSize(width, height): the current port's portRect, from its top left. */
+static void h_port_size(void) {
+    qd_rect r = qd_read_rect(Q.cur_port + PORT_RECT);
+    r.right = (int16_t)(r.left + (int16_t)trap_arg(0));
+    r.bottom = (int16_t)(r.top + (int16_t)trap_arg(1));
+    qd_write_rect(Q.cur_port + PORT_RECT, r);
 }
 
 /* ---- guest calls: GWorlds ---- */
@@ -627,7 +773,7 @@ static void h_get_pix_base_addr(void) { trap_return(gm_r32(gm_r32(trap_arg(0)) +
 static void h_set_gworld(void) {
     uint32_t port = trap_arg(0), gd = trap_arg(1);
     need_port("SetGWorld", port);
-    Q.cur_port = port;
+    set_cur_port(port);
     Q.cur_device = gd ? gd : Q.main_device;
 }
 
@@ -643,13 +789,13 @@ static void h_get_port(void) { gm_w32(trap_arg(0), Q.cur_port); }
 
 static void h_set_port(void) {
     need_port("SetPort", trap_arg(0));
-    Q.cur_port = trap_arg(0);
+    set_cur_port(trap_arg(0));
 }
 
 static void h_set_port_window_port(void) {
     uint32_t w = trap_arg(0);
     need_port("SetPortWindowPort", w);
-    Q.cur_port = w;
+    set_cur_port(w);
 }
 
 static void h_get_window_port(void) {
@@ -678,12 +824,27 @@ static void h_get_port_bitmap_for_copy_bits(void) {
 }
 
 static void h_get_qd_globals_screen_bits(void) {
-    uint32_t out = trap_arg(0), pm = gm_r32(Q.screen_pm);
-    gm_w32(out, gm_r32(pm + PM_BASE_ADDR));
-    gm_w16(out + 4, gm_r16(pm + PM_ROW_BYTES) & 0x3FFF);
-    qd_write_rect(out + 6, qd_read_rect(pm + PM_BOUNDS));
-    trap_return(out);
+    write_screen_bits(trap_arg(0));
+    trap_return(trap_arg(0));
 }
+
+/* InitGraf(&qd.thePort): a classic program's QuickDraw globals are its
+   own. They get the screen's BitMap, the patterns, randSeed 1 and the
+   current port, which stays in qd.thePort from then on, as screenBits
+   stays the screen's. */
+static void h_init_graf(void) {
+    Q.qd_globals = trap_arg(0) - QDG_THE_PORT;
+    memset(gm_ptr(Q.qd_globals, QDGLOBALS_SIZE), 0, QDGLOBALS_SIZE);
+    gm_w32(Q.qd_globals + QDG_RAND_SEED, 1);
+    write_screen_bits(Q.qd_globals + QDG_SCREEN_BITS);
+    pen_write_qd_patterns(Q.qd_globals + QDG_PATTERNS);
+    set_cur_port(Q.cur_port);
+}
+
+/* InitWindows: the Window Manager needs no setting up. */
+static void h_init_windows(void) {}
+
+static void h_set_gdevice(void) { Q.cur_device = trap_arg(0) ? trap_arg(0) : Q.main_device; }
 
 /* A window port whose content is global on the screen, with a PixMap of its
    own (place_window_pixels). */
@@ -1269,6 +1430,13 @@ void qd_register(void) {
     trap_register("GetMaxDevice", h_get_max_device);
     trap_register("TestDeviceAttribute", h_test_device_attribute);
     trap_register("SetDepth", h_set_depth);
+    trap_register("NewPixMap", h_new_pixmap);
+    trap_register("OpenCPort", h_open_cport);
+    trap_register("CloseCPort", h_close_cport);
+    trap_register("SetPortPix", h_set_port_pix);
+    trap_register("PortSize", h_port_size);
+    trap_register("RestoreDeviceClut", h_restore_device_clut);
+    trap_register("SetEntries", h_set_entries);
     trap_register("NewGWorld", h_new_gworld);
     trap_register("UpdateGWorld", h_update_gworld);
     trap_register("DisposeGWorld", h_dispose_gworld);
@@ -1286,6 +1454,9 @@ void qd_register(void) {
     trap_register("GetWindowPortBounds", h_get_window_port_bounds);
     trap_register("GetPortBitMapForCopyBits", h_get_port_bitmap_for_copy_bits);
     trap_register("GetQDGlobalsScreenBits", h_get_qd_globals_screen_bits);
+    trap_register("InitGraf", h_init_graf);
+    trap_register("InitWindows", h_init_windows);
+    trap_register("SetGDevice", h_set_gdevice);
     trap_register("ShowWindow", h_show_window);
     trap_register("HideWindow", h_hide_window);
     trap_register("DisposeWindow", h_dispose_window);

@@ -11,6 +11,7 @@
 
 #include "cf.h"
 #include "cpu.h"
+#include "files.h"
 #include "guest_mem.h"
 #include "memmgr.h"
 #include "rsrc.h"
@@ -193,6 +194,25 @@ static void h_gestalt(void) {
     s[4] = '\0';
     log_msg("Gestalt: unknown selector '%s' (0x%08x)", s, sel);
     trap_return((uint32_t)MISC_GESTALT_UNDEF_SELECTOR_ERR);
+}
+
+/* SysEnvirons(versionRequested, &SysEnvRec), the System 6 way to ask what
+   Gestalt answers: the System's version, a 68040 with an FPU (as the
+   PowerPC Macs' 68K emulator was taken to be by programs that check), and
+   Color QuickDraw. The record: environsVersion, machineType,
+   systemVersion, processor (2 bytes each), hasFPU, hasColorQD (1 each),
+   keyBoardType, atDrvrVersNum, sysVRefNum (2 each). */
+#define ENV_68040 5
+static void h_sys_environs(void) {
+    uint32_t rec = trap_arg(1);
+    memset(gm_ptr(rec, 16), 0, 16);
+    gm_w16(rec, (uint16_t)trap_arg(0));
+    gm_w16(rec + 4, (uint16_t)system_version);
+    gm_w16(rec + 6, ENV_68040);
+    gm_w8(rec + 8, 1);
+    gm_w8(rec + 9, 1);
+    gm_w16(rec + 14, (uint16_t)FILES_VREFNUM);
+    trap_return(0);
 }
 
 /* ---- time ---- */
@@ -389,6 +409,21 @@ static void h_c2pstrcpy(void) {
     gm_write_pstr(trap_arg(0), s);
 }
 
+/* p2cstr and c2pstr convert a string in place and return it. */
+static void h_p2cstr(void) {
+    char s[256];
+    gm_read_pstr(trap_arg(0), s);
+    gm_write_cstr(trap_arg(0), s);
+    trap_return(trap_arg(0));
+}
+
+static void h_c2pstr(void) {
+    char s[256];
+    gm_read_cstr(trap_arg(0), s, sizeof s);
+    gm_write_pstr(trap_arg(0), s);
+    trap_return(trap_arg(0));
+}
+
 static void h_block_move_data(void) {
     uint32_t src = trap_arg(0), dst = trap_arg(1);
     int32_t n = (int32_t)trap_arg(2);
@@ -426,8 +461,9 @@ static void h_tis_copy_ascii_capable_source(void) { trap_return(0); }
 static void h_tis_select_input_source(void) { trap_return((uint32_t)-50); }
 static void h_get_mbar_height(void) { trap_return(0); }
 /* A PowerPC program has no A5 world: SetA5 and SetCurrentA5 change nothing
-   and return the old A5, 0. */
+   and return the old A5, 0, which LMGetCurrentA5 reports too. */
 static void h_set_a5(void) { trap_return(0); }
+static void h_lm_get_current_a5(void) { trap_return(0); }
 
 /* ---- Apple Events and Internet Config ---- */
 
@@ -565,6 +601,33 @@ static void h_num2dec(void) {
     memcpy(gm_ptr(d + 5, MISC_SIGDIGLEN), dec.sig, n);
 }
 
+/* dec2num(const decimal *) -> double: sig times ten to the exp, with its
+   sign; a sig of "I" is infinity and one of "N" not a number. */
+static void h_dec2num(void) {
+    uint32_t d = trap_arg(0);
+    char sig[MISC_SIGDIGLEN + 1];
+    uint8_t n = gm_r8(d + 4);
+    if (n > MISC_SIGDIGLEN)
+        n = MISC_SIGDIGLEN;
+    memcpy(sig, gm_ptr(d + 5, MISC_SIGDIGLEN), n);
+    sig[n] = '\0';
+    double x;
+    if (sig[0] == 'I')
+        x = INFINITY;
+    else if (sig[0] == 'N')
+        x = NAN;
+    else {
+        char text[MISC_SIGDIGLEN + 16];
+        snprintf(text, sizeof text, "%se%d", n ? sig : "0", (int16_t)gm_r16(d + 2));
+        x = strtod(text, NULL);
+    }
+    cpu_set_fpr(1, gm_r8(d) ? -x : x);
+}
+
+/* sqrt(double) -> double: MathLib's, for a classic program (a Mach-O
+   one's C library is libc.c's). */
+static void h_sqrt(void) { cpu_set_fpr(1, sqrt(cpu_fpr(1))); }
+
 void misc_set_exit_hook(void (*fn)(void)) { M.exit_hook = fn; }
 
 void misc_exit(const char *why, int status) {
@@ -616,6 +679,8 @@ void misc_register(void) {
     trap_register("GetMBarHeight", h_get_mbar_height);
     trap_register("SetA5", h_set_a5);
     trap_register("SetCurrentA5", h_set_a5);
+    trap_register("LMGetCurrentA5", h_lm_get_current_a5);
+    trap_register("SysEnvirons", h_sys_environs);
     trap_register("NewAEEventHandlerUPP", h_new_ae_event_handler_upp);
     trap_register("AEInstallEventHandler", h_ae_install_event_handler);
     trap_register("ICStart", h_ic_start);
@@ -626,5 +691,9 @@ void misc_register(void) {
     trap_register("TISCopyCurrentASCIICapableKeyboardInputSource", h_tis_copy_ascii_capable_source);
     trap_register("TISSelectInputSource", h_tis_select_input_source);
     trap_register("num2dec", h_num2dec);
+    trap_register("dec2num", h_dec2num);
+    trap_register("sqrt", h_sqrt);
+    trap_register("p2cstr", h_p2cstr);
+    trap_register("c2pstr", h_c2pstr);
     trap_register("ExitToShell", h_exit_to_shell);
 }

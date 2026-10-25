@@ -80,7 +80,7 @@ typedef struct {
 
 typedef enum {
     KIND_DLOG,      /* GetNewDialog */
-    KIND_ALERT,     /* Alert, StopAlert */
+    KIND_ALERT,     /* Alert, StopAlert, NoteAlert */
     KIND_NIB,       /* CreateWindowFromNib */
     KIND_STD_ALERT, /* CreateStandardAlert */
 } dialog_kind;
@@ -702,7 +702,7 @@ static const char *button_title(dialog *d, int item1, char *buf, size_t cap) {
     return buf;
 }
 
-/* Alert(id, filter) and StopAlert. The default item: bit 3 of the first
+/* Alert(id, filter), StopAlert and NoteAlert. The default item: bit 3 of the first
    stage's 4 bits in the ALRT's stages word picks item 2, otherwise item 1.
    A Mac OS X game (MONSTER FAIR, which has no resources) still calls Alert
    on a few paths it kept from Mac OS 9; there Alert finds no ALRT and
@@ -1374,9 +1374,14 @@ static void h_run_standard_alert(void) {
     trap_return(NO_ERR);
 }
 
+/* InitDialogs(resumeProc): there is no system error to resume from. */
+static void h_init_dialogs(void) {}
+
 void dialogs_register(void) {
+    trap_register("InitDialogs", h_init_dialogs);
     trap_register("Alert", h_alert);
     trap_register("StopAlert", h_alert);
+    trap_register("NoteAlert", h_alert);
     trap_register("ParamText", h_param_text);
     trap_register("GetNewDialog", h_get_new_dialog);
     trap_register("ModalDialog", h_modal_dialog);

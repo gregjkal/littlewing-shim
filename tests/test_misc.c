@@ -19,6 +19,7 @@ static const char *const names[] = {
     "AEInstallEventHandler", "ICStart", "ICStop", "ExitToShell", "ICLaunchURL", "num2dec",
     "LSOpenCFURLRef", "SetTextServiceLanguage", "TISCopyCurrentASCIICapableKeyboardInputSource",
     "TISSelectInputSource", "SetA5", "SetCurrentA5", "Fix2X", "Long2Fix",
+    "LMGetCurrentA5", "SysEnvirons", "dec2num", "p2cstr", "c2pstr", "sqrt",
 };
 
 static void setup(void) {
@@ -142,6 +143,19 @@ TEST(misc_string_conversions) {
     call_import("c2pstrcpy", 2, p, c);
     gm_read_pstr(p, s);
     CHECK_STR(s, "Loony");
+}
+
+TEST(misc_string_conversions_in_place) {
+    setup();
+    uint32_t p = scratch(256);
+    char s[256];
+    gm_write_pstr(p, "Tristan");
+    CHECK_EQ(call_import("p2cstr", 1, p), p);
+    CHECK(gm_read_cstr(p, s, sizeof s));
+    CHECK_STR(s, "Tristan");
+    CHECK_EQ(call_import("c2pstr", 1, p), p);
+    gm_read_pstr(p, s);
+    CHECK_STR(s, "Tristan");
 }
 
 TEST(misc_block_move_data_handles_overlap) {
@@ -460,12 +474,30 @@ TEST(misc_set_a5_changes_nothing_and_returns_zero) {
     CHECK_EQ(call_import("SetCurrentA5", 0), 0);
     CHECK_EQ(call_import("SetA5", 1, 0x1234u), 0);
     CHECK_EQ(call_import("SetCurrentA5", 0), 0);
+    CHECK_EQ(call_import("LMGetCurrentA5", 0), 0);
 }
 
-/* Fix2X(f) as the game calls it: guest_call puts the registers back, so
-   guest code (through a transition vector) stores the f1 it returns. */
-static double fix2x(uint32_t f) {
-    uint32_t t = GUEST_TRAP_ADDR(trap_find("Fix2X")), out = scratch(8), code = scratch(64);
+/* Tristan checks the System's version, the processor, the FPU and Color
+   QuickDraw before it runs. */
+TEST(misc_sys_environs_reports_a_color_68040) {
+    setup();
+    uint32_t rec = scratch(16);
+    memset(gm_ptr(rec, 16), 0xAA, 16);
+    CHECK_EQ(call_import("SysEnvirons", 2, 1u, rec), 0);
+    CHECK_EQ(gm_r16(rec), 1);
+    CHECK_EQ(gm_r16(rec + 4), MISC_SYSTEM_VERSION_PEF);
+    CHECK_EQ(gm_r16(rec + 6), 5);
+    CHECK_EQ(gm_r8(rec + 8), 1);
+    CHECK_EQ(gm_r8(rec + 9), 1);
+    CHECK_EQ(gm_r16(rec + 10), 0);
+    CHECK_EQ((int16_t)gm_r16(rec + 14), -1);
+}
+
+/* A call returning a double, as the game makes it: guest_call puts the
+   registers back, so guest code (through a transition vector) stores the
+   f1 it returns. */
+static double fp_call(const char *name, uint32_t f) {
+    uint32_t t = GUEST_TRAP_ADDR(trap_find(name)), out = scratch(8), code = scratch(64);
     const uint32_t words[] = {
         PPC_MFLR_R0, PPC_SAVE_LR, PPC_PUSH64, ppc_lis(12, t >> 16), ppc_ori(12, 12, t & 0xFFFF),
         0x7D8903A6, /* mtctr r12 */
@@ -481,6 +513,36 @@ static double fix2x(uint32_t f) {
     double d;
     memcpy(&d, &bits, 8);
     return d;
+}
+
+static double fix2x(uint32_t f) { return fp_call("Fix2X", f); }
+
+static double dec2num(bool neg, int16_t exp, const char *sig) {
+    uint32_t d = scratch(42);
+    gm_w8(d, neg);
+    gm_w16(d + 2, (uint16_t)exp);
+    gm_w8(d + 4, (uint8_t)strlen(sig));
+    memcpy(gm_ptr(d + 5, 36), sig, strlen(sig));
+    return fp_call("dec2num", d);
+}
+
+TEST(misc_dec2num_reads_the_decimal_record) {
+    setup();
+    CHECK(dec2num(true, -3, "2500") == -2.5);
+    CHECK(dec2num(false, 2, "12") == 1200.0);
+    CHECK(dec2num(false, 0, "0") == 0.0);
+    CHECK(isinf(dec2num(false, 0, "I")));
+    CHECK(isnan(dec2num(false, 0, "N")));
+}
+
+static double sqrt_of(double x) {
+    cpu_set_fpr(1, x);
+    return fp_call("sqrt", 0);
+}
+
+TEST(misc_sqrt) {
+    setup();
+    CHECK(sqrt_of(2.0) == sqrt(2.0));
 }
 
 TEST(misc_fixed_point) {

@@ -16,6 +16,7 @@ static const char *const names[] = {
     "FSpCreate", "FSWrite", "SetEOF", "PBFlushFileSync", "FSPathMakeRef", "FSGetDataForkName",
     "FSOpenFork", "FSGetForkSize", "FSGetForkPosition", "FSSetForkPosition", "FSCloseFork",
     "FSRead", "FindFolder", "FSpGetFInfo", "ResolveAliasFile", "NewAlias", "FlushVol",
+    "Create", "FSOpen", "FSDelete", "GetVRefNum", "SetVol",
 };
 
 static char dir[1024], data[1100];
@@ -711,5 +712,46 @@ TEST(files_the_default_directory_can_be_the_programs_folder) {
     CHECK_EQ(gm_r32(spec + 2), FILES_ROOT_DIRID);
     files_init(dir, data);
     CHECK_EQ(make_spec("Caf\x8e", spec), 0); /* the game folder again */
+    teardown();
+}
+
+static uint32_t name_of(const char *mac) {
+    uint32_t name = scratch(256);
+    gm_write_pstr(name, mac);
+    return name;
+}
+
+/* The calls a System 7 program makes with a name and a volume. */
+TEST(files_name_and_volume_calls) {
+    setup();
+    uint32_t out = scratch(2);
+    CHECK_EQ((int16_t)call_import("FSOpen", 3, name_of(":LL Data:effect.bin"), 0u, out), 0);
+    uint16_t r = gm_r16(out);
+    CHECK_STR(read_at(r, 0, 5), "hello");
+    uint32_t vref = scratch(2);
+    CHECK_EQ(call_import("GetVRefNum", 2, (uint32_t)r, vref), 0);
+    CHECK_EQ((int16_t)gm_r16(vref), FILES_VREFNUM);
+    CHECK_EQ((int16_t)call_import("FSDelete", 2, name_of(":LL Data:effect.bin"), 0u), FILES_BUSY_ERR);
+    call_import("FSClose", 1, (uint32_t)r);
+    CHECK_EQ((int16_t)call_import("GetVRefNum", 2, (uint32_t)r, vref), FILES_RF_NUM_ERR);
+    CHECK_EQ((int16_t)call_import("FSDelete", 2, name_of(":LL Data:effect.bin"), 0u), FILES_LOCKED_ERR);
+    CHECK_STR(contents(dir, "LL Data/effect.bin"), "hello world");
+
+    uint32_t vol = (uint32_t)(int32_t)FILES_VREFNUM;
+    CHECK_EQ((int16_t)call_import("FSOpen", 3, name_of("Prefs"), vol, out), FILES_FNF_ERR);
+    CHECK_EQ(call_import("Create", 4, name_of("Prefs"), vol, 0x3F3F3F3Fu, 0x70726566u), 0);
+    CHECK_EQ((int16_t)call_import("Create", 4, name_of("Prefs"), 0u, 0u, 0u), FILES_DUP_FN_ERR);
+    char p[1200];
+    snprintf(p, sizeof p, "%s/Prefs", data);
+    CHECK(access(p, F_OK) == 0);
+    CHECK_EQ((int16_t)call_import("FSOpen", 3, name_of("Prefs"), 0u, out), 0);
+    call_import("FSClose", 1, (uint32_t)gm_r16(out));
+    CHECK_EQ(call_import("FSDelete", 2, name_of("Prefs"), 0u), 0);
+    CHECK(access(p, F_OK) != 0);
+    CHECK_EQ((int16_t)call_import("FSDelete", 2, name_of("Prefs"), 0u), FILES_FNF_ERR);
+    CHECK_EQ((int16_t)call_import("FSOpen", 3, name_of(":Nowhere:x"), 0u, out), FILES_DIR_NF_ERR);
+
+    CHECK_EQ(call_import("SetVol", 2, 0u, vol), 0);
+    CHECK_EQ((int16_t)call_import("SetVol", 2, 0u, (uint32_t)(int32_t)-5), FILES_NSV_ERR);
     teardown();
 }

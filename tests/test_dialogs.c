@@ -19,7 +19,7 @@
 #include "snapshot.h"
 
 static const char *const names[] = {
-    "Alert", "StopAlert", "ParamText", "GetNewDialog", "ModalDialog", "GetDialogItem",
+    "Alert", "StopAlert", "NoteAlert", "ParamText", "GetNewDialog", "ModalDialog", "GetDialogItem",
     "GetDialogItemText", "DisposeDialog", "DrawDialog",
 };
 static uint8_t *fork_buf;
@@ -89,6 +89,8 @@ static void child_auto_alert(void *unused) {
         exit(4);
     if (call_import("StopAlert", 2, 900u, 0u) != 1)
         exit(5);
+    if (call_import("NoteAlert", 2, 901u, 0u) != 1)
+        exit(7);
     if (misc_ticks() != 0) /* no waiting */
         exit(6);
 }

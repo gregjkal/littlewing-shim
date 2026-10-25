@@ -61,6 +61,15 @@
 #define PORT_BK_COLOR  84
 #define CGRAFPORT_SIZE 108
 
+/* QDGlobals, 206 bytes: a classic program's own, whose last field's
+   address it passes to InitGraf. */
+#define QDG_RAND_SEED   76
+#define QDG_SCREEN_BITS 80  /* a BitMap: baseAddr, rowBytes, bounds */
+#define QDG_ARROW       94  /* a Cursor, 68 bytes */
+#define QDG_PATTERNS    162 /* dkGray, ltGray, gray, black, white */
+#define QDG_THE_PORT    202
+#define QDGLOBALS_SIZE  206
+
 /* GDevice, 62 bytes. */
 #define GD_TYPE  4  /* 0 CLUT, 2 direct */
 #define GD_FLAGS 20

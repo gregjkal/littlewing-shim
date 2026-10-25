@@ -29,5 +29,6 @@
    getters, GetFNum, GetAppFont, GetSysFont, GetFontInfo, FMSwapFont,
    DrawString, DrawText, DrawChar, StringWidth, TextWidth, CharWidth,
    EqualString, IdenticalString, IdenticalText, CompareText and
-   StringToNum. Requires qd_init() and mm_init(). */
+   StringToNum, and InitFonts and TEInit, which do nothing. Requires
+   qd_init() and mm_init(). */
 void text_register(void);

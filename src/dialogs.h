@@ -5,7 +5,7 @@
 
 #include "events.h"
 
-/* Dialog Manager: Alert, StopAlert and ParamText; GetNewDialog,
+/* Dialog Manager: Alert, StopAlert, NoteAlert and ParamText; GetNewDialog,
    DrawDialog, ModalDialog, GetDialogItem, GetDialogItemText and
    DisposeDialog.
 
@@ -34,7 +34,7 @@
    CreateStandardAlert and RunStandardAlert draw the error and explanation
    with an OK button, as given (no ParamText substitutions either).
 
-   With LOONY_AUTO_ALERTS=1, Alert, StopAlert and RunStandardAlert draw
+   With LOONY_AUTO_ALERTS=1, the alerts and RunStandardAlert draw
    nothing and answer at once with their default item, as if the user
    pressed Return (headless runs whose golden frames predate dialogs use
    this), and RunAppModalLoopForWindow presses the default button. */

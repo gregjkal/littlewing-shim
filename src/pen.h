@@ -1,4 +1,5 @@
 #pragma once
+#include <stdint.h>
 
 /* QuickDraw's pen and patterns, the shapes drawn with them, and the
    rectangle and point arithmetic. Reference: "Inside Macintosh: Imaging
@@ -16,6 +17,10 @@
    point between their ends, both included; a hidden pen (HidePen) moves
    but draws nothing. Rounded rectangles' corners are quarter ellipses of
    the oval's width and height. */
+
+/* Writes the QuickDraw globals' five patterns at addr, in their order
+   there: dkGray, ltGray, gray, black, white (8 bytes each). */
+void pen_write_qd_patterns(uint32_t addr);
 
 /* Registers MoveTo, Move, GetPen, LineTo, Line, PenSize, PenMode, PenPat,
    PenNormal, HidePen, ShowPen, GetPenState, SetPenState, BackPat, FrameRect,

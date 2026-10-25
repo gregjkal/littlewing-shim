@@ -420,7 +420,14 @@ static void h_string_to_num(void) {
     gm_w32(trap_arg(1), minus ? 0u - v : v);
 }
 
+/* InitFonts and TEInit: the fonts are the host's, and TextEdit is used
+   only by dialogs' own items, so neither needs setting up. */
+static void h_init_fonts(void) {}
+static void h_te_init(void) {}
+
 void text_register(void) {
+    trap_register("InitFonts", h_init_fonts);
+    trap_register("TEInit", h_te_init);
     trap_register("TextFont", h_text_font);
     trap_register("TextSize", h_text_size);
     trap_register("TextFace", h_text_face);
