@@ -11,6 +11,7 @@
 #include "memmgr.h"
 #include "misc.h"
 #include "play.h"
+#include "qd.h"
 #include "replay.h"
 #include "script.h"
 #include "snapshot.h"
@@ -95,6 +96,7 @@ static struct {
     int16_t mouse_h, mouse_v;
     bool mouse_down;
     uint32_t input_tick; /* the tick a mouse or key poll last pumped at */
+    uint32_t active_window; /* the window the last activateEvt activated, or 0 */
 } E;
 
 /* A snapshot's walk (snapshot.h): the shim's hooks and LOONY_EXIT_AFTER
@@ -759,6 +761,8 @@ void events_forget_window(uint32_t window) {
         if (E.handlers[i].target != t)
             E.handlers[kept++] = E.handlers[i];
     E.nhandlers = kept;
+    if (E.active_window == window) /* a Mac sends no deactivate for a disposed window */
+        E.active_window = 0;
     if (E.focus_window == t) {
         E.focus_window = 0;
         for (int i = 0; i < E.nhandlers; i++) /* the newest window still with a handler */
@@ -982,7 +986,9 @@ static void h_quit_application_event_loop(void) { E.quit = true; }
    (a Point, 4) and modifiers (2). A raw key down or repeat is a keyDown or
    autoKey whose message is the key code << 8 | the character; key ups are
    left out, as the Mac's default system event mask has them; activation is
-   an osEvt (suspend or resume); the quit Apple Event is a kHighLevelEvent
+   an osEvt (suspend or resume); a window coming to the front is an
+   activateEvt (activeFlag in modifiers), after the deactivate of the one
+   it covers, ahead of everything queued; the quit Apple Event is a kHighLevelEvent
    that AEProcessAppleEvent hands to the game's quit handler. Modifier
    changes and commands have no EventRecord and are dropped. */
 
@@ -991,12 +997,14 @@ static void h_quit_application_event_loop(void) { E.quit = true; }
 #define CL_MOUSE_UP   2
 #define CL_KEY_DOWN   3
 #define CL_AUTO_KEY   5
+#define CL_ACTIVATE   8
 #define CL_OS         15
 #define CL_HIGH_LEVEL 23
 #define CL_HIGH_LEVEL_MASK 0x0400u /* not 1 << 23: the mask has 16 bits */
 #define CL_BTN_STATE  0x0080u /* in modifiers: the button is up */
 #define CL_SUSPEND_RESUME 0x01000000u
 #define CL_RESUME_FLAG 1u
+#define CL_ACTIVE_FLAG 0x0001u /* in modifiers: an activate, not a deactivate */
 #define EVENT_RECORD_SIZE 16
 #define CARET_TICKS 32
 #define DOUBLE_CLICK_TICKS 30
@@ -1044,10 +1052,33 @@ static void write_record(uint32_t rec, int what, uint32_t message, int16_t h, in
     gm_w16(rec + 14, (uint16_t)((modifiers & 0xFF00u) | (button ? 0 : CL_BTN_STATE)));
 }
 
+/* The Window Manager's activate events, which come before any other: when
+   the front window isn't the one the game was last told is active, the old
+   one is deactivated (unless it is gone), then the new one activated.
+   PowerPlant starts a window's work when it is activated, so a game whose
+   window comes to the front waits on this. */
+static bool classic_activate(uint32_t mask, uint32_t rec, bool take) {
+    uint32_t front = qd_front_window();
+    if (E.active_window && !qd_is_window(E.active_window)) /* events_forget_window clears it too */
+        E.active_window = 0;
+    if (front == E.active_window || !(mask & 1u << CL_ACTIVATE))
+        return false;
+    bool activate = E.active_window == 0;
+    uint32_t w = activate ? front : E.active_window;
+    write_record(rec, CL_ACTIVATE, w, E.mouse_h, E.mouse_v, current_modifiers(), E.mouse_down);
+    if (activate)
+        gm_w16(rec + 14, gm_r16(rec + 14) | CL_ACTIVE_FLAG);
+    if (take)
+        E.active_window = activate ? w : 0;
+    return true;
+}
+
 /* Writes the first queued event in mask to rec and, with take, removes it;
    with take, events that have no EventRecord go too. False if there is
    none: rec then gets a null event. */
 static bool classic_next(uint32_t mask, uint32_t rec, bool take) {
+    if (classic_activate(mask, rec, take))
+        return true;
     for (int k = 0; k < E.qcount;) {
         int idx = E.queue[(E.qhead + k) % EV_MAX_EVENTS];
         ev_event *e = &E.events[idx];
