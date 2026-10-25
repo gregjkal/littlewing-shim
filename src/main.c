@@ -322,8 +322,8 @@ int main(int argc, char **argv) {
             return startup_error("LOONY_GAME names no known game: %s", forced);
         game_folder(game, dir, sizeof dir);
     } else {
-        const game_info *installed[8];
-        int n = game_installed(installed, 8);
+        const game_info *installed[PICKER_MAX];
+        int n = game_installed(installed, PICKER_MAX);
         if (n == 0)
             return no_game_error();
         if (n == 1) {
@@ -442,6 +442,8 @@ int main(int argc, char **argv) {
     if (!replay_start(game->id, buf, len, have_data ? data_dir : NULL, err, sizeof err))
         return startup_error("%s", err);
     bool saving = files_init(dir, have_data ? data_dir : NULL);
+    if (!macho) /* a classic program may save into its own resource fork (Tristan) */
+        rsrc_app_file(game->exe);
     if (macho) { /* the folder the program is in, where a Carbon program's relative paths start */
         char exe_dir[PATH_MAX];
         snprintf(exe_dir, sizeof exe_dir, "%s", game->exe);

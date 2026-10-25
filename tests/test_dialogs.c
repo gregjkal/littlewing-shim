@@ -19,7 +19,7 @@
 #include "snapshot.h"
 
 static const char *const names[] = {
-    "Alert", "StopAlert", "ParamText", "GetNewDialog", "ModalDialog", "GetDialogItem",
+    "Alert", "StopAlert", "NoteAlert", "InitDialogs", "ParamText", "GetNewDialog", "ModalDialog", "GetDialogItem",
     "GetDialogItemText", "DisposeDialog", "DrawDialog",
 };
 static uint8_t *fork_buf;
@@ -85,10 +85,13 @@ static void child_auto_alert(void *unused) {
     setenv("LOONY_AUTO_ALERTS", "1", 1);
     if (!setup())
         exit(3);
+    call_import("InitDialogs", 1, 0u); /* changes nothing */
     if (call_import("Alert", 2, 901u, 0u) != 1)
         exit(4);
     if (call_import("StopAlert", 2, 900u, 0u) != 1)
         exit(5);
+    if (call_import("NoteAlert", 2, 901u, 0u) != 1)
+        exit(7);
     if (misc_ticks() != 0) /* no waiting */
         exit(6);
 }
@@ -254,6 +257,82 @@ TEST(dialogs_draw_dialog_paints_it_again) {
     char out[16384];
     CHECK_EQ(test_run_child(child_draw_dialog, NULL, out, sizeof out), 2);
     CHECK_CONTAINS(out, "DrawDialog: 0x0b000000 is not a dialog");
+}
+
+/* Tristan's machine: a 640x480 screen, its resources, and the Window
+   Manager calls it makes on a DialogRef. */
+static const char *const tr_names[] = {
+    "GetNewDialog", "ModalDialog", "DisposeDialog", "ShowWindow", "HideWindow", "SelectWindow",
+};
+
+static void tr_setup(void) {
+    harness_init(tr_names, sizeof tr_names / sizeof tr_names[0]);
+    mm_init();
+    setenv("LOONY_FIXED_CLOCK", "1", 1);
+    misc_init();
+    unsetenv("LOONY_FIXED_CLOCK");
+    qd_init(640, 480, 8);
+    qd_register();
+    events_init();
+    dialogs_init();
+    dialogs_register();
+    char path[1100], err[256];
+    size_t len;
+    snprintf(path, sizeof path, "%s/..namedfork/rsrc", test_tr_exe_path());
+    uint8_t *buf = read_file(path, &len);
+    if (!buf || !rsrc_open(buf, len, err, sizeof err))
+        fatal("can't open Tristan's resource fork");
+}
+
+/* Tristan's Register: GetNewDialog(911), then ShowWindow, HideWindow and
+   SelectWindow on the DialogRef, which isn't a window port here. DITL 911's
+   item 1 is an OK button below the dialog's box (at 230 in a box 142
+   high): a Mac clips it away and a click there misses the dialog, but
+   Return still answers item 1, the default ModalDialog uses, which
+   Tristan's loop passes over. The box is at (86, 112), 468 by 142. */
+static void child_tristan_register_window_calls(void *unused) {
+    (void)unused;
+    tr_setup();
+    uint32_t blank = screen_hash();
+    uint32_t dlg = call_import("GetNewDialog", 3, 911u, 0u, 0xFFFFFFFFu);
+    uint32_t drawn = screen_hash();
+    if (drawn == blank) /* the DLOG is visible */
+        exit(4);
+    call_import("ShowWindow", 1, dlg); /* already shown */
+    call_import("SelectWindow", 1, dlg);
+    if (screen_hash() != drawn)
+        exit(5);
+    for (int y = 112 + 142 + 4; y < 480; y++) /* nothing below the box and its frame: no stray OK */
+        for (int x = 0; x < 640; x++)
+            if (screen_at(x, y) != 0)
+                exit(6);
+    call_import("HideWindow", 1, dlg);
+    if (screen_hash() != blank)
+        exit(7);
+    call_import("ShowWindow", 1, dlg);
+    if (screen_hash() != drawn)
+        exit(8);
+    /* where the OK would be (116..174, 342..362), then Cancel (356..434, 227..247) */
+    script("5 click 145 352\n6 click 395 237\n");
+    uint32_t hit = scratch(2);
+    call_import("ModalDialog", 2, 0u, hit);
+    if (gm_r16(hit) != 3)
+        exit(9);
+    script("10 down return\n11 up return\n");
+    call_import("ModalDialog", 2, 0u, hit);
+    if (gm_r16(hit) != 1)
+        exit(10);
+    call_import("DisposeDialog", 1, dlg);
+    if (screen_hash() != blank)
+        exit(11);
+    call_import("ShowWindow", 1, dlg); /* disposed: crashes */
+}
+
+TEST(dialogs_tristan_shows_hides_and_selects_its_register_dialog) {
+    SKIP_UNLESS_TR();
+    char out[16384];
+    CHECK_EQ(test_run_child(child_tristan_register_window_calls, NULL, out, sizeof out), 2);
+    CHECK_CONTAINS(out, "ShowWindow: 0x0b000000 is not a port");
 }
 
 /* ModalDialog runs the newest dialog, whatever slot it landed in. */

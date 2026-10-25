@@ -11,6 +11,7 @@
 
 #include "cf.h"
 #include "cpu.h"
+#include "files.h"
 #include "guest_mem.h"
 #include "memmgr.h"
 #include "rsrc.h"
@@ -195,6 +196,25 @@ static void h_gestalt(void) {
     trap_return((uint32_t)MISC_GESTALT_UNDEF_SELECTOR_ERR);
 }
 
+/* SysEnvirons(versionRequested, &SysEnvRec), the System 6 way to ask what
+   Gestalt answers: the System's version, a 68040 with an FPU (as the
+   PowerPC Macs' 68K emulator was taken to be by programs that check), and
+   Color QuickDraw. The record: environsVersion, machineType,
+   systemVersion, processor (2 bytes each), hasFPU, hasColorQD (1 each),
+   keyBoardType, atDrvrVersNum, sysVRefNum (2 each). */
+#define ENV_68040 5
+static void h_sys_environs(void) {
+    uint32_t rec = trap_arg(1);
+    memset(gm_ptr(rec, 16), 0, 16);
+    gm_w16(rec, (uint16_t)trap_arg(0));
+    gm_w16(rec + 4, (uint16_t)system_version);
+    gm_w16(rec + 6, ENV_68040);
+    gm_w8(rec + 8, 1);
+    gm_w8(rec + 9, 1);
+    gm_w16(rec + 14, (uint16_t)FILES_VREFNUM);
+    trap_return(0);
+}
+
 /* ---- time ---- */
 
 static void idle_if_new_tick(uint32_t t) {
@@ -353,6 +373,53 @@ static void h_get_date_time(void) {
     gm_w32(trap_arg(0), (uint32_t)(now + gmtoff + MAC_EPOCH_OFFSET));
 }
 
+/* IUDateString(unsigned long dateTime, DateForm, Str255 result) and
+   IUTimeString(dateTime, Boolean wantSeconds, Str255 result): a Mac's
+   date and time (local, seconds since 1904) as the U.S. System wrote
+   them: "10/25/26", "Sunday, October 25, 2026" (longDate),
+   "Sun, Oct 25, 2026" (abbrevDate); "1:05 PM" or "1:05:09 PM". */
+static struct tm mac_time(uint32_t secs) {
+    time_t t = (time_t)((int64_t)secs - (int64_t)MAC_EPOCH_OFFSET);
+    struct tm tm;
+    gmtime_r(&t, &tm);
+    return tm;
+}
+
+static void h_iu_date_string(void) {
+    struct tm tm = mac_time(trap_arg(0));
+    static const char *const days[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday",
+                                       "Friday", "Saturday"};
+    static const char *const months[] = {"January", "February", "March", "April", "May", "June", "July",
+                                         "August", "September", "October", "November", "December"};
+    char s[64];
+    switch (trap_arg(1) & 0xFF) {
+    case 1:
+        snprintf(s, sizeof s, "%s, %s %d, %d", days[tm.tm_wday], months[tm.tm_mon], tm.tm_mday,
+                 tm.tm_year + 1900);
+        break;
+    case 2:
+        snprintf(s, sizeof s, "%.3s, %.3s %d, %d", days[tm.tm_wday], months[tm.tm_mon], tm.tm_mday,
+                 tm.tm_year + 1900);
+        break;
+    default:
+        snprintf(s, sizeof s, "%d/%d/%02d", tm.tm_mon + 1, tm.tm_mday, tm.tm_year % 100);
+        break;
+    }
+    gm_write_pstr(trap_arg(2), s);
+}
+
+static void h_iu_time_string(void) {
+    struct tm tm = mac_time(trap_arg(0));
+    int h = tm.tm_hour % 12 ? tm.tm_hour % 12 : 12;
+    const char *half = tm.tm_hour < 12 ? "AM" : "PM";
+    char s[32];
+    if (trap_arg(1) & 0xFF)
+        snprintf(s, sizeof s, "%d:%02d:%02d %s", h, tm.tm_min, tm.tm_sec, half);
+    else
+        snprintf(s, sizeof s, "%d:%02d %s", h, tm.tm_min, half);
+    gm_write_pstr(trap_arg(2), s);
+}
+
 /* ReadLocation(MachineLocation *): latitude and longitude 0, then gmtDelta in
    the low 24 bits with the daylight-saving flag (0x80) in the high byte. */
 static void h_read_location(void) {
@@ -387,6 +454,21 @@ static void h_c2pstrcpy(void) {
     char s[256];
     gm_read_cstr(trap_arg(1), s, sizeof s);
     gm_write_pstr(trap_arg(0), s);
+}
+
+/* p2cstr and c2pstr convert a string in place and return it. */
+static void h_p2cstr(void) {
+    char s[256];
+    gm_read_pstr(trap_arg(0), s);
+    gm_write_cstr(trap_arg(0), s);
+    trap_return(trap_arg(0));
+}
+
+static void h_c2pstr(void) {
+    char s[256];
+    gm_read_cstr(trap_arg(0), s, sizeof s);
+    gm_write_pstr(trap_arg(0), s);
+    trap_return(trap_arg(0));
 }
 
 static void h_block_move_data(void) {
@@ -426,8 +508,9 @@ static void h_tis_copy_ascii_capable_source(void) { trap_return(0); }
 static void h_tis_select_input_source(void) { trap_return((uint32_t)-50); }
 static void h_get_mbar_height(void) { trap_return(0); }
 /* A PowerPC program has no A5 world: SetA5 and SetCurrentA5 change nothing
-   and return the old A5, 0. */
+   and return the old A5, 0, which LMGetCurrentA5 reports too. */
 static void h_set_a5(void) { trap_return(0); }
+static void h_lm_get_current_a5(void) { trap_return(0); }
 
 /* ---- Apple Events and Internet Config ---- */
 
@@ -565,6 +648,33 @@ static void h_num2dec(void) {
     memcpy(gm_ptr(d + 5, MISC_SIGDIGLEN), dec.sig, n);
 }
 
+/* dec2num(const decimal *) -> double: sig times ten to the exp, with its
+   sign; a sig of "I" is infinity and one of "N" not a number. */
+static void h_dec2num(void) {
+    uint32_t d = trap_arg(0);
+    char sig[MISC_SIGDIGLEN + 1];
+    uint8_t n = gm_r8(d + 4);
+    if (n > MISC_SIGDIGLEN)
+        n = MISC_SIGDIGLEN;
+    memcpy(sig, gm_ptr(d + 5, MISC_SIGDIGLEN), n);
+    sig[n] = '\0';
+    double x;
+    if (sig[0] == 'I')
+        x = INFINITY;
+    else if (sig[0] == 'N')
+        x = NAN;
+    else {
+        char text[MISC_SIGDIGLEN + 16];
+        snprintf(text, sizeof text, "%se%d", n ? sig : "0", (int16_t)gm_r16(d + 2));
+        x = strtod(text, NULL);
+    }
+    cpu_set_fpr(1, gm_r8(d) ? -x : x);
+}
+
+/* sqrt(double) -> double: MathLib's, for a classic program (a Mach-O
+   one's C library is libc.c's). */
+static void h_sqrt(void) { cpu_set_fpr(1, sqrt(cpu_fpr(1))); }
+
 void misc_set_exit_hook(void (*fn)(void)) { M.exit_hook = fn; }
 
 void misc_exit(const char *why, int status) {
@@ -601,6 +711,8 @@ void misc_register(void) {
     trap_register("Microseconds", h_microseconds);
     trap_register("Delay", h_delay);
     trap_register("GetDateTime", h_get_date_time);
+    trap_register("IUDateString", h_iu_date_string);
+    trap_register("IUTimeString", h_iu_time_string);
     trap_register("ReadLocation", h_read_location);
     trap_register("NumToString", h_num_to_string);
     trap_register("p2cstrcpy", h_p2cstrcpy);
@@ -616,6 +728,8 @@ void misc_register(void) {
     trap_register("GetMBarHeight", h_get_mbar_height);
     trap_register("SetA5", h_set_a5);
     trap_register("SetCurrentA5", h_set_a5);
+    trap_register("LMGetCurrentA5", h_lm_get_current_a5);
+    trap_register("SysEnvirons", h_sys_environs);
     trap_register("NewAEEventHandlerUPP", h_new_ae_event_handler_upp);
     trap_register("AEInstallEventHandler", h_ae_install_event_handler);
     trap_register("ICStart", h_ic_start);
@@ -626,5 +740,9 @@ void misc_register(void) {
     trap_register("TISCopyCurrentASCIICapableKeyboardInputSource", h_tis_copy_ascii_capable_source);
     trap_register("TISSelectInputSource", h_tis_select_input_source);
     trap_register("num2dec", h_num2dec);
+    trap_register("dec2num", h_dec2num);
+    trap_register("sqrt", h_sqrt);
+    trap_register("p2cstr", h_p2cstr);
+    trap_register("c2pstr", h_c2pstr);
     trap_register("ExitToShell", h_exit_to_shell);
 }

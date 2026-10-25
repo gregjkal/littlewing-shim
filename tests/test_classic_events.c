@@ -11,6 +11,8 @@
 #include "memmgr.h"
 #include "misc.h"
 #include "qd.h"
+#include "rsrc.h"
+#include "util.h"
 
 /* The classic Event Manager a PowerPlant game (Golden Logres, Angel Egg)
    uses, on the Carbon queue. */
@@ -19,8 +21,8 @@ static const char *const names[] = {
     "WaitNextEvent", "GetNextEvent", "EventAvail", "Button", "StillDown", "GetKeys",
     "GetCurrentKeyModifiers", "GetGlobalMouse", "GetCaretTime", "GetDblTime",
     "GetCurrentEventLoop", "AEProcessAppleEvent", "NewEventLoopTimerUPP", "GetMainEventLoop",
-    "InstallEventLoopTimer", "ShowWindow", "HideWindow", "SelectWindow", "DisposeWindow",
-    "BeginFullScreen", "EndFullScreen",
+    "InstallEventLoopTimer", "GetNewCWindow", "BeginUpdate", "EndUpdate", "ShowWindow",
+    "HideWindow", "SelectWindow", "DisposeWindow", "BeginFullScreen", "EndFullScreen", "FlushEvents",
 };
 
 #define EVERY 0xFFFFu
@@ -29,10 +31,10 @@ static const char *const names[] = {
 #define TV_PROC (GUEST_IMAGE_BASE + 0x8100)
 #define COUNTER (GUEST_IMAGE_BASE + 0x8200)
 
-static void setup(void) {
+static void setup_with(const char *const *imports, int n) {
     unsetenv("LOONY_EXIT_AFTER");
     setenv("LOONY_FIXED_CLOCK", "1", 1);
-    harness_init(names, sizeof names / sizeof names[0]);
+    harness_init(imports, n);
     mm_init();
     misc_init();
     misc_register();
@@ -42,6 +44,8 @@ static void setup(void) {
     events_register();
     unsetenv("LOONY_FIXED_CLOCK");
 }
+
+static void setup(void) { setup_with(names, sizeof names / sizeof names[0]); }
 
 typedef struct {
     uint16_t what, modifiers;
@@ -215,10 +219,79 @@ TEST(classic_events_the_quit_comes_as_a_high_level_event) {
     CHECK_CONTAINS(out, "quit requested; the game has no quit handler");
 }
 
+/* A classic game that takes no Apple Events (Tristan) gets the quit as
+   Cmd-Q, which its menu's key equivalent turns into its Quit. */
+TEST(classic_events_the_quit_comes_as_cmd_q_without_apple_events) {
+    static const char *const plain[] = {"WaitNextEvent"};
+    setup_with(plain, sizeof plain / sizeof plain[0]);
+    take_launch_events();
+    events_request_quit();
+    record e;
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 3); /* keyDown */
+    CHECK_EQ(e.message, 0x0C71u);
+    CHECK(e.modifiers & 0x0100u); /* cmdKey */
+    CHECK(events_quit_requested());
+}
+
+/* The same before the game's first event call: Tristan shows its startup
+   alerts before it calls WaitNextEvent, and a quit then must still come as
+   Cmd-Q, not as an Apple Event it never reads. */
+TEST(classic_events_a_quit_before_the_first_event_call_comes_as_cmd_q) {
+    static const char *const plain[] = {"WaitNextEvent"};
+    setup_with(plain, sizeof plain / sizeof plain[0]);
+    events_request_quit();
+    record e;
+    bool cmd_q = false;
+    for (int i = 0; i < 4 && !cmd_q; i++) {
+        CHECK(wne(EVERY, &e));
+        cmd_q = e.what == 3 && e.message == 0x0C71u && (e.modifiers & 0x0100u);
+    }
+    CHECK(cmd_q);
+}
+
 TEST(classic_events_caret_and_double_click_times) {
     setup();
     CHECK_EQ(call_import("GetCaretTime", 0), 32);
     CHECK_EQ(call_import("GetDblTime", 0), 30);
+}
+
+/* A window GetNewCWindow shows is activated first, then gets an updateEvt
+   after the queue's events, every time, until BeginUpdate takes it. */
+TEST(classic_events_update_a_new_window_until_begin_update) {
+    setup();
+    static const uint8_t wind[] = {0, 0, 0, 0, 0, 100, 0, 200, 0, 3, 1, 0, 0, 0, 0, 0, 0, 0, 0};
+    rsrc_entry res = {.type = FOURCC('W', 'I', 'N', 'D'), .id = 128, .len = sizeof wind};
+    const uint8_t *d = wind;
+    size_t len;
+    uint8_t *fork = rsrc_build(&res, &d, 1, &len);
+    char err[256];
+    CHECK(rsrc_open(fork, len, err, sizeof err));
+    qd_init(640, 480, 8);
+    qd_register();
+    record e;
+    CHECK(wne(EVERY, &e)); /* the resume */
+    uint32_t w = call_import("GetNewCWindow", 3, 128u, 0u, (uint32_t)-1);
+    events_post_key(SDL_SCANCODE_Z, true, false);
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 8); /* activateEvt, ahead of everything */
+    CHECK_EQ(e.message, w);
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 23); /* the open application Apple Event, queued first */
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 3); /* then the key */
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 6); /* updateEvt */
+    CHECK_EQ(e.message, w);
+    CHECK(!wne(KEY_DOWN_MASK, &e)); /* not in the mask */
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 6); /* again */
+    call_import("BeginUpdate", 1, w);
+    call_import("EndUpdate", 1, w);
+    CHECK(!wne(EVERY, &e));
+    CHECK_EQ(e.what, 0);
+    rsrc_close();
+    free(fork);
 }
 
 /* A window coming to the front is activated, ahead of anything queued, and
@@ -312,4 +385,80 @@ TEST(classic_events_activate_full_screen_begun_again) {
     CHECK_EQ(e.what, 8);
     CHECK_EQ(e.message, b);
     CHECK_EQ(e.modifiers & 1, 1);
+}
+
+/* A classic game that reads the keyboard with GetKeys and leaves the queue
+   alone (Tristan, while a ball is in play) loses its oldest input, as a Mac
+   does when the Operating System event queue is full, never the newest:
+   30 presses of Z and one of X leave 20 events, and X is the last. */
+TEST(classic_events_a_full_queue_drops_its_oldest_input) {
+    setup();
+    take_launch_events();
+    uint32_t km = scratch(16);
+    for (int i = 0; i < 30; i++) {
+        events_post_key(SDL_SCANCODE_Z, true, false);
+        events_post_key(SDL_SCANCODE_Z, false, false);
+    }
+    events_post_key(SDL_SCANCODE_X, true, false); /* key code 0x07 */
+    CHECK_EQ(events_queued(), EV_CLASSIC_QUEUE);
+    call_import("GetKeys", 1, km); /* play input is the keyboard's state, not the queue's */
+    CHECK_EQ(gm_r8(km), 1u << 7);
+    record e;
+    int downs = 0;
+    while (wne(EVERY, &e)) {
+        CHECK_EQ(e.what, 3);
+        downs++;
+    }
+    CHECK_EQ(downs, EV_CLASSIC_QUEUE); /* the last 19 Zs and X: their ups take no place */
+    CHECK_EQ(e.what, 0);
+    events_post_key(SDL_SCANCODE_X, false, false);
+    events_post_key(SDL_SCANCODE_C, true, false);
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.message >> 8, 0x08u); /* C */
+}
+
+/* FlushEvents takes the keyboard and mouse events in its mask, oldest
+   first, up to the first in its stop mask; the rest stay in order. */
+TEST(classic_events_flush_events_stops_at_the_stop_mask) {
+    setup();
+    take_launch_events();
+    events_post_key(SDL_SCANCODE_Z, true, false);
+    events_post_mouse(10, 20, true);
+    events_post_key(SDL_SCANCODE_X, true, false);
+    events_post_mouse(10, 20, false);
+    events_post_key(SDL_SCANCODE_C, true, false);
+    call_import("FlushEvents", 2, KEY_DOWN_MASK | 1u << 1, 1u << 2); /* keyDown and mouseDown, stop at mouseUp */
+    CHECK_EQ(events_queued(), 2);
+    record e;
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 2);
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 3);
+    CHECK_EQ(e.message >> 8, 0x08u); /* C */
+    events_post_key(SDL_SCANCODE_Z, true, false);
+    events_post_mouse(10, 20, true);
+    call_import("FlushEvents", 2, EVERY, 0u);
+    CHECK_EQ(events_queued(), 0);
+}
+
+/* A Carbon game's FlushEvents leaves its queue alone. */
+TEST(classic_events_a_carbon_games_flush_events_does_nothing) {
+    setup();
+    events_post_key(SDL_SCANCODE_Z, true, false);
+    events_post_key(SDL_SCANCODE_Z, false, false);
+    int queued = events_queued();
+    CHECK(queued >= 2);
+    call_import("FlushEvents", 2, EVERY, 0u);
+    CHECK_EQ(events_queued(), queued);
+}
+
+/* A Carbon game's queue (Loony Labyrinth's) is left as it was: it holds
+   64 events, and what comes once it is full is dropped. */
+TEST(classic_events_a_carbon_games_queue_keeps_its_size) {
+    setup();
+    for (int i = 0; i < 40; i++) {
+        events_post_key(SDL_SCANCODE_Z, true, false);
+        events_post_key(SDL_SCANCODE_Z, false, false);
+    }
+    CHECK_EQ(events_queued(), EV_MAX_EVENTS);
 }

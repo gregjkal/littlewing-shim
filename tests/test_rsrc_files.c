@@ -15,7 +15,8 @@ static const char *const names[] = {
     "FSpCreateResFile", "CloseResFile",    "UpdateResFile", "WriteResource",    "ChangedResource",
     "AddResource",     "CountResources",   "GetIndResource", "GetResAttrs",     "SetResAttrs",
     "GetResInfo",      "SetResInfo",       "GetIndString",  "Get1NamedResource", "Count1Resources",
-    "Get1IndResource", "GetPicture", "KillPicture",
+    "Get1IndResource", "GetPicture", "KillPicture", "RemoveResource",
+    "OpenResFile", "OpenRFPerm", "CreateResFile",
 };
 
 #define TEXT FOURCC('T', 'E', 'X', 'T')
@@ -344,6 +345,78 @@ TEST(rsrcfile_write_resource_and_read_only_files) {
     CHECK_EQ(res_error(), 0);
     CHECK(host_has(data, "Machine", true, "FROM file"));
     CHECK(host_has(dir, "Machine", true, "from file"));
+    teardown();
+}
+
+/* A System 7 program opens and makes resource files by name. */
+TEST(rsrcfile_open_and_create_by_name) {
+    setup();
+    CHECK_EQ((int16_t)call_import("OpenResFile", 1, pstr("External Sound")), -1);
+    CHECK_EQ(res_error(), FILES_FNF_ERR);
+    int16_t ref = (int16_t)call_import("OpenResFile", 1, pstr("Machine"));
+    CHECK(ref > RSRC_APP_REFNUM);
+    CHECK_STR(text_of(call_import("Get1Resource", 2, TEXT, 129u)), "from file");
+    CHECK_EQ((int16_t)call_import("OpenRFPerm", 3, pstr("Machine"), 0u, 1u), ref);
+    call_import("CloseResFile", 1, (uint32_t)ref);
+    CHECK_EQ((int16_t)call_import("OpenRFPerm", 3, pstr(":Nowhere:x"), 0u, 1u), -1);
+    CHECK_EQ(res_error(), FILES_DIR_NF_ERR);
+
+    call_import("CreateResFile", 1, pstr("Saved"));
+    CHECK_EQ(res_error(), 0);
+    CHECK(host_len(data, "Saved", true) > 0);
+    call_import("CreateResFile", 1, pstr("Saved"));
+    CHECK_EQ(res_error(), FILES_DUP_FN_ERR);
+    ref = (int16_t)call_import("OpenRFPerm", 3, pstr("Saved"), (uint32_t)(int32_t)FILES_VREFNUM, 3u);
+    CHECK(ref > RSRC_APP_REFNUM);
+    CHECK_EQ(call_import("Count1Resources", 1, TEXT), 0);
+    teardown();
+}
+
+TEST(rsrcfile_remove_resource_writes_the_file_without_it) {
+    setup();
+    int16_t ref = open_res("Machine", 3);
+    uint32_t h = call_import("GetResource", 2, TEXT, 129u);
+    call_import("RemoveResource", 1, h);
+    CHECK_EQ(res_error(), 0);
+    CHECK(mm_is_handle(h)); /* the game's still */
+    CHECK_EQ(call_import("GetResource", 2, TEXT, 129u), 0);
+    call_import("RemoveResource", 1, h);
+    CHECK_EQ(res_error(), RSRC_NOT_FOUND_ERR);
+    call_import("CloseResFile", 1, (uint32_t)ref);
+    ref = open_res("Machine", 1);
+    CHECK_EQ(call_import("Get1Resource", 2, TEXT, 129u), 0);
+    CHECK_STR(text_of(call_import("Get1Resource", 2, TEXT, 128u)), "from file");
+    teardown();
+}
+
+/* Tristan saves into its own resource fork: once named, the
+   application's file is written to a copy in the data folder, which is
+   read the next time, and the game folder's is never changed. */
+TEST(rsrcfile_the_application_file_is_saved_in_the_data_folder) {
+    setup();
+    rsrc_app_file("Machine");
+    CHECK_STR(text_of(call_import("GetResource", 2, TEXT, 128u)), "from file");
+    uint32_t h = call_import("GetResource", 2, TEXT, 129u);
+    memcpy(gm_ptr(gm_r32(h), 4), "FROM", 4);
+    call_import("ChangedResource", 1, h);
+    call_import("RemoveResource", 1, call_import("GetResource", 2, TEXT, 128u));
+    call_import("UpdateResFile", 1, (uint32_t)RSRC_APP_REFNUM);
+    CHECK_EQ(res_error(), 0);
+    CHECK(host_has(data, "Machine", true, "FROM file"));
+    CHECK(host_has(dir, "Machine", true, "from file"));
+    CHECK(!host_has(dir, "Machine", true, "FROM file"));
+
+    rsrc_open_empty(); /* the next launch */
+    rsrc_app_file("Machine");
+    CHECK_STR(text_of(call_import("GetResource", 2, TEXT, 129u)), "FROM file");
+    CHECK_EQ(call_import("GetResource", 2, TEXT, 128u), 0);
+    teardown();
+}
+
+TEST(rsrcfile_a_missing_application_file_keeps_the_resources) {
+    setup();
+    rsrc_app_file("Nothing");
+    CHECK_STR(text_of(call_import("GetResource", 2, TEXT, 128u)), "from app");
     teardown();
 }
 

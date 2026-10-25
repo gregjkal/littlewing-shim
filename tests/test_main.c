@@ -124,8 +124,8 @@ bool test_md_present(void) {
 }
 
 const char *test_ae_app(void) {
-    const char *d = getenv("LOONY_AE_APP");
-    return d && *d ? d : "/Applications/Angel Egg.app";
+    static char dir[1024];
+    return game_dir("LOONY_AE_APP", "angel-egg", dir, sizeof dir);
 }
 
 const char *test_ae_exe_path(void) {
@@ -139,8 +139,8 @@ bool test_ae_present(void) {
 }
 
 const char *test_gl_app(void) {
-    const char *d = getenv("LOONY_GL_APP");
-    return d && *d ? d : "/Applications/Golden Logres.app";
+    static char dir[1024];
+    return game_dir("LOONY_GL_APP", "golden-logres", dir, sizeof dir);
 }
 
 const char *test_gl_exe_path(void) {
@@ -166,6 +166,21 @@ const char *test_ft_exe_path(void) {
 
 bool test_ft_present(void) {
     return access(test_ft_exe_path(), R_OK) == 0;
+}
+
+const char *test_tr_dir(void) {
+    static char dir[1024];
+    return game_dir("LOONY_TR_DIR", "tristan", dir, sizeof dir);
+}
+
+const char *test_tr_exe_path(void) {
+    static char path[1100];
+    snprintf(path, sizeof path, "%s/TRISTAN IE 2.5.1", test_tr_dir());
+    return path;
+}
+
+bool test_tr_present(void) {
+    return access(test_tr_exe_path(), R_OK) == 0;
 }
 
 bool test_slow_enabled(void) {

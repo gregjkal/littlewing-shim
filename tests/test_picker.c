@@ -8,6 +8,7 @@
 #include "game.h"
 #include "picker.h"
 #include "png.h"
+#include "rsrc.h"
 #include "util.h"
 
 static uint8_t screen[PICKER_W * PICKER_H * 4];
@@ -199,16 +200,16 @@ TEST(picker_keys_move_across_and_between_rows_of_five) {
     CHECK_EQ(picker_hit(5, 100, 400), -1);      /* beside the short row */
 }
 
-/* Eight games by title, for the layouts past the games in the table. */
-static const game_info eight[8] = {
+/* Nine games by title, for the layouts of up to nine cards. */
+static const game_info nine[9] = {
     {.title = "Loony Labyrinth"}, {.title = "Crystal Caliburn"}, {.title = "Jinni Zeala"},
     {.title = "MONSTER FAIR"},    {.title = "Mad Daedalus"},     {.title = "Golden Logres"},
-    {.title = "Angel Egg"},       {.title = "FAIRY TOWER"}};
+    {.title = "Angel Egg"},       {.title = "FAIRY TOWER"},      {.title = "Tristan"}};
 
 TEST(picker_draws_six_cards_in_two_rows_of_three) {
     picker_entry e[6];
     for (int i = 0; i < 6; i++)
-        e[i] = (picker_entry){&eight[i], NULL};
+        e[i] = (picker_entry){&nine[i], NULL};
     e[5].art = solid_art(0, 0, 0xFF);
     picker_draw(e, 6, 5, screen);
     free(e[5].art);
@@ -226,7 +227,7 @@ TEST(picker_draws_six_cards_in_two_rows_of_three) {
 TEST(picker_draws_seven_cards_in_rows_of_four_and_three) {
     picker_entry e[7];
     for (int i = 0; i < 7; i++)
-        e[i] = (picker_entry){&eight[i], NULL};
+        e[i] = (picker_entry){&nine[i], NULL};
     e[0].art = solid_art(0xFF, 0, 0);
     e[6].art = solid_art(0, 0, 0xFF);
     picker_draw(e, 7, 6, screen);
@@ -240,17 +241,17 @@ TEST(picker_draws_seven_cards_in_rows_of_four_and_three) {
     CHECK_EQ(px(512 - 2, 400)[1], 0xFF);          /* gold border: the seventh is selected */
     CHECK_EQ(px(200, 200)[1], 0);                 /* black between the columns */
     CHECK_EQ(px(50, 400)[1], 0);                  /* and beside the short row */
-    /* MAD DAEDALUS (192 pixels) fits its 200-pixel column on one line, so
-       nothing is drawn on a second; GOLDEN LOGRES (208) takes two. */
-    bool second_line_md = false, second_line_gl = false;
-    for (int y = 472; y < 488; y++)
-        for (int x = 112; x < 112 + 176; x++)
-            second_line_md |= px(x, y)[1] != 0;
-    for (int y = 472; y < 488; y++)
-        for (int x = 312; x < 312 + 176; x++)
-            second_line_gl |= px(x, y)[1] != 0;
-    CHECK(!second_line_md);
-    CHECK(second_line_gl);
+    /* ANGEL EGG (144 pixels) fits its 176-pixel card on one line, so
+       nothing is drawn on a second; GOLDEN LOGRES (208) takes two, and so
+       does MAD DAEDALUS (192), which would reach its neighbours on one. */
+    bool second_line[3] = {false, false, false}; /* MAD DAEDALUS, GOLDEN LOGRES, ANGEL EGG */
+    for (int c = 0; c < 3; c++)
+        for (int y = 472; y < 488; y++)
+            for (int x = 112 + c * 200; x < 112 + c * 200 + 176; x++)
+                second_line[c] |= px(x, y)[1] != 0;
+    CHECK(second_line[0]);
+    CHECK(second_line[1]);
+    CHECK(!second_line[2]);
 }
 
 TEST(picker_keys_move_across_and_between_rows_of_seven) {
@@ -269,7 +270,7 @@ TEST(picker_keys_move_across_and_between_rows_of_seven) {
 TEST(picker_draws_eight_cards_in_two_rows_of_four) {
     picker_entry e[8];
     for (int i = 0; i < 8; i++)
-        e[i] = (picker_entry){&eight[i], NULL};
+        e[i] = (picker_entry){&nine[i], NULL};
     e[7].art = solid_art(0, 0, 0xFF);
     picker_draw(e, 8, 7, screen);
     free(e[7].art);
@@ -288,10 +289,66 @@ TEST(picker_draws_eight_cards_in_two_rows_of_four) {
     CHECK_EQ(picker_key(8, 3, SDL_SCANCODE_DOWN, &choose), 7);
     CHECK_EQ(picker_key(8, 7, SDL_SCANCODE_UP, &choose), 3);
     CHECK_EQ(picker_key(8, 7, SDL_SCANCODE_DOWN, &choose), 7);
+    CHECK_EQ(picker_key(8, 7, SDL_SCANCODE_RIGHT, &choose), 7);
     CHECK_EQ(picker_key(8, 3, SDL_SCANCODE_RIGHT, &choose), 4);
     CHECK(!choose);
     CHECK_EQ(picker_hit(8, 612 + 5, 308 + 5), 7);
     CHECK_EQ(picker_hit(8, 12 + 5, 308 + 5), 4);
+}
+
+TEST(picker_draws_nine_cards_in_three_rows_of_three) {
+    picker_entry e[9];
+    for (int i = 0; i < 9; i++)
+        e[i] = (picker_entry){&nine[i], NULL};
+    e[0].art = solid_art(0xFF, 0, 0);
+    e[8].art = solid_art(0, 0, 0xFF);
+    picker_draw(e, 9, 8, screen);
+    free(e[0].art);
+    free(e[8].art);
+    CHECK_EQ(px(48, 76)[1], 0xFF);                /* the first card's art, reduced */
+    CHECK_EQ(px(48 + 159, 76 + 119)[1], 0xFF);
+    CHECK_EQ(px(320 + 80, 240 + 60)[1], 0x22);    /* the fifth, in the middle */
+    CHECK_EQ(px(592 + 80, 404 + 60)[3], 0xFF);    /* the ninth card's art */
+    CHECK_EQ(px(592 - 2, 450)[1], 0xFF);          /* gold border: the ninth is selected */
+    CHECK_EQ(px(260, 150)[1], 0);                 /* black between the columns */
+    CHECK_EQ(px(48 + 80, 76 + 120 + 6)[1], 0);    /* and between a card and its name */
+    /* Every name fits its column on one line: CRYSTAL CALIBURN (256 pixels)
+       is the widest, and nothing is drawn under a name, where a second
+       line would start, before the next row's borders. */
+    bool second_line = false;
+    for (int row = 0; row < 3; row++)
+        for (int y = 206 + row * 164 + 16; y < 206 + row * 164 + 30; y++)
+            for (int x = 0; x < 800; x++)
+                second_line |= px(x, y)[1] != 0;
+    CHECK(!second_line);
+    /* LOONY LABYRINTH (240 pixels, ending at 248) and CRYSTAL CALIBURN
+       (256, from 272) leave 24 pixels of black between them, as seven and
+       eight keep between columns. */
+    bool gap_dark = true;
+    for (int y = 206; y < 222; y++)
+        for (int x = 248; x < 272; x++)
+            gap_dark &= px(x, y)[1] == 0;
+    CHECK(gap_dark);
+    /* Black below the heading (32 to 56) and above the hint (from 566). */
+    bool clear = true;
+    for (int x = 0; x < 800; x++) {
+        for (int y = 57; y < 72; y++)
+            clear &= px(x, y)[1] == 0;
+        for (int y = 550; y < 566; y++)
+            clear &= px(x, y)[1] == 0;
+    }
+    CHECK(clear);
+    bool choose = false;
+    CHECK_EQ(picker_key(9, 1, SDL_SCANCODE_DOWN, &choose), 4);
+    CHECK_EQ(picker_key(9, 5, SDL_SCANCODE_DOWN, &choose), 8);
+    CHECK_EQ(picker_key(9, 8, SDL_SCANCODE_DOWN, &choose), 8);
+    CHECK_EQ(picker_key(9, 7, SDL_SCANCODE_UP, &choose), 4);
+    CHECK_EQ(picker_key(9, 2, SDL_SCANCODE_RIGHT, &choose), 3);
+    CHECK(!choose);
+    CHECK_EQ(picker_hit(9, 592 + 5, 404 + 5), 8);
+    CHECK_EQ(picker_hit(9, 320 + 80, 370 + 8), 4); /* the name under a card counts */
+    CHECK_EQ(picker_hit(9, 320 + 80, 230), -1);    /* between the rows */
+    CHECK_EQ(picker_hit(9, 260, 150), -1);         /* between the columns */
 }
 
 /* A 128x128 icon, its left half opaque red and its right half clear. */
@@ -509,7 +566,108 @@ TEST(picker_art_for_fairy_tower_is_its_icon) {
     CHECK(ok);
     CHECK_STR(err, "");
     CHECK(around_is_card);
-    CHECK_STR(got, "7a6db75e"); /* the icon shown in the eight-game picker */
+    CHECK_STR(got, "7a6db75e"); /* the icon shown in the nine-game picker */
+}
+
+/* Tristan's PICT 800 is its credits, and it has no icns 128: its card is
+   its title, PICT 900 (348x301), reduced to 332x288 and centered. */
+TEST(picker_art_for_tristan_is_its_title) {
+    SKIP_UNLESS_TR();
+    char err[512] = "";
+    uint8_t *art = malloc(PICKER_ART_W * PICKER_ART_H * 4);
+    bool ok = picker_load_art(test_tr_exe_path(), art, err, sizeof err);
+    const uint8_t *side = art + ((size_t)144 * PICKER_ART_W + 25) * 4, *in = side + 2 * 4;
+    bool beside_is_card = side[1] == 0x22 && side[2] == 0x22 && side[3] == 0x22;
+    bool title_is_drawn = !(in[1] == 0x22 && in[2] == 0x22 && in[3] == 0x22);
+    char got[16];
+    snprintf(got, sizeof got, "%08x", fnv1a32(art, PICKER_ART_W * PICKER_ART_H * 4));
+    free(art);
+    CHECK(ok);
+    CHECK_STR(err, "");
+    CHECK(beside_is_card);
+    CHECK(title_is_drawn);
+    CHECK_STR(got, "648c7523"); /* the title shown in the nine-game picker */
+}
+
+/* An empty version 1 picture whose frame is w by h. */
+static void blank_pict(uint8_t pic[13], int w, int h) {
+    static const uint8_t head[] = {0, 13, 0, 0, 0, 0};
+    memcpy(pic, head, sizeof head);
+    wr_be16(pic + 6, (uint16_t)h);
+    wr_be16(pic + 8, (uint16_t)w);
+    pic[10] = 0x11; /* version 1 */
+    pic[11] = 0x01;
+    pic[12] = 0xFF; /* end */
+}
+
+/* A program at dir/game whose resource fork holds PICT 800 of w800 by
+   h800 (none if 0) and PICT 900 of w900 by h900 (none if 0). */
+static void art_program(const char *dir, int w800, int h800, int w900, int h900, char *path, size_t cap) {
+    uint8_t p800[13], p900[13];
+    blank_pict(p800, w800, h800);
+    blank_pict(p900, w900, h900);
+    rsrc_entry e[2] = {{0}};
+    const uint8_t *d[2];
+    uint32_t n = 0;
+    if (w800) {
+        e[n] = (rsrc_entry){.type = FOURCC('P', 'I', 'C', 'T'), .id = 800, .len = sizeof p800};
+        d[n++] = p800;
+    }
+    if (w900) {
+        e[n] = (rsrc_entry){.type = FOURCC('P', 'I', 'C', 'T'), .id = 900, .len = sizeof p900};
+        d[n++] = p900;
+    }
+    size_t len;
+    uint8_t *fork = rsrc_build(e, d, n, &len);
+    char fork_path[1300];
+    snprintf(path, cap, "%s/game", dir);
+    snprintf(fork_path, sizeof fork_path, "%s/..namedfork/rsrc", path);
+    FILE *f = fopen(path, "wb");
+    if (!f || fclose(f) != 0 || !(f = fopen(fork_path, "wb")) || fwrite(fork, 1, len, f) != len || fclose(f) != 0)
+        fatal("can't write %s", fork_path);
+    free(fork);
+}
+
+static bool is_card(const uint8_t *art, int x, int y) {
+    const uint8_t *p = art + ((size_t)y * PICKER_ART_W + (size_t)x) * 4;
+    return p[1] == 0x22 && p[2] == 0x22 && p[3] == 0x22;
+}
+
+/* Without the game: a PICT 800 of the wrong size (Tristan's credits) is
+   passed over for PICT 900, which is centered on the card at its own size
+   when it fits; a 512x384 PICT 800 fills the card; a PICT 900 larger than
+   512x384, or no picture at all, gives no art. */
+TEST(picker_art_falls_back_to_a_centered_pict_900) {
+    char dir[1024], path[1200], err[512] = "", big_err[512] = "", none_err[512] = "", err800[512] = "";
+    test_tmp_dir(dir, sizeof dir);
+    uint8_t *art = malloc(PICKER_ART_W * PICKER_ART_H * 4), *art800 = malloc(PICKER_ART_W * PICKER_ART_H * 4);
+    art_program(dir, 348, 301, 100, 50, path, sizeof path);
+    bool ok = picker_load_art(path, art, err, sizeof err);
+    art_program(dir, 512, 384, 100, 50, path, sizeof path);
+    bool ok800 = picker_load_art(path, art800, err800, sizeof err800);
+    uint8_t *scratch_art = malloc(PICKER_ART_W * PICKER_ART_H * 4);
+    art_program(dir, 348, 301, 600, 50, path, sizeof path);
+    bool big = picker_load_art(path, scratch_art, big_err, sizeof big_err);
+    art_program(dir, 0, 0, 0, 0, path, sizeof path);
+    bool none = picker_load_art(path, scratch_art, none_err, sizeof none_err);
+    test_remove_tree(dir);
+    /* 100x50 centered on the card: columns l to l + 99, rows 119 to 168 */
+    int l = (PICKER_ART_W - 100) / 2, cx = PICKER_ART_W / 2;
+    bool centered = !is_card(art, l, 119) && !is_card(art, l + 99, 168) && is_card(art, l - 1, 144) &&
+                    is_card(art, l + 100, 144) && is_card(art, cx, 118) && is_card(art, cx, 169);
+    bool fills = !is_card(art800, 0, 0) && !is_card(art800, PICKER_ART_W - 1, PICKER_ART_H - 1);
+    free(art);
+    free(art800);
+    free(scratch_art);
+    CHECK(ok);
+    CHECK_STR(err, "");
+    CHECK(centered);
+    CHECK(ok800);
+    CHECK(fills);
+    CHECK(!big);
+    CHECK_CONTAINS(big_err, "has no 512x384 PICT 800, icns 128 or PICT 900");
+    CHECK(!none);
+    CHECK_CONTAINS(none_err, "has no 512x384 PICT 800, icns 128 or PICT 900");
 }
 
 /* Golden Logres is a bundle without appl.png: its card is the 128x128

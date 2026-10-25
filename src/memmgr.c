@@ -441,6 +441,31 @@ static void h_gz_save_hnd(void) { trap_return(0); }
 /* ReserveMem(Size): the heap has room enough, and nothing moves. */
 static void h_reserve_mem(void) { last_error = MM_NO_ERR; }
 
+/* A classic program's start: MoreMasters (master pointers come with each
+   handle), and the heap's limit, which is the end of the guest heap and
+   already all the heap there is, so SetApplLimit and MaxApplZone change
+   nothing. */
+static void h_more_masters(void) { last_error = MM_NO_ERR; }
+
+/* HandToHand(Handle *): *h becomes a new handle holding a copy of its data. */
+static void h_hand_to_hand(void) {
+    uint32_t hp = trap_arg(0), h = gm_r32(hp);
+    if (!need_handle("HandToHand", h)) {
+        trap_return((uint32_t)(int32_t)last_error);
+        return;
+    }
+    uint32_t n = mm_handle_size(h), copy = mm_new_handle(n, false);
+    last_error = copy ? MM_NO_ERR : MM_MEM_FULL_ERR;
+    if (copy) {
+        memcpy(gm_ptr(gm_r32(copy), n ? n : 1), gm_ptr(gm_r32(h), n ? n : 1), n);
+        gm_w32(hp, copy);
+    }
+    trap_return((uint32_t)(int32_t)last_error);
+}
+static void h_get_appl_limit(void) { trap_return(HEAP_BASE + HEAP_SIZE); }
+static void h_set_appl_limit(void) { last_error = MM_NO_ERR; }
+static void h_max_appl_zone(void) { last_error = MM_NO_ERR; }
+
 void mm_register(void) {
     trap_register("NewPtr", h_new_ptr);
     trap_register("NewPtrClear", h_new_ptr_clear);
@@ -473,4 +498,9 @@ void mm_register(void) {
     trap_register("SetGrowZone", h_set_grow_zone);
     trap_register("GZSaveHnd", h_gz_save_hnd);
     trap_register("ReserveMem", h_reserve_mem);
+    trap_register("MoreMasters", h_more_masters);
+    trap_register("HandToHand", h_hand_to_hand);
+    trap_register("GetApplLimit", h_get_appl_limit);
+    trap_register("SetApplLimit", h_set_appl_limit);
+    trap_register("MaxApplZone", h_max_appl_zone);
 }

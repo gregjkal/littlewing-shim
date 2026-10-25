@@ -17,7 +17,9 @@ static const char *const names[] = {
     "GetMenu", "DisposeMenu", "InsertMenu", "DeleteMenu", "HiliteMenu", "ShowMenuBar",
     "HideMenuBar", "IsMenuBarVisible", "CountMenuItems", "EnableMenuItem", "DisableMenuItem",
     "IsMenuItemEnabled", "GetItemCmd", "GetItemMark", "SetItemMark", "SetMenuItemText",
-    "MenuSelect", "MenuKey", "MenuEvent", "IsCmdChar", "GetCCursor",
+    "MenuSelect", "MenuKey", "MenuEvent", "IsCmdChar", "GetCCursor", "InitMenus",
+    "GetMenuItemText", "CheckItem", "InsertMenuItem", "DeleteMenuItem", "AppendResMenu",
+    "EnableItem", "DisableItem", "OpenDeskAcc", "SystemClick", "SystemEdit",
 };
 
 /* ---- a resource fork: File (MENU 128), Operation (MENU 129), crsr 128 ---- */
@@ -119,7 +121,8 @@ static void setup(void) {
 TEST(menumgr_get_menu_reads_the_items) {
     setup();
     uint32_t m = call_import("GetMenu", 1, 128u);
-    CHECK(m >= MENU_TAG_BASE);
+    CHECK(mm_is_handle(m));
+    CHECK_EQ(gm_r16(gm_r32(m)), 128); /* the MENU resource's menuID */
     CHECK_EQ(call_import("CountMenuItems", 1, m), 3);
     CHECK_EQ(call_import("IsMenuItemEnabled", 2, m, 1u), 1);
     CHECK_EQ(call_import("IsMenuItemEnabled", 2, m, 2u), 0);
@@ -219,4 +222,62 @@ TEST(menumgr_menus_round_trip_through_a_snapshot) {
     snapshot_state_load(saved, len);
     CHECK_EQ(call_import("MenuKey", 1, (uint32_t)'q'), ITEM(128, 3));
     free(saved);
+}
+
+static const char *item_text(uint32_t m, int item) {
+    static char s[256];
+    uint32_t p = scratch(256);
+    call_import("GetMenuItemText", 3, m, (uint32_t)item, p);
+    gm_read_pstr(p, s);
+    return s;
+}
+
+/* The calls a System 7 program (Tristan) makes on its menus. */
+TEST(menumgr_classic_item_calls) {
+    setup();
+    call_import("InitMenus", 0);
+    uint32_t m = call_import("GetMenu", 1, 128u);
+    CHECK_STR(item_text(m, 2), "Open");
+    CHECK_STR(item_text(m, 9), "");
+    call_import("CheckItem", 3, m, 1u, 1u);
+    uint32_t c = scratch(2);
+    call_import("GetItemMark", 3, m, 1u, c);
+    CHECK_EQ(gm_r16(c), 0x12);
+    call_import("CheckItem", 3, m, 1u, 0u);
+    call_import("GetItemMark", 3, m, 1u, c);
+    CHECK_EQ(gm_r16(c), 0);
+    call_import("EnableItem", 2, m, 2u);
+    CHECK_EQ(call_import("IsMenuItemEnabled", 2, m, 2u), 1);
+    call_import("DisableItem", 2, m, 3u);
+    CHECK_EQ(call_import("IsMenuItemEnabled", 2, m, 3u), 0);
+
+    uint32_t text = scratch(256);
+    gm_write_pstr(text, "(Sound/S;Music!x");
+    call_import("InsertMenuItem", 3, m, text, 1u);
+    CHECK_EQ(call_import("CountMenuItems", 1, m), 5);
+    CHECK_STR(item_text(m, 2), "Sound");
+    CHECK_EQ(call_import("IsMenuItemEnabled", 2, m, 2u), 0);
+    call_import("GetItemCmd", 3, m, 2u, c);
+    CHECK_EQ(gm_r16(c), 'S');
+    CHECK_STR(item_text(m, 3), "Music");
+    call_import("GetItemMark", 3, m, 3u, c);
+    CHECK_EQ(gm_r16(c), 'x');
+    CHECK_STR(item_text(m, 4), "Open");
+    gm_write_pstr(text, "Last");
+    call_import("InsertMenuItem", 3, m, text, 99u);
+    CHECK_STR(item_text(m, 6), "Last");
+
+    call_import("DeleteMenuItem", 2, m, 2u);
+    CHECK_EQ(call_import("CountMenuItems", 1, m), 5);
+    CHECK_STR(item_text(m, 2), "Music");
+    call_import("DeleteMenuItem", 2, m, 9u);
+    CHECK_EQ(call_import("CountMenuItems", 1, m), 5);
+
+    call_import("AppendResMenu", 2, m, FOURCC('D', 'R', 'V', 'R')); /* no desk accessories */
+    CHECK_EQ(call_import("CountMenuItems", 1, m), 5);
+    uint32_t name = scratch(256);
+    gm_write_pstr(name, "Calculator");
+    CHECK_EQ(call_import("OpenDeskAcc", 1, name), 0);
+    call_import("SystemClick", 2, scratch(16), 0u);
+    CHECK_EQ(call_import("SystemEdit", 1, 2u), 0); /* the game edits */
 }

@@ -330,6 +330,12 @@ static void give_pattern(const uint8_t pat[8]) {
     trap_return(trap_arg(0));
 }
 
+void pen_write_qd_patterns(uint32_t addr) {
+    const uint8_t *pats[] = {dark_gray, light_gray, gray, black, white};
+    for (int i = 0; i < 5; i++)
+        memcpy(gm_ptr(addr + 8u * (uint32_t)i, 8), pats[i], 8);
+}
+
 static void h_qd_black(void) { give_pattern(black); }
 static void h_qd_white(void) { give_pattern(white); }
 static void h_qd_gray(void) { give_pattern(gray); }

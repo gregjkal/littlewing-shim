@@ -28,6 +28,9 @@
 #define FILES_DUP_FN_ERR (-48)
 #define FILES_WR_PERM_ERR (-61)
 #define FILES_IO_ERR     (-36)
+#define FILES_NSV_ERR    (-35)
+#define FILES_BUSY_ERR   (-47)
+#define FILES_LOCKED_ERR (-45)
 
 /* FSSpec: vRefNum (2), parID (4), name (Str63, 64 bytes). */
 #define FSSPEC_SIZE 70
@@ -69,6 +72,11 @@ int files_unicode_to_mac(uint32_t c);
    folder (crashes on a bad FSSpec, as the File Manager calls do). */
 void files_spec_rel(uint32_t spec, char *out, size_t cap);
 
+/* A name (a Pascal string at name, maybe a partial path) in volume vref
+   (0 or FILES_VREFNUM), as the calls before FSSpecs take it: its path
+   relative to the game folder. Returns 0, or an OSErr if its folder isn't
+   there or a name is bad. */
+int16_t files_name_rel(const char *call, int16_t vref, uint32_t name, char *out, size_t cap);
 /* rel's resource fork, from the data folder's copy if there is one, else
    the game folder's: malloc'd into *out, *len bytes (NULL and 0 for an
    empty fork). Returns 0, or fnfErr if there is no such file. */
@@ -87,5 +95,7 @@ int16_t files_write_rsrc_fork(const char *rel, const uint8_t *data, size_t len);
    FSGetForkPosition, FSSetForkPosition and FSCloseFork. Fork refnums are
    File Manager refnums, so the game can mix the two. Also FSRead,
    FindFolder (the Preferences folder alone), FSpGetFInfo, ResolveAliasFile
-   (there are no aliases), NewAlias and FlushVol. */
+   (there are no aliases), NewAlias and FlushVol, and the calls that take
+   a name and a volume instead of an FSSpec: Create, FSOpen, FSDelete,
+   GetVRefNum and SetVol, and SFPutFile, which is always cancelled. */
 void files_register(void);

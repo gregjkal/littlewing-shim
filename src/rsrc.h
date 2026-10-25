@@ -19,9 +19,12 @@
    Changes (AddResource, ChangedResource, SetResInfo, SetResAttrs) stay in
    memory until WriteResource, UpdateResFile or CloseResFile writes the
    file, or rsrc_update_all at exit: the whole fork is written again, into
-   the data folder, so a file in the game folder is never changed. The
-   application's file is never written; a game that tries crashes, naming
-   the call.
+   the data folder, so a file in the game folder is never changed. A
+   classic program's own file is written the same way once
+   rsrc_app_file has named it, as Tristan writes its settings and high
+   scores into itself: the copy in the data folder is the one read from
+   then on. Any other application's file is never written; a game that
+   tries crashes, naming the call.
 
    A snapshot holds which handle each resource is loaded in and the current
    file. The files opened and their contents are the host's: putting back a
@@ -58,6 +61,13 @@ typedef struct {
    and returns false. */
 bool rsrc_open(const uint8_t *fork, size_t len, char *err, size_t errlen);
 void rsrc_close(void);
+
+/* Makes the application's file the File Manager's file rel (files.h),
+   once files_init has run and before any resource is loaded: its
+   resources are read again from there, the data folder's copy if the game
+   has written one, and changes to them are written there. Keeps the
+   resources as they were, logging why, if that file can't be read. */
+void rsrc_app_file(const char *rel);
 
 /* For a program with no resource file: the application's file is empty,
    so every lookup in it fails as if the resource were absent. */

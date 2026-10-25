@@ -173,6 +173,34 @@ bool rsrc_open(const uint8_t *fork, size_t len, char *err, size_t errlen) {
     return false;
 }
 
+void rsrc_app_file(const char *rel) {
+    res_file *f = &files[0];
+    uint8_t *fork;
+    size_t len;
+    int16_t err = files_read_rsrc_fork(rel, &fork, &len);
+    if (err || !fork) {
+        log_msg("can't read the application's resources from %s: error %d", rel, err);
+        free(fork);
+        return;
+    }
+    res_file again = {.refnum = RSRC_APP_REFNUM};
+    char why[256];
+    if (!parse(&again, 0, fork, len, why, sizeof why)) {
+        log_msg("the application's resources in %s: %s", rel, why);
+        again.owned = fork;
+        free_file(&again);
+        return;
+    }
+    for (uint32_t i = 0; i < f->n; i++)
+        if (f->entries[i].handle)
+            fatal("rsrc_app_file: a resource is already loaded");
+    free_file(f);
+    *f = again;
+    f->owned = fork;
+    f->writable = true;
+    snprintf(f->rel, sizeof f->rel, "%s", rel);
+}
+
 void rsrc_open_empty(void) { open_app(); }
 
 uint32_t rsrc_type_count(void) { return nfiles ? files[0].ntypes : 0; }
@@ -353,7 +381,7 @@ static int16_t write_file(res_file *f) {
 }
 
 void rsrc_update_all(void) {
-    for (uint32_t i = 1; i < nfiles; i++)
+    for (uint32_t i = 0; i < nfiles; i++)
         if (files[i].changed) {
             int16_t err = write_file(&files[i]);
             if (err)
@@ -399,7 +427,7 @@ static rsrc_entry *entry_of(uint32_t h) {
 
 /* The file e is in, about to be changed by call. */
 static res_file *changing(const rsrc_entry *e, const char *call) {
-    if (e->file == 0)
+    if (e->file == 0 && !files[0].rel[0])
         trap_crash("%s: changing the application's resources isn't supported", call);
     files[e->file].changed = true;
     return &files[e->file];
@@ -480,6 +508,20 @@ static void h_detach_resource(void) {
     e->handle = 0;
 }
 
+/* RemoveResource(Handle): out of its file's map, to be written without it.
+   The handle stays the game's, no longer a resource. */
+static void h_remove_resource(void) {
+    rsrc_entry *e = entry_of(trap_arg(0));
+    if (!e)
+        return;
+    res_file *f = changing(e, "RemoveResource");
+    mm_set_handle_state(e->handle, mm_handle_state(e->handle) & (uint8_t)~MM_STATE_RESOURCE);
+    free(e->name);
+    uint32_t at = (uint32_t)(e - f->entries);
+    memmove(e, e + 1, (f->n - at - 1) * sizeof *e);
+    f->n--;
+}
+
 static void h_res_error(void) { trap_return((uint32_t)(int32_t)R.error); }
 
 static void h_cur_res_file(void) {
@@ -500,10 +542,7 @@ static void h_use_res_file(void) {
 /* FSpOpenResFile(const FSSpec *spec, SignedByte permission) -> refnum, or
    -1 with ResError. A file already open gives its refnum and stays where it
    is in the chain. */
-static void h_fsp_open_res_file(void) {
-    char rel[REL_CAP];
-    files_spec_rel(trap_arg(0), rel, sizeof rel);
-    int8_t perm = (int8_t)trap_arg(1);
+static void open_res_file(const char *rel, int8_t perm) {
     for (uint32_t i = 1; i < nfiles; i++)
         if (strcmp(files[i].rel, rel) == 0) {
             R.error = 0;
@@ -544,11 +583,34 @@ static void h_fsp_open_res_file(void) {
     trap_return((uint32_t)(int32_t)refnum);
 }
 
-/* FSpCreateResFile(const FSSpec *spec, OSType creator, OSType fileType,
-   ScriptCode): a file with an empty resource map, or dupFNErr if it has one. */
-static void h_fsp_create_res_file(void) {
+static void h_fsp_open_res_file(void) {
     char rel[REL_CAP];
     files_spec_rel(trap_arg(0), rel, sizeof rel);
+    open_res_file(rel, (int8_t)trap_arg(1));
+}
+
+/* OpenRFPerm(fileName, vRefNum, permission) and OpenResFile(fileName),
+   the same with the default directory and fsCurPerm: by name. */
+static void open_named(const char *call, uint32_t name, int16_t vref, int8_t perm) {
+    char rel[REL_CAP];
+    int16_t err = files_name_rel(call, vref, name, rel, sizeof rel);
+    if (err) {
+        R.error = err;
+        trap_return((uint32_t)-1);
+        return;
+    }
+    open_res_file(rel, perm);
+}
+
+static void h_open_rf_perm(void) {
+    open_named("OpenRFPerm", trap_arg(0), (int16_t)trap_arg(1), (int8_t)trap_arg(2));
+}
+
+static void h_open_res_file(void) { open_named("OpenResFile", trap_arg(0), 0, 0); }
+
+/* FSpCreateResFile(const FSSpec *spec, OSType creator, OSType fileType,
+   ScriptCode): a file with an empty resource map, or dupFNErr if it has one. */
+static void create_res_file(const char *rel) {
     uint8_t *fork;
     size_t len;
     int16_t err = files_read_rsrc_fork(rel, &fork, &len);
@@ -560,6 +622,22 @@ static void h_fsp_create_res_file(void) {
     uint8_t *empty = rsrc_build(NULL, NULL, 0, &len);
     R.error = files_write_rsrc_fork(rel, empty, len);
     free(empty);
+}
+
+static void h_fsp_create_res_file(void) {
+    char rel[REL_CAP];
+    files_spec_rel(trap_arg(0), rel, sizeof rel);
+    create_res_file(rel);
+}
+
+/* CreateResFile(fileName): the same, in the default directory. */
+static void h_create_res_file(void) {
+    char rel[REL_CAP];
+    int16_t err = files_name_rel("CreateResFile", 0, trap_arg(0), rel, sizeof rel);
+    if (err)
+        R.error = err;
+    else
+        create_res_file(rel);
 }
 
 /* Writes a file's changes, gives back its resources' handles and takes it
@@ -596,7 +674,7 @@ static void h_update_res_file(void) {
         R.error = RSRC_FILE_NOT_FOUND_ERR;
         return;
     }
-    R.error = files[i].changed && i > 0 ? write_file(&files[i]) : 0;
+    R.error = files[i].changed ? write_file(&files[i]) : 0;
 }
 
 /* Writes the whole file the resource is in, if the resource changed. */
@@ -622,7 +700,7 @@ static void h_add_resource(void) {
         R.error = RSRC_ADD_FAILED_ERR;
         return;
     }
-    if (R.cur == 0)
+    if (R.cur == 0 && !files[0].rel[0])
         trap_crash("AddResource: changing the application's resources isn't supported");
     res_file *f = &files[R.cur];
     if (f->n == f->cap) {
@@ -769,6 +847,10 @@ void rsrc_register(void) {
     trap_register("LoadResource", h_load_resource);
     trap_register("ReleaseResource", h_release_resource);
     trap_register("DetachResource", h_detach_resource);
+    trap_register("RemoveResource", h_remove_resource);
+    trap_register("OpenResFile", h_open_res_file);
+    trap_register("OpenRFPerm", h_open_rf_perm);
+    trap_register("CreateResFile", h_create_res_file);
     trap_register("ResError", h_res_error);
     trap_register("CurResFile", h_cur_res_file);
     trap_register("UseResFile", h_use_res_file);
