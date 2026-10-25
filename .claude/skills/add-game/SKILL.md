@@ -23,7 +23,7 @@ Each game so far has run on mostly unchanged services, so **measure** before you
 
 9. **Docs.** Update every place that lists the games: the README (intro, the table of folders, the picker paragraph, `LOONY_GAME`'s and `LOONY_DATA_DIR`'s ids, the key table if its keys differ, HD art's ids, the test skip macros and folder variables), CLAUDE.md, and the header comment in `src/game.h`. Find them with `grep -rn -i "<an existing game's title or id>" README.md CLAUDE.md src`. Done when each list names the new game.
 
-10. **Hand off.** Build the Release app and open it for the user to playtest. Tell them which golden frames you recorded, since past frames were approved by the user, and show the picker frame. Replays, HD and High Scores stay Loony Labyrinth only (`play.c` and `main.c` check its id) unless the user asks otherwise. A registered game's registration needs a known key: check `docs/test_key.txt`, and if it has none, tell the user, who decides how the full game gets tested.
+10. **Hand off.** Build the Release app and open it for the user to playtest. Tell them which golden frames you recorded, since past frames were approved by the user, and show the picker frame. Replays, HD and High Scores stay Loony Labyrinth only (`play.c` and `main.c` check its id) unless the user asks otherwise. Registering the game needs an unlock: add its `code_patch` list and `GAME(...)` row to `src/games.inc` with the `unlock-game` skill, then register in the tests with `TEST_EMAIL` and `TEST_KEY` (`tests/test_run.c`). Until then, say the game is demo-only.
 
 ## Traps
 

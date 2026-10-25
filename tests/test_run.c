@@ -2289,16 +2289,17 @@ TEST(run_a_wrong_key_code_is_refused) {
     CHECK_EQ(shots[1], 0x8CF0D4FDu); /* Alert 902 */
 }
 
-/* Registers with a real key code, given at run time (never stored):
-   LOONY_TEST_EMAIL and LOONY_TEST_KEY. The license is kept in the
+/* The address and key code the registering tests type. No game would accept
+   them: the unlock (src/unlock.c) drops each game's verdict, and each game
+   still wants 24 digits. */
+#define TEST_EMAIL "tester@example.com"
+#define TEST_KEY "123456789012345678901234"
+
+/* Registers with a made-up key code. The license is kept in the
    preferences, so the next launch skips the shareware alerts. */
 TEST(run_a_key_code_registers_and_survives_a_relaunch) {
     SKIP_UNLESS_GAME();
-    const char *email = getenv("LOONY_TEST_EMAIL"), *key = getenv("LOONY_TEST_KEY");
-    if (!email || !*email || !key || !*key) {
-        test_skip("LOONY_TEST_EMAIL and LOONY_TEST_KEY aren't set");
-        return;
-    }
+    const char *email = TEST_EMAIL, *key = TEST_KEY;
     test_tmp_dir(run_data, sizeof run_data);
     real_alerts = true;
     char actions[1024];
@@ -2422,20 +2423,6 @@ TEST(run_monster_fair_wrong_key_code_shows_authorize_failed) {
     CHECK(!strstr(out, "0000-1111-2222-3333"));
 }
 
-/* MONSTER FAIR's license tests take the address and key code from
-   LOONY_TEST_MF_EMAIL and LOONY_TEST_MF_KEY; the public ones in
-   docs/test_key.txt are a key the game accepts at first and refuses in play
-   (the address ends in an IP address). Sets *email and *key, or skips. */
-#define MF_TEST_KEY_OR_SKIP(email, key)                                            \
-    do {                                                                           \
-        email = getenv("LOONY_TEST_MF_EMAIL");                                     \
-        key = getenv("LOONY_TEST_MF_KEY");                                         \
-        if (!email || !*email || !key || !*key) {                                  \
-            test_skip("LOONY_TEST_MF_EMAIL and LOONY_TEST_MF_KEY aren't set");     \
-            return;                                                                \
-        }                                                                          \
-    } while (0)
-
 /* Registers in run_data's save folder (which the caller made), then plays:
    the second license check runs at an Esc more than 7200 ticks after the
    first key the game sees, here at tick 9800. Returns the exit status;
@@ -2462,8 +2449,7 @@ static int mf_register_and_play_past_the_recheck(const char *email, const char *
    and the next launch skips the Welcome window. */
 SLOW_TEST(run_monster_fair_keeps_a_license_with_the_recheck_skipped) {
     SKIP_UNLESS_MF();
-    const char *email, *key;
-    MF_TEST_KEY_OR_SKIP(email, key);
+    const char *email = TEST_EMAIL, *key = TEST_KEY;
     test_tmp_dir(run_data, sizeof run_data);
     char out[32768], again[32768], *xml;
     int status = mf_register_and_play_past_the_recheck(email, key, out, sizeof out, &xml);
@@ -4086,11 +4072,7 @@ static bool other_home(char *home, size_t cap, const char *email, const char *ke
    ends on the same frame as a replay of it from launch. */
 SLOW_TEST(run_a_shared_game_starts_at_the_game_on_another_install) {
     SKIP_UNLESS_GAME();
-    const char *email = getenv("LOONY_TEST_EMAIL"), *key = getenv("LOONY_TEST_KEY");
-    if (!email || !*email || !key || !*key) {
-        test_skip("LOONY_TEST_EMAIL and LOONY_TEST_KEY aren't set");
-        return;
-    }
+    const char *email = TEST_EMAIL, *key = TEST_KEY;
     char rec_dir[1024], play_dir[1024], sharer[1024], viewer[1024], shared[1200], err[1024];
     test_tmp_dir(rec_dir, sizeof rec_dir);
     test_tmp_dir(play_dir, sizeof play_dir);

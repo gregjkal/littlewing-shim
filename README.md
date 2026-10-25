@@ -101,9 +101,13 @@ Until it is registered, each game first shows two windows: the shareware screen
 press Return for the outlined one. To register, click **Enter Key-Code**, type
 or paste (Cmd-V) your e-mail address and key code, using Tab to move between
 the fields, and click **Register** (or press Return). The license is saved with
-the preferences, so later launches go straight to the game. For testing Loony
-Labyrinth, `docs/test_key.txt` has an e-mail address and key code that were posted
-publicly on [archive.org](https://archive.org/details/littlewing-pinball/).
+the preferences, so later launches go straight to the game. LittleWing's store
+is gone, so no key can be bought. Every build drops each game's verdict on the
+key (`src/unlock.c`, with the patches in `src/games.inc`): any e-mail address and
+a made-up key code of 24 or more digits register (24 or more letters and digits
+for MONSTER FAIR). For example, `tester@example.com` and `123456789012345678901234`
+work in every game. The log says `UNLOCK ACTIVE for <game id>` at launch; if it
+says `nothing patched`, the game's code isn't the version the patches expect.
 
 The game then plays its opening and a self-playing demo. All the games use
 the same keys by default (MONSTER FAIR and Jinni Zeala add X and . to nudge
@@ -216,7 +220,7 @@ tools/notarize.sh build-release/LittleWing.app loony-notary   # takes a few minu
 This sends the app to Apple for checking, staples the ticket to it, and
 leaves `build-release/LittleWing.zip` to send. The other person
 downloads the games as in [Play](#play), unzips the app into Applications,
-and double-clicks it. They need their own key codes to register.
+and double-clicks it. They register the same way, with any e-mail address and a made-up key code (see [Play](#play)).
 
 ### Releases
 
@@ -356,11 +360,9 @@ Tests that need a game's files skip when it isn't installed (`SKIP_UNLESS_GAME`,
 `tests/test.h`). `LOONY_GAME_DIR`, `LOONY_CC_DIR`, `LOONY_MF_APP`,
 `LOONY_JZ_DIR`, `LOONY_MD_APP`, `LOONY_AE_APP`, `LOONY_GL_APP`,
 `LOONY_FT_APP` and `LOONY_TR_DIR` point them at copies elsewhere. The tests
-that register take the address and key code from the environment and skip
-without them: `LOONY_TEST_EMAIL` and `LOONY_TEST_KEY` (Loony Labyrinth), and
-`LOONY_TEST_MF_EMAIL` and `LOONY_TEST_MF_KEY` (MONSTER FAIR; the public key in
-`docs/test_key.txt` is one the game would refuse in play without the workaround
-below).
+that register type a made-up address and a 24-digit key code (`TEST_EMAIL` and
+`TEST_KEY` in `tests/test_run.c`), which the unlock accepts, so they need no
+secrets.
 The slow tests, the three-minute regression runs (`run_three_minutes_*`) and
 MONSTER FAIR's play past its second license check, take a minute or more each,
 so they skip unless `LOONY_SLOW_TESTS=1` is set (`SLOW_TEST`). `--slow` runs
