@@ -10,6 +10,7 @@
 #include "keymap.h"
 #include "memmgr.h"
 #include "misc.h"
+#include "qd.h"
 
 /* The classic Event Manager a PowerPlant game (Golden Logres, Angel Egg)
    uses, on the Carbon queue. */
@@ -18,7 +19,7 @@ static const char *const names[] = {
     "WaitNextEvent", "GetNextEvent", "EventAvail", "Button", "StillDown", "GetKeys",
     "GetCurrentKeyModifiers", "GetGlobalMouse", "GetCaretTime", "GetDblTime",
     "GetCurrentEventLoop", "AEProcessAppleEvent", "NewEventLoopTimerUPP", "GetMainEventLoop",
-    "InstallEventLoopTimer",
+    "InstallEventLoopTimer", "ShowWindow", "HideWindow", "SelectWindow", "DisposeWindow",
 };
 
 #define EVERY 0xFFFFu
@@ -34,6 +35,8 @@ static void setup(void) {
     mm_init();
     misc_init();
     misc_register();
+    qd_init(800, 600, 8);
+    qd_register();
     events_init();
     events_register();
     unsetenv("LOONY_FIXED_CLOCK");
@@ -215,4 +218,45 @@ TEST(classic_events_caret_and_double_click_times) {
     setup();
     CHECK_EQ(call_import("GetCaretTime", 0), 32);
     CHECK_EQ(call_import("GetDblTime", 0), 30);
+}
+
+/* A window coming to the front is activated, ahead of anything queued, and
+   the one it covers is deactivated first. PowerPlant starts a window's work
+   on its activate, so a window shown with the application already in front
+   (after the picker) waits on this. */
+TEST(classic_events_activate_the_front_window) {
+    setup();
+    take_launch_events();
+    record e;
+    uint32_t a = qd_new_window(800, 600), b = qd_new_window(400, 300);
+    CHECK(!wne(EVERY, &e)); /* both hidden */
+
+    call_import("ShowWindow", 1, a);
+    events_post_key(SDL_SCANCODE_A, true, false);
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 8); /* activateEvt */
+    CHECK_EQ(e.message, a);
+    CHECK_EQ(e.modifiers & 1, 1); /* activeFlag */
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 3); /* then the key */
+    CHECK(!wne(EVERY, &e));
+
+    call_import("ShowWindow", 1, b);
+    uint32_t r = scratch(16);
+    CHECK_EQ(call_import("EventAvail", 2, EVERY, r), 1); /* a peek changes nothing */
+    CHECK_EQ(read_record(r).message, a);
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 8);
+    CHECK_EQ(e.message, a);
+    CHECK_EQ(e.modifiers & 1, 0); /* a deactivate */
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.message, b);
+    CHECK_EQ(e.modifiers & 1, 1);
+    CHECK(!wne((uint32_t)~(1u << 8) & EVERY, &e)); /* outside the mask, nothing */
+
+    call_import("DisposeWindow", 1, b); /* gone: only a is activated */
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.message, a);
+    CHECK_EQ(e.modifiers & 1, 1);
+    CHECK(!wne(EVERY, &e));
 }

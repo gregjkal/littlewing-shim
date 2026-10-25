@@ -762,6 +762,13 @@ static void h_qd_error(void) { trap_return(QD_NO_ERR); }
 
 static void h_get_window_list(void) { trap_return(window_behind(0)); }
 static void h_front_window(void) { trap_return(front_visible_window()); }
+
+uint32_t qd_front_window(void) { return front_visible_window(); }
+
+bool qd_is_window(uint32_t w) {
+    const port_info *p = find_port(w);
+    return p && p->kind == KIND_WINDOW;
+}
 static void h_get_next_window(void) { trap_return(window_behind(need_window("GetNextWindow", trap_arg(0))->addr)); }
 
 /* GetFrontWindowOfClass(WindowClass, Boolean mustBeVisible) */
