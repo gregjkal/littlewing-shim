@@ -45,8 +45,8 @@
 /* Five cards: the same size, two rows of three columns, the second row
    centered under the first. */
 #define CARD5_GAP 56
-/* Seven cards: smaller again, a row of four over a row of three; a name
-   wider than its column goes on two lines. */
+/* Seven or eight cards: smaller again, a row of four over a row of three
+   or four; a name wider than its column goes on two lines. */
 #define ART7_W 176
 #define ART7_H 132
 #define CARD7_GAP 24
@@ -60,19 +60,19 @@ static const qd_rgb BLACK = {0, 0, 0}, GOLD = {0xFFFF, 0xCCCC, 0x3333}, DARK = {
                     GRAY = {0x8888, 0x8888, 0x8888};
 
 /* Cards in a row: all of them, except four, which take two rows of two,
-   five and six, two rows of three, and seven, a row of four over three. */
-static int columns(int n) { return n == 4 ? 2 : n == 5 || n == 6 ? 3 : n == 7 ? 4 : n; }
+   five and six, two rows of three, and seven and eight, rows of four. */
+static int columns(int n) { return n == 4 ? 2 : n == 5 || n == 6 ? 3 : n >= 7 ? 4 : n; }
 
 /* Where card i's art goes: two cards side by side, three smaller ones, or
-   four to seven in two rows, each row centered. */
+   four to eight in two rows, each row centered. */
 static qd_rect card(int n, int i) {
     if (n >= 4) {
         int cols = columns(n), row = i / cols;
-        int w = n == 7 ? ART7_W : ART4_W, h = n == 7 ? ART7_H : ART4_H;
-        int gap = n == 4 ? CARD4_GAP : n == 7 ? CARD7_GAP : CARD5_GAP;
+        int w = n >= 7 ? ART7_W : ART4_W, h = n >= 7 ? ART7_H : ART4_H;
+        int gap = n == 4 ? CARD4_GAP : n >= 7 ? CARD7_GAP : CARD5_GAP;
         int in_row = n - row * cols < cols ? n - row * cols : cols;
         int left = (PICKER_W - in_row * w - (in_row - 1) * gap) / 2 + i % cols * (w + gap);
-        int top = CARD4_TOP0 + row * (n == 7 ? CARD7_ROW : CARD4_ROW);
+        int top = CARD4_TOP0 + row * (n >= 7 ? CARD7_ROW : CARD4_ROW);
         return (qd_rect){(int16_t)top, (int16_t)left, (int16_t)(top + h), (int16_t)(left + w)};
     }
     if (n == 3) {
@@ -84,7 +84,7 @@ static qd_rect card(int n, int i) {
 }
 
 static int name_top(int n, int i) {
-    if (n == 7)
+    if (n >= 7)
         return NAME7_TOP0 + i / columns(n) * CARD7_ROW;
     return n >= 4 ? NAME4_TOP0 + i / columns(n) * CARD4_ROW : n == 3 ? NAME3_TOP : NAME_TOP;
 }
@@ -188,7 +188,7 @@ void picker_draw(const picker_entry *e, int n, int selected, uint8_t *screen) {
 int picker_hit(int n, int x, int y) {
     for (int i = 0; i < n && i < PICKER_MAX; i++) {
         qd_rect c = card(n, i);
-        int bottom = name_top(n, i) + 2 * FONT_H + (n == 7 ? 2 * FONT_H + NAME_LEADING : 0);
+        int bottom = name_top(n, i) + 2 * FONT_H + (n >= 7 ? 2 * FONT_H + NAME_LEADING : 0);
         if (x >= c.left - BORDER && x < c.right + BORDER && y >= c.top - BORDER && y < bottom)
             return i;
     }
@@ -292,26 +292,49 @@ bool picker_load_art(const char *exe_path, uint8_t *art, char *err, size_t errle
         free(fork);
         return false;
     }
-    rsrc_entry *e = rsrc_find(FOURCC('P', 'I', 'C', 'T'), 800), *icon = rsrc_find(FOURCC('i', 'c', 'n', 's'), 128);
     qd_rect frame;
+    rsrc_entry *e = rsrc_find(FOURCC('P', 'I', 'C', 'T'), 800), *icon = rsrc_find(FOURCC('i', 'c', 'n', 's'), 128);
+    if (e && (!pict_frame(rsrc_data(e), e->len, &frame) || rect_w(frame) != ART_SRC_W || rect_h(frame) != ART_SRC_H))
+        e = NULL; /* Tristan's PICT 800 is its credits */
+    rsrc_entry *title = e || icon ? NULL : rsrc_find(FOURCC('P', 'I', 'C', 'T'), 900);
+    if (title && (!pict_frame(rsrc_data(title), title->len, &frame) || rect_w(frame) <= 0 || rect_h(frame) <= 0 ||
+                  rect_w(frame) > ART_SRC_W || rect_h(frame) > ART_SRC_H))
+        title = NULL;
     uint8_t *full = NULL;
-    if (!e && icon) {
+    if (icon && !e) {
         ok = picker_load_icns(rsrc_data(icon), icon->len, art);
         if (!ok)
             snprintf(err, errlen, "%s: icns 128 has no readable 128x128 icon (it32) and mask (t8mk)",
                      exe_path);
-    } else if (!e || !pict_frame(rsrc_data(e), e->len, &frame) || rect_w(frame) != ART_SRC_W ||
-        rect_h(frame) != ART_SRC_H) {
-        snprintf(err, errlen, "%s has no 512x384 PICT 800", exe_path);
+    } else if (!e && !title) {
+        snprintf(err, errlen, "%s has no 512x384 PICT 800, icns 128 or PICT 900", exe_path);
     } else if (!(full = calloc((size_t)ART_SRC_W * ART_SRC_H, 4))) {
         fatal("out of memory");
-    } else {
+    } else if (e) {
         qd_pixels t = pixels(full, ART_SRC_W, ART_SRC_H);
         ok = pict_draw(rsrc_data(e), e->len, t.bounds, &t, t.bounds, BLACK, WHITE, rerr, sizeof rerr);
         if (ok)
             reduce(full, ART_SRC_W, ART_SRC_H, art, PICKER_ART_W, PICKER_ART_H, PICKER_ART_W * 4);
         else
             snprintf(err, errlen, "%s: PICT 800: %s", exe_path, rerr);
+    } else { /* the title, reduced to fit the card and centered on it */
+        int w = rect_w(frame), h = rect_h(frame);
+        qd_pixels t = pixels(full, w, h);
+        ok = pict_draw(rsrc_data(title), title->len, t.bounds, &t, t.bounds, BLACK, WHITE, rerr, sizeof rerr);
+        if (ok) {
+            int dw = w, dh = h;
+            if (dw > PICKER_ART_W || dh > PICKER_ART_H) {
+                bool wide = w * PICKER_ART_H > h * PICKER_ART_W;
+                dw = wide ? PICKER_ART_W : w * PICKER_ART_H / h;
+                dh = wide ? h * PICKER_ART_W / w : PICKER_ART_H;
+            }
+            qd_pixels a = pixels(art, PICKER_ART_W, PICKER_ART_H);
+            qd_fill(&a, a.bounds, a.bounds, PLAIN);
+            reduce(full, w, h, art + ((size_t)(PICKER_ART_H - dh) / 2 * PICKER_ART_W + (size_t)(PICKER_ART_W - dw) / 2) * 4,
+                   dw, dh, PICKER_ART_W * 4);
+        } else {
+            snprintf(err, errlen, "%s: PICT 900: %s", exe_path, rerr);
+        }
     }
     free(full);
     rsrc_close();
