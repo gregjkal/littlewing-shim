@@ -288,9 +288,10 @@ static void retry_from_launch(void) {
     if (!gamestart_drop() || clip_on())
         return;
     watch_stop_export();
-    const char *data = getenv("LOONY_DATA_DIR");
+    const char *data = getenv("LOONY_DATA_DIR"); /* replay_open sets it */
     char dir[PATH_MAX];
-    snprintf(dir, sizeof dir, "%s/retry-XXXXXX", data && *data ? data : ".");
+    if (data)
+        snprintf(dir, sizeof dir, "%s/retry-XXXXXX", data);
     if (!data || !*data || !mkdtemp(dir)) {
         log_msg("replay: can't make a folder to replay again into");
         return;
