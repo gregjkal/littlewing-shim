@@ -305,28 +305,39 @@ TEST(picker_draws_nine_cards_in_three_rows_of_three) {
     picker_draw(e, 9, 8, screen);
     free(e[0].art);
     free(e[8].art);
-    CHECK_EQ(px(64, 100)[1], 0xFF);               /* the first card's art, reduced */
-    CHECK_EQ(px(64 + 143, 100 + 107)[1], 0xFF);
-    CHECK_EQ(px(328 + 70, 248 + 50)[1], 0x22);    /* the fifth, in the middle */
-    CHECK_EQ(px(592 + 70, 396 + 50)[3], 0xFF);    /* the ninth card's art */
+    CHECK_EQ(px(48, 76)[1], 0xFF);                /* the first card's art, reduced */
+    CHECK_EQ(px(48 + 159, 76 + 119)[1], 0xFF);
+    CHECK_EQ(px(320 + 80, 240 + 60)[1], 0x22);    /* the fifth, in the middle */
+    CHECK_EQ(px(592 + 80, 404 + 60)[3], 0xFF);    /* the ninth card's art */
     CHECK_EQ(px(592 - 2, 450)[1], 0xFF);          /* gold border: the ninth is selected */
-    CHECK_EQ(px(250, 150)[1], 0);                 /* black between the columns */
-    CHECK_EQ(px(64 + 70, 100 + 108 + 6)[1], 0);   /* and between a card and its name */
+    CHECK_EQ(px(260, 150)[1], 0);                 /* black between the columns */
+    CHECK_EQ(px(48 + 80, 76 + 120 + 6)[1], 0);    /* and between a card and its name */
     /* Every name fits its column on one line: CRYSTAL CALIBURN (256 pixels)
        is the widest, and nothing is drawn under a name, where a second
        line would start, before the next row's borders. */
     bool second_line = false;
     for (int row = 0; row < 3; row++)
-        for (int y = 218 + row * 148 + 16; y < 218 + row * 148 + 26; y++)
+        for (int y = 206 + row * 164 + 16; y < 206 + row * 164 + 30; y++)
             for (int x = 0; x < 800; x++)
                 second_line |= px(x, y)[1] != 0;
     CHECK(!second_line);
-    /* The names of neighbouring cards leave black between them. */
+    /* LOONY LABYRINTH (240 pixels, ending at 248) and CRYSTAL CALIBURN
+       (256, from 272) leave 24 pixels of black between them, as seven and
+       eight keep between columns. */
     bool gap_dark = true;
-    for (int y = 218; y < 234; y++)
-        for (int x = 64 + 72 + 120; x < 328 + 72 - 128; x++)
+    for (int y = 206; y < 222; y++)
+        for (int x = 248; x < 272; x++)
             gap_dark &= px(x, y)[1] == 0;
     CHECK(gap_dark);
+    /* Black below the heading (32 to 56) and above the hint (from 566). */
+    bool clear = true;
+    for (int x = 0; x < 800; x++) {
+        for (int y = 57; y < 72; y++)
+            clear &= px(x, y)[1] == 0;
+        for (int y = 550; y < 566; y++)
+            clear &= px(x, y)[1] == 0;
+    }
+    CHECK(clear);
     bool choose = false;
     CHECK_EQ(picker_key(9, 1, SDL_SCANCODE_DOWN, &choose), 4);
     CHECK_EQ(picker_key(9, 5, SDL_SCANCODE_DOWN, &choose), 8);
@@ -334,10 +345,10 @@ TEST(picker_draws_nine_cards_in_three_rows_of_three) {
     CHECK_EQ(picker_key(9, 7, SDL_SCANCODE_UP, &choose), 4);
     CHECK_EQ(picker_key(9, 2, SDL_SCANCODE_RIGHT, &choose), 3);
     CHECK(!choose);
-    CHECK_EQ(picker_hit(9, 592 + 5, 396 + 5), 8);
-    CHECK_EQ(picker_hit(9, 328 + 70, 366 + 8), 4); /* the name under a card counts */
-    CHECK_EQ(picker_hit(9, 328 + 70, 240), -1);    /* between the rows */
-    CHECK_EQ(picker_hit(9, 250, 150), -1);         /* between the columns */
+    CHECK_EQ(picker_hit(9, 592 + 5, 404 + 5), 8);
+    CHECK_EQ(picker_hit(9, 320 + 80, 370 + 8), 4); /* the name under a card counts */
+    CHECK_EQ(picker_hit(9, 320 + 80, 230), -1);    /* between the rows */
+    CHECK_EQ(picker_hit(9, 260, 150), -1);         /* between the columns */
 }
 
 /* A 128x128 icon, its left half opaque red and its right half clear. */

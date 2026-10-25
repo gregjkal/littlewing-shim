@@ -52,13 +52,18 @@
 #define CARD7_GAP 24
 #define CARD7_ROW 200
 #define NAME7_TOP0 252
-/* Nine cards: smaller again, three rows of three, the columns wide enough
-   that every name fits on one line. */
-#define ART9_W 144
-#define ART9_H 108
-#define CARD9_GAP 120
-#define CARD9_TOP0 100
-#define CARD9_ROW 148
+/* Nine cards: three rows of three, the columns 272 pixels apart so that
+   every name fits on one line with 24 pixels to its neighbour's (the
+   longest two, LOONY LABYRINTH and CRYSTAL CALIBURN, side by side), and
+   the heading and the hint moved toward the screen's edges to make room
+   for three rows. */
+#define ART9_W 160
+#define ART9_H 120
+#define CARD9_GAP 112
+#define CARD9_TOP0 76
+#define CARD9_ROW 164
+#define HEADING9_TOP 32
+#define HINT9_TOP 566
 #define NAME9_BELOW 10 /* from a card's art bottom to its name */
 #define NAME_LEADING 4 /* between a two-line name's lines */
 #define ICON_SIZE 128 /* icns 128's largest image, it32 */
@@ -171,7 +176,7 @@ void picker_draw(const picker_entry *e, int n, int selected, uint8_t *screen) {
     font_init();
     qd_pixels s = pixels(screen, PICKER_W, PICKER_H);
     qd_fill(&s, s.bounds, s.bounds, BLACK);
-    draw_text(&s, PICKER_W / 2, HEADING_TOP, "LITTLEWING PINBALL", 3, GOLD);
+    draw_text(&s, PICKER_W / 2, n == 9 ? HEADING9_TOP : HEADING_TOP, "LITTLEWING PINBALL", 3, GOLD);
     for (int i = 0; i < n && i < PICKER_MAX; i++) {
         qd_rect c = card(n, i);
         int left = c.left, w = rect_w(c), h = rect_h(c);
@@ -198,7 +203,7 @@ void picker_draw(const picker_entry *e, int n, int selected, uint8_t *screen) {
         }
         draw_text(&s, left + w / 2, name_top(n, i), name, 2, i == selected ? WHITE : GRAY);
     }
-    draw_text(&s, PICKER_W / 2, HINT_TOP, "RETURN TO PLAY - CMD-Q TO QUIT", 2, GRAY);
+    draw_text(&s, PICKER_W / 2, n == 9 ? HINT9_TOP : HINT_TOP, "RETURN TO PLAY - CMD-Q TO QUIT", 2, GRAY);
 }
 
 int picker_hit(int n, int x, int y) {

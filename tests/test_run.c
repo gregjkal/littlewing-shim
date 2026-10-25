@@ -3285,7 +3285,7 @@ TEST(run_the_picker_shows_nine_games_and_starts_tristan) {
     CHECK_CONTAINS(out, "loony: sending the quit as Cmd-Q");
     CHECK_CONTAINS(out, "loony: ExitToShell");
     CHECK(!strstr(out, "back to the picker"));
-    CHECK_STR(got, "d9ebd1f3"); /* the frame with Loony Labyrinth selected */
+    CHECK_STR(got, "fff77955"); /* the frame with Loony Labyrinth selected */
 }
 
 /* Eight games: two rows of four, FAIRY TOWER's card, the last, its

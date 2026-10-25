@@ -18,10 +18,12 @@
    two large cards side by side; three get three smaller ones (240x180) in
    a row; four get two rows of two (224x168), five and six two rows of
    three, seven a row of four over three and eight two rows of four
-   (176x132), and nine three rows of three (144x108), each row centered,
-   the art reduced to fit. A name wider than its column (card and gap), or
-   with four across wider than its card, breaks onto two lines at a space;
-   with nine, every name fits its column on one line. This file draws and
+   (176x132), and nine three rows of three (160x120, the columns 272
+   pixels apart, the heading and the hint nearer the screen's top and
+   bottom), each row centered, the art reduced to fit. A name wider than
+   its column (card and gap), or with four across wider than its card,
+   breaks onto two lines at a space; with nine, every name fits its column
+   on one line, 24 pixels or more from its neighbour's. This file draws and
    reads input; picker_run (Task 5) shows it.
    Pixels here are QuickDraw 32-bit: big-endian xRGB. */
 
