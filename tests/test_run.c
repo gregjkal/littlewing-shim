@@ -3958,6 +3958,23 @@ static char *prefs_of(const char *play_dir, const char *name) {
     return read_text(path);
 }
 
+/* Writes Loony Labyrinth's preferences, registered to email with key,
+   into dir (made). */
+static bool write_license(const char *dir, const char *email, const char *key) {
+    char path[1200];
+    snprintf(path, sizeof path, "%s/prefs.plist", dir);
+    if (!make_dirs(dir))
+        return false;
+    FILE *f = fopen(path, "w");
+    if (!f)
+        return false;
+    fprintf(f, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>"
+               "<key>user email</key><string>%s</string><key>user id</key><string>%s</string>"
+               "</dict></plist>\n",
+            email, key);
+    return fclose(f) == 0;
+}
+
 /* A game recorded after the opening (gamestart.h): its first replay plays
    from launch and keeps a snapshot of the game's start in the recording;
    the second goes to the game's start from the baseline and plays on with
@@ -3975,6 +3992,9 @@ SLOW_TEST(run_a_recorded_game_starts_at_the_game_from_its_snapshot) {
     test_tmp_dir(rec_dir, sizeof rec_dir);
     test_tmp_dir(play_dir, sizeof play_dir);
     static char out[10][65536];
+    /* Registered, so the recording holds preferences, as the app's do: a
+       restart from launch must replay into a folder without them. */
+    bool licensed = write_license(rec_dir, TEST_EMAIL, TEST_KEY);
     int rec_status = record_one_game(rec_dir, true, out[0], sizeof out[0]);
     uint32_t shot[9], wav[9];
     int status[9];
@@ -4002,6 +4022,7 @@ SLOW_TEST(run_a_recorded_game_starts_at_the_game_from_its_snapshot) {
     char *prefs[2] = {prefs_of(play_dir, "first"), prefs_of(play_dir, "second")};
     test_remove_tree(rec_dir);
     test_remove_tree(play_dir);
+    CHECK(licensed);
     CHECK_EQ(rec_status, 0);
     CHECK(copied);
     for (int i = 0; i < 9; i++) {
@@ -4044,6 +4065,7 @@ SLOW_TEST(run_a_recorded_game_starts_at_the_game_from_its_snapshot) {
     CHECK_CONTAINS(out[9], "gamestart: going to the game's start at ");
     CHECK_CONTAINS(out[9], "replay: desync at step ");
     CHECK_CONTAINS(out[9], "so the snapshot is dropped, for a replay from launch to take it again");
+    CHECK(!strstr(out[9], "already has preferences"));
     CHECK_CONTAINS(out[9], "replay: starting again from launch");
     CHECK_CONTAINS(out[9], "gamestart: kept a snapshot of the game's start at ");
     CHECK_EQ(wav[8], wav[0]);
@@ -4086,22 +4108,6 @@ SLOW_TEST(run_a_take_keeps_the_snapshot_a_drawing_replay_keeps) {
     free(took);
 }
 
-/* Writes Loony Labyrinth's preferences, registered to email with key,
-   into dir (made). */
-static bool write_license(const char *dir, const char *email, const char *key) {
-    char path[1200];
-    snprintf(path, sizeof path, "%s/prefs.plist", dir);
-    if (!make_dirs(dir))
-        return false;
-    FILE *f = fopen(path, "w");
-    if (!f)
-        return false;
-    fprintf(f, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>"
-               "<key>user email</key><string>%s</string><key>user id</key><string>%s</string>"
-               "</dict></plist>\n",
-            email, key);
-    return fclose(f) == 0;
-}
 
 /* A home folder of its own, as another Mac's, with Loony Labyrinth
    registered there: its path in home. */

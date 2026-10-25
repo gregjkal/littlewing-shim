@@ -54,15 +54,17 @@
    (snapshot_layout) changes by itself with any module state struct's
    size, or the encoding's version. GAMESTART_SNAPSHOT_VERSION is bumped
    by hand for a change the layout doesn't see that the snapshot would:
-   a walk saving other fields at the same sizes, a field's meaning
-   changing, or a change to what the shim writes into guest memory or
+   a walk saving other fields at the same sizes, a struct a block owns
+   (SNAPSHOT_OWNED) changing size, a field's meaning changing, or a
+   change to what the shim writes into guest memory or
    tells the game between the baseline and the game's start. The baseline
    (its clock, trap entry and hash) catches most changes before it, and
    any to the game's files. A change to how the game runs after the
    game's start needs no bump: the snapshot holds nothing of it.
 
    A forgotten bump. A replay that goes out of step after it went to the
-   game's start from the recording's snapshot drops the snapshot from the
+   game's start from the recording's snapshot, or whose module state
+   can't be put back (snapshot_set_load_failed), drops the snapshot from the
    recording (gamestart_drop) and starts again from launch, in a new
    process (main.c), which takes it again; an export fails as before, and
    the next one plays from launch. So a snapshot that no longer
@@ -135,7 +137,8 @@ void gamestart_limit(uint64_t clock_us);
    no window. */
 bool gamestart_taking(void);
 
-/* At a desync: if this replay went to the game's start from the
+/* At a desync, or a module state that can't be put back: if this replay
+   went to the game's start from the
    recording's snapshot, removes the snapshot from the recording and
    returns whether that worked, for the replay to start again from launch
    (A forgotten bump, above). False, at once, if it didn't. */

@@ -19,6 +19,7 @@
 #include "misc.h"
 #include "plist.h"
 #include "qd.h"
+#include "gamestart.h"
 #include "replay.h"
 #include "sound.h"
 #include "strip.h"
@@ -1976,6 +1977,20 @@ TEST(replay_keeps_a_snapshot_after_the_records) {
     CHECK(replay_snapshot(&len) == NULL);
     replay_identity(after);
     CHECK(memcmp(before, after, 32) == 0);
+}
+
+/* A replay that didn't go to the game's start from a snapshot has none
+   to drop at a desync (gamestart_drop), so it doesn't start over, and its
+   recording keeps its snapshot. */
+TEST(replay_with_no_snapshot_used_drops_none) {
+    BEGIN_TEST();
+    CHECK(record_licensed("me@example.com", "123456789012"));
+    CHECK(play_again());
+    CHECK(replay_set_snapshot((const uint8_t *)"snap", 4));
+    CHECK(play_again());
+    CHECK(!gamestart_drop());
+    size_t len;
+    CHECK(replay_snapshot(&len) != NULL);
 }
 
 /* Never a snapshot holding the license, in any case. */

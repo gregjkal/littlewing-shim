@@ -583,7 +583,7 @@ bool gamestart_drop(void) {
     if (!G.used)
         return false;
     G.used = false;
-    log_msg("gamestart: the replay went out of step after going to the game's start from the "
+    log_msg("gamestart: the replay failed after going to the game's start from the "
             "recording's snapshot, so the snapshot is dropped, for a replay from launch to take "
             "it again (a change to what a snapshot holds needs GAMESTART_SNAPSHOT_VERSION bumped)");
     return replay_set_snapshot(NULL, 0);

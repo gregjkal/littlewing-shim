@@ -226,10 +226,10 @@ _Noreturn void replay_desync(const char *fmt, ...) {
     vsnprintf(msg, sizeof msg, fmt, ap);
     va_end(ap);
     log_msg("replay: desync at step %llu (tick %u): %s", (unsigned long long)R.step, tick(), msg);
+    R.desynced = true; /* replay_finish, if retry restarts, says nothing more */
     if (retry)
         retry();
     R.mode = OFF; /* nothing more to report at exit */
-    R.desynced = true;
     if (R.desync)
         R.desync(msg);
     exit(REPLAY_DESYNC_STATUS);
@@ -1399,7 +1399,7 @@ void replay_finish(void) {
             close_file();
             log_msg("replay: recorded %llu steps", (unsigned long long)R.step);
         }
-    } else if (R.mode == PLAYING) {
+    } else if (R.mode == PLAYING && !R.desynced) {
         /* The game quit where it did when it was recorded. */
         if (R.next.kind == REPLAY_END && R.next.step == R.step) {
             R.reached_end = true;

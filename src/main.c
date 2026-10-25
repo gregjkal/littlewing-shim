@@ -275,15 +275,21 @@ static void close_replay(const char *why) {
     restart_self("watch: closing the replay", false);
 }
 
-/* A desync (replay_set_retry): a replay that started from the
+/* A desync (replay_set_retry), or a snapshot whose module state can't be
+   put back (snapshot_set_load_failed): a replay that started from the
    recording's snapshot of the game's start plays again from launch, in
    the same window and with what it was started with, which takes the
-   snapshot again (gamestart.h). An export fails as before, since a
-   restart would leave its clip half written, and the next one plays from
-   launch. */
+   snapshot again (gamestart.h). It saves into a folder of its own
+   (replay_open makes one), since the first one's holds preferences
+   already, and the viewer's export stops first, as for any restart. An
+   export fails as before, since a restart would leave its clip half
+   written, and the next one plays from launch. */
 static void retry_from_launch(void) {
-    if (gamestart_drop() && !clip_on())
-        restart_self("replay: starting again from launch", true);
+    if (!gamestart_drop() || clip_on())
+        return;
+    watch_stop_export();
+    unsetenv("LOONY_DATA_DIR");
+    restart_self("replay: starting again from launch", true);
 }
 
 int main(int argc, char **argv) {
@@ -505,6 +511,7 @@ int main(int argc, char **argv) {
     }
     gamestart_init(); /* after seek_start: its hook runs seek's */
     replay_set_retry(retry_from_launch);
+    snapshot_set_load_failed(retry_from_launch);
     const char *script = getenv("LOONY_SCRIPT");
     if (script && *script && !script_load(script, err, sizeof err)) {
         fprintf(stderr, "loony: can't load the script %s: %s\n", script, err);

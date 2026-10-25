@@ -124,12 +124,24 @@ static uint32_t layout_hash(void) {
 static _Noreturn void walk_fatal(const snapshot_walker *w, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
 
+static void (*load_failed)(void); /* snapshot_set_load_failed's */
+
+void snapshot_set_load_failed(void (*fn)(void)) { load_failed = fn; }
+
 static _Noreturn void walk_fatal(const snapshot_walker *w, const char *fmt, ...) {
     char msg[512];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(msg, sizeof msg, fmt, ap);
     va_end(ap);
+    if (w->loading && load_failed) {
+        if (w->block >= 0)
+            log_msg("snapshot: %s %s, loading: %s", inventory[w->block].file,
+                    inventory[w->block].name, msg);
+        else
+            log_msg("snapshot: %s", msg);
+        load_failed();
+    }
     if (w->block >= 0)
         fatal("snapshot: %s %s, %s: %s", inventory[w->block].file, inventory[w->block].name,
               w->loading ? "loading" : "saving", msg);
