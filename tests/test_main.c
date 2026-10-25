@@ -124,8 +124,8 @@ bool test_md_present(void) {
 }
 
 const char *test_ae_app(void) {
-    const char *d = getenv("LOONY_AE_APP");
-    return d && *d ? d : "/Applications/Angel Egg.app";
+    static char dir[1024];
+    return game_dir("LOONY_AE_APP", "angel-egg", dir, sizeof dir);
 }
 
 const char *test_ae_exe_path(void) {
@@ -139,8 +139,8 @@ bool test_ae_present(void) {
 }
 
 const char *test_gl_app(void) {
-    const char *d = getenv("LOONY_GL_APP");
-    return d && *d ? d : "/Applications/Golden Logres.app";
+    static char dir[1024];
+    return game_dir("LOONY_GL_APP", "golden-logres", dir, sizeof dir);
 }
 
 const char *test_gl_exe_path(void) {

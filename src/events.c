@@ -183,6 +183,11 @@ static void release(ev_event *e);
    event queue's, which holds 20 on a Mac. */
 static bool os_queue_event(uint32_t cls) { return cls == EV_CLASS_KEYBOARD || cls == EV_CLASS_MOUSE; }
 
+/* Whether make_room_in_the_os_queue has logged. Outside E, which a
+   snapshot copies, since the game never sees it, and outside post()'s
+   warned_full, so neither log silences the other. */
+static bool warned_os_queue_full;
+
 /* Before a classic game's input event is queued: when 20 are waiting
    (Tristan reads the keyboard with GetKeys during play and leaves its
    queue alone), the oldest goes, as PostEvent does on a full queue, so
@@ -196,15 +201,20 @@ static void make_room_in_the_os_queue(uint32_t cls) {
             oldest = k;
     if (n < EV_CLASSIC_QUEUE)
         return;
-    if (!E.warned_full)
+    if (!warned_os_queue_full)
         log_msg("events: the event queue is full; dropping its oldest input, as a Mac does");
-    E.warned_full = true;
+    warned_os_queue_full = true;
     release(&E.events[dequeue_at(oldest)]);
 }
 
 /* Queues a new event (the queue holds its reference). Returns it, or NULL
-   if the queue is full (logged once). */
+   if the queue is full (logged once), or for a classic game's key-up or
+   modifier change: classic_what gives those no record, and a Mac's
+   SysEvtMask keeps key-ups out of its queue, so they would only take
+   places among its 20. */
 static ev_event *post(uint32_t cls, uint32_t kind) {
+    if (E.classic && cls == EV_CLASS_KEYBOARD && kind != EV_RAW_KEY_DOWN && kind != EV_RAW_KEY_REPEAT)
+        return NULL;
     make_room_in_the_os_queue(cls);
     int i = 0;
     while (i < EV_MAX_EVENTS && E.events[i].refs)
@@ -829,11 +839,6 @@ static void h_get_event_kind(void) { trap_return(need_event("GetEventKind", trap
 
 static void h_get_event_class(void) { trap_return(need_event("GetEventClass", trap_arg(0))->cls); }
 
-/* FlushEvents(EventMask, EventMask stopMask): does nothing. It empties the
-   classic Event Manager's queue, which nothing here fills. MONSTER FAIR
-   imports it but never calls it. */
-static void h_flush_events(void) {}
-
 static void h_release_event(void) {
     ev_event *e = need_event("ReleaseEvent", trap_arg(0));
     if (e->queued)
@@ -1159,6 +1164,33 @@ static bool classic_next(uint32_t mask, uint32_t rec, bool take) {
     }
     write_record(rec, CL_NULL, 0, E.mouse_h, E.mouse_v, current_modifiers(), E.mouse_down);
     return false;
+}
+
+/* FlushEvents(EventMask, EventMask stopMask): for a classic game, removes
+   the queued keyboard and mouse events whose what is in eventMask, oldest
+   first, until one whose what is in stopMask. Those are the Operating
+   System queue's; high-level and suspend/resume events aren't in it, so
+   they stay. A Carbon game's queue is left alone: MONSTER FAIR imports
+   FlushEvents but never calls it. Tristan calls it often, with 0xFFFF. */
+static void h_flush_events(void) {
+    uint32_t mask = trap_arg(0) & 0xFFFF, stop = trap_arg(1) & 0xFFFF;
+    if (!E.classic)
+        return;
+    for (int k = 0; k < E.qcount;) {
+        ev_event *e = &E.events[E.queue[(E.qhead + k) % EV_MAX_EVENTS]];
+        uint32_t message;
+        int what = classic_what(e, &message);
+        if (!os_queue_event(e->cls) || what < 0) {
+            k++;
+            continue;
+        }
+        if (stop & 1u << what)
+            break;
+        if (mask & 1u << what)
+            release(&E.events[dequeue_at(k)]);
+        else
+            k++;
+    }
 }
 
 /* WaitNextEvent(EventMask, EventRecord *, UInt32 sleep, RgnHandle mouseRgn)

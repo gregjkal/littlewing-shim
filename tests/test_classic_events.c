@@ -22,7 +22,7 @@ static const char *const names[] = {
     "GetCurrentKeyModifiers", "GetGlobalMouse", "GetCaretTime", "GetDblTime",
     "GetCurrentEventLoop", "AEProcessAppleEvent", "NewEventLoopTimerUPP", "GetMainEventLoop",
     "InstallEventLoopTimer", "GetNewCWindow", "BeginUpdate", "EndUpdate", "ShowWindow",
-    "HideWindow", "SelectWindow", "DisposeWindow", "BeginFullScreen", "EndFullScreen",
+    "HideWindow", "SelectWindow", "DisposeWindow", "BeginFullScreen", "EndFullScreen", "FlushEvents",
 };
 
 #define EVERY 0xFFFFu
@@ -409,12 +409,47 @@ TEST(classic_events_a_full_queue_drops_its_oldest_input) {
         CHECK_EQ(e.what, 3);
         downs++;
     }
-    CHECK_EQ(downs, 10); /* the last 9 Zs (their ups have no record) and X */
+    CHECK_EQ(downs, EV_CLASSIC_QUEUE); /* the last 19 Zs and X: their ups take no place */
     CHECK_EQ(e.what, 0);
     events_post_key(SDL_SCANCODE_X, false, false);
     events_post_key(SDL_SCANCODE_C, true, false);
     CHECK(wne(EVERY, &e));
     CHECK_EQ(e.message >> 8, 0x08u); /* C */
+}
+
+/* FlushEvents takes the keyboard and mouse events in its mask, oldest
+   first, up to the first in its stop mask; the rest stay in order. */
+TEST(classic_events_flush_events_stops_at_the_stop_mask) {
+    setup();
+    take_launch_events();
+    events_post_key(SDL_SCANCODE_Z, true, false);
+    events_post_mouse(10, 20, true);
+    events_post_key(SDL_SCANCODE_X, true, false);
+    events_post_mouse(10, 20, false);
+    events_post_key(SDL_SCANCODE_C, true, false);
+    call_import("FlushEvents", 2, KEY_DOWN_MASK | 1u << 1, 1u << 2); /* keyDown and mouseDown, stop at mouseUp */
+    CHECK_EQ(events_queued(), 2);
+    record e;
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 2);
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 3);
+    CHECK_EQ(e.message >> 8, 0x08u); /* C */
+    events_post_key(SDL_SCANCODE_Z, true, false);
+    events_post_mouse(10, 20, true);
+    call_import("FlushEvents", 2, EVERY, 0u);
+    CHECK_EQ(events_queued(), 0);
+}
+
+/* A Carbon game's FlushEvents leaves its queue alone. */
+TEST(classic_events_a_carbon_games_flush_events_does_nothing) {
+    setup();
+    events_post_key(SDL_SCANCODE_Z, true, false);
+    events_post_key(SDL_SCANCODE_Z, false, false);
+    int queued = events_queued();
+    CHECK(queued >= 2);
+    call_import("FlushEvents", 2, EVERY, 0u);
+    CHECK_EQ(events_queued(), queued);
 }
 
 /* A Carbon game's queue (Loony Labyrinth's) is left as it was: it holds
