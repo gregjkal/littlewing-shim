@@ -1104,8 +1104,8 @@ static void h_begin_full_screen(void) {
     trap_return(QD_NO_ERR);
 }
 
-/* EndFullScreen(Ptr restoreState, long flags): disposes of the window and
-   restores the screen size. */
+/* EndFullScreen(Ptr restoreState, long flags): disposes of the window (its
+   event handlers go with it) and restores the screen size. */
 static void h_end_full_screen(void) {
     port_info *info = need_port("EndFullScreen", trap_arg(0));
     events_forget_window(info->addr);

@@ -61,8 +61,9 @@ uint32_t events_window_target(uint32_t window);
    eventNotHandledErr, or eventNotHandledErr. */
 int32_t events_send_command(uint32_t window, uint32_t command);
 
-/* A window was disposed of: its handlers go, and keyboard focus moves to
-   the newest window that still has one (or none). */
+/* A window was disposed of: its handlers go, keyboard focus moves to
+   the newest window that still has one (or none), and it is no longer the
+   active window, so no deactivate is sent for it. */
 void events_forget_window(uint32_t window);
 
 /* Installed handlers, in installation order. */

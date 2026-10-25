@@ -20,6 +20,7 @@ static const char *const names[] = {
     "GetCurrentKeyModifiers", "GetGlobalMouse", "GetCaretTime", "GetDblTime",
     "GetCurrentEventLoop", "AEProcessAppleEvent", "NewEventLoopTimerUPP", "GetMainEventLoop",
     "InstallEventLoopTimer", "ShowWindow", "HideWindow", "SelectWindow", "DisposeWindow",
+    "BeginFullScreen", "EndFullScreen",
 };
 
 #define EVERY 0xFFFFu
@@ -279,7 +280,34 @@ TEST(classic_events_activate_a_window_at_a_disposed_ones_address) {
     CHECK_EQ(e.message, a);
     call_import("DisposeWindow", 1, a);
     uint32_t b = qd_new_window(800, 600);
+    CHECK_EQ(b, a); /* the case this test is for */
     call_import("ShowWindow", 1, b);
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 8);
+    CHECK_EQ(e.message, b);
+    CHECK_EQ(e.modifiers & 1, 1);
+}
+
+/* The same after full screen ends and begins again (EndFullScreen disposes
+   of its window). */
+static uint32_t begin_full_screen(void) {
+    uint32_t restore = scratch(4), win = scratch(4);
+    call_import("BeginFullScreen", 7, restore, 0u, 0u, 0u, win, 0u, 0u);
+    return gm_r32(win);
+}
+
+TEST(classic_events_activate_full_screen_begun_again) {
+    setup();
+    take_launch_events();
+    record e;
+    uint32_t a = begin_full_screen();
+    CHECK(a != 0);
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 8);
+    CHECK_EQ(e.message, a);
+    call_import("EndFullScreen", 2, a, 0u);
+    uint32_t b = begin_full_screen();
+    CHECK_EQ(b, a);
     CHECK(wne(EVERY, &e));
     CHECK_EQ(e.what, 8);
     CHECK_EQ(e.message, b);
