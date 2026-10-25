@@ -24,6 +24,10 @@
 #define EV_MAX_HANDLERS 32
 #define EV_MAX_TIMERS 16
 #define EV_MAX_EVENTS 64
+/* A classic game's keyboard and mouse events waiting at most: the oldest
+   goes to make room for a new one, as on a Mac (Inside Macintosh: Macintosh
+   Toolbox Essentials, the Operating System event queue). */
+#define EV_CLASSIC_QUEUE 20
 
 /* Event classes and kinds this module creates. */
 #define EV_CLASS_KEYBOARD    0x6B657962u /* 'keyb' */

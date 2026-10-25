@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "guest_mem.h"
+#include "memmgr.h"
 #include "rsrc.h"
 #include "snapshot.h"
 #include "trap.h"
@@ -26,6 +27,7 @@ typedef struct {
 
 typedef struct {
     bool used;
+    uint32_t handle; /* the MenuRef */
     int16_t id;
     char title[NAME_CAP];
     bool enabled;
@@ -60,13 +62,13 @@ void menumgr_init(void) {
     N.bar_visible = true;
 }
 
-static uint32_t menu_ref(int slot) { return MENU_TAG_BASE + (uint32_t)slot + 1; }
+static uint32_t menu_ref(int slot) { return N.menus[slot].handle; }
 
 static menu *need_menu(const char *call, uint32_t ref) {
-    uint32_t i = ref - MENU_TAG_BASE - 1;
-    if (i >= MENU_MAX || !N.menus[i].used)
-        trap_crash("%s: 0x%08x is not a menu", call, ref);
-    return &N.menus[i];
+    for (int i = 0; i < MENU_MAX; i++)
+        if (N.menus[i].used && N.menus[i].handle == ref)
+            return &N.menus[i];
+    trap_crash("%s: 0x%08x is not a menu", call, ref);
 }
 
 /* Item i (from 1) of m, or NULL past the end. */
@@ -129,7 +131,12 @@ static void h_get_menu(void) {
         trap_crash("GetMenu: more than %d menus", MENU_MAX);
     if (!parse_menu(rsrc_data(e), e->len, &N.menus[slot]))
         trap_crash("GetMenu: MENU %d is malformed", id);
-    trap_return(menu_ref(slot));
+    uint32_t h = mm_new_handle(e->len, false);
+    if (!h)
+        trap_crash("GetMenu: out of guest memory");
+    memcpy(gm_ptr(gm_r32(h), e->len), rsrc_data(e), e->len);
+    N.menus[slot].handle = h;
+    trap_return(h);
 }
 
 static int bar_index(int16_t id) {
@@ -149,6 +156,7 @@ static void h_dispose_menu(void) {
     int at = bar_index(m->id);
     if (at >= 0 && &N.menus[N.bar[at]] == m)
         remove_from_bar(at);
+    mm_dispose_handle(m->handle);
     m->used = false;
 }
 
@@ -248,6 +256,103 @@ static void h_set_menu_item_text(void) {
     snprintf(it->text, sizeof it->text, "%s", s);
 }
 
+/* GetMenuItemText(MenuRef, item, Str255): an empty string past the end. */
+static void h_get_menu_item_text(void) {
+    menu_item *it = item_of(need_menu("GetMenuItemText", trap_arg(0)), (int16_t)trap_arg(1));
+    gm_write_pstr(trap_arg(2), it ? it->text : "");
+}
+
+/* CheckItem(MenuRef, item, Boolean): the check mark, or none. */
+#define CHECK_MARK 0x12
+static void h_check_item(void) {
+    menu_item *it = item_of(need_menu("CheckItem", trap_arg(0)), (int16_t)trap_arg(1));
+    if (it)
+        it->mark = (trap_arg(2) & 0xFF) ? CHECK_MARK : 0;
+}
+
+/* Puts an item made from text, with the Menu Manager's metacharacters,
+   after item `after` of m (0 for the first, past the end for the last):
+   '(' disables it, "/c" gives it key c, "!c" mark c, and "<c" (a style)
+   and "^c" (an icon) are left out. */
+static void insert_item(menu *m, const char *text, size_t len, int after) {
+    if (m->nitems == MENU_MAX_ITEMS)
+        trap_crash("a menu with more than %d items", MENU_MAX_ITEMS);
+    menu_item it = {.enabled = true};
+    size_t n = 0;
+    for (size_t i = 0; i < len; i++) {
+        char c = text[i];
+        if (c == '(' && n == 0 && it.enabled) {
+            it.enabled = false;
+        } else if ((c == '/' || c == '!' || c == '<' || c == '^') && i + 1 < len) {
+            uint8_t arg = (uint8_t)text[++i];
+            if (c == '/')
+                it.key = arg;
+            else if (c == '!')
+                it.mark = arg;
+        } else if (n < NAME_CAP - 1) {
+            it.text[n++] = c;
+        }
+    }
+    if (after < 0)
+        after = 0;
+    if (after > m->nitems)
+        after = m->nitems;
+    memmove(&m->items[after + 1], &m->items[after], (size_t)(m->nitems - after) * sizeof it);
+    m->items[after] = it;
+    m->nitems++;
+}
+
+/* InsertMenuItem(MenuRef, ConstStr255Param, afterItem): each item of the
+   string, which ';' and return separate, in order. */
+static void h_insert_menu_item(void) {
+    menu *m = need_menu("InsertMenuItem", trap_arg(0));
+    char s[256];
+    gm_read_pstr(trap_arg(1), s);
+    int after = (int16_t)trap_arg(2);
+    for (const char *p = s;;) {
+        size_t len = strcspn(p, ";\r");
+        insert_item(m, p, len, after++);
+        if (!p[len])
+            break;
+        p += len + 1;
+    }
+}
+
+/* DeleteMenuItem(MenuRef, item) */
+static void h_delete_menu_item(void) {
+    menu *m = need_menu("DeleteMenuItem", trap_arg(0));
+    int i = (int16_t)trap_arg(1);
+    if (!item_of(m, i))
+        return;
+    memmove(&m->items[i - 1], &m->items[i], (size_t)(m->nitems - i) * sizeof m->items[0]);
+    m->nitems--;
+}
+
+/* AppendResMenu(MenuRef, ResType): an item for each named resource of
+   that type. There are no desk accessories ('DRVR') or fonts to list. */
+static void h_append_res_menu(void) {
+    menu *m = need_menu("AppendResMenu", trap_arg(0));
+    uint32_t type = trap_arg(1);
+    for (uint32_t i = 0; i < rsrc_total(); i++) {
+        rsrc_entry *e = rsrc_at(i);
+        if (e->type == type && e->name && m->nitems < MENU_MAX_ITEMS) {
+            menu_item it = {.enabled = true};
+            snprintf(it.text, sizeof it.text, "%s", e->name);
+            m->items[m->nitems++] = it;
+        }
+    }
+}
+
+/* The Desk Manager: there are no desk accessories, so OpenDeskAcc opens
+   none (0), SystemClick has no window of one to pass a click to, and
+   SystemEdit has no front one to edit (false: the game handles it). */
+static void h_open_desk_acc(void) { trap_return(0); }
+static void h_system_click(void) {}
+static void h_system_edit(void) { trap_return(0); }
+
+/* InitMenus: the menus were made empty at the start. */
+static void h_init_menus(void) {}
+
 /* MenuSelect(Point) -> long: nothing is drawn to click on, so nothing. */
 static void h_menu_select(void) {
     N.hilited = 0;
@@ -294,6 +399,17 @@ static void h_is_cmd_char(void) {
 
 void menumgr_register(void) {
     trap_register("GetMenu", h_get_menu);
+    trap_register("InitMenus", h_init_menus);
+    trap_register("OpenDeskAcc", h_open_desk_acc);
+    trap_register("SystemClick", h_system_click);
+    trap_register("SystemEdit", h_system_edit);
+    trap_register("GetMenuItemText", h_get_menu_item_text);
+    trap_register("CheckItem", h_check_item);
+    trap_register("InsertMenuItem", h_insert_menu_item);
+    trap_register("DeleteMenuItem", h_delete_menu_item);
+    trap_register("AppendResMenu", h_append_res_menu);
+    trap_register("EnableItem", h_enable_menu_item);
+    trap_register("DisableItem", h_disable_menu_item);
     trap_register("DisposeMenu", h_dispose_menu);
     trap_register("InsertMenu", h_insert_menu);
     trap_register("DeleteMenu", h_delete_menu);

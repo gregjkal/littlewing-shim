@@ -42,6 +42,11 @@ bool test_gl_present(void);
 const char *test_ft_app(void);
 const char *test_ft_exe_path(void);
 bool test_ft_present(void);
+/* Tristan's folder: $LOONY_TR_DIR, or where the app finds it (in a folder
+   of /Applications, such as Littlewing Games, too). */
+const char *test_tr_dir(void);
+const char *test_tr_exe_path(void);
+bool test_tr_present(void);
 /* Whether to run the slow tests (minutes of play each): $LOONY_SLOW_TESTS
    set to anything but empty or 0. */
 bool test_slow_enabled(void);
@@ -202,6 +207,14 @@ bool test_rerun_unforked(const char *name);
     do {                                                                        \
         if (!test_ft_present()) {                                               \
             test_skip("FAIRY TOWER not found");                                 \
+            return;                                                             \
+        }                                                                       \
+    } while (0)
+
+#define SKIP_UNLESS_TR()                                                        \
+    do {                                                                        \
+        if (!test_tr_present()) {                                               \
+            test_skip("Tristan not found");                                     \
             return;                                                             \
         }                                                                       \
     } while (0)

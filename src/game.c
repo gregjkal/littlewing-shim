@@ -30,6 +30,9 @@ static const game_info games[] = {
      GAME_MACHO_BUNDLE, 1024, 768},
     {"fairy-tower", "FAIRY TOWER", "FAIRY TOWER.app", "Contents/MacOS/FAIRY TOWER",
      GAME_MACHO_BUNDLE, 1024, 768},
+    /* A 13-inch Mac's screen: it centers its 580x443 window there, and its
+       alerts are laid out for it (ALRT 900 reaches x 611). */
+    {"tristan", "Tristan", "TRISTAN IE", "TRISTAN IE 2.5.1", GAME_PEF_FOLDER, 640, 480},
 };
 #define NGAMES (sizeof games / sizeof games[0])
 

@@ -299,9 +299,29 @@ static uint32_t leave(uint32_t code, cpu_context *ctx) {
     return result;
 }
 
+/* A classic program's UniversalProcPtr may be a routine descriptor, which
+   starts with the Mixed Mode trap word 0xAAFE: 12 bytes of header with the
+   last record's index at 10, then 20-byte routine records, each with its ISA at 5
+   (1 for PowerPC), its flags at 6 (bit 0: the pointer is relative to the
+   descriptor) and its transition vector at 8. Returns the first PowerPC
+   record's transition vector, or tvector itself when it is no descriptor. */
+static uint32_t routine_tvector(uint32_t tvector) {
+    if (T.direct_calls || gm_r16(tvector) != 0xAAFE)
+        return tvector;
+    uint16_t last = gm_r16(tvector + 10);
+    for (uint32_t i = 0, rec = tvector + 12; i <= last; i++, rec += 20) {
+        if ((gm_r8(rec + 5) & 0x0F) != 1)
+            continue;
+        uint32_t proc = gm_r32(rec + 8);
+        return gm_r16(rec + 6) & 1 ? tvector + proc : proc;
+    }
+    trap_crash("routine descriptor at 0x%08x has no PowerPC routine", tvector);
+}
+
 uint32_t guest_call(uint32_t tvector, int nargs, const uint32_t *args) {
     if (nargs < 0 || nargs > 8)
         fatal("guest_call: bad argument count %d", nargs);
+    tvector = routine_tvector(tvector);
     /* GCC's Darwin code expects the callee's address in r12 when it's called
        through a pointer, and has no TOC: r2 is left as it is. */
     uint32_t code = T.direct_calls ? tvector : gm_r32(tvector);

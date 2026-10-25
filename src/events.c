@@ -176,9 +176,46 @@ static ev_event *need_event(const char *call, uint32_t ref) {
     return e;
 }
 
+static int dequeue_at(int k);
+static void release(ev_event *e);
+
+/* A classic game's input events (keyboard and mouse): the Operating System
+   event queue's, which holds 20 on a Mac. */
+static bool os_queue_event(uint32_t cls) { return cls == EV_CLASS_KEYBOARD || cls == EV_CLASS_MOUSE; }
+
+/* Whether make_room_in_the_os_queue has logged. Outside E, which a
+   snapshot copies, since the game never sees it, and outside post()'s
+   warned_full, so neither log silences the other. */
+static bool warned_os_queue_full;
+
+/* Before a classic game's input event is queued: when 20 are waiting
+   (Tristan reads the keyboard with GetKeys during play and leaves its
+   queue alone), the oldest goes, as PostEvent does on a full queue, so
+   the newest input is never the one lost. Logged once. */
+static void make_room_in_the_os_queue(uint32_t cls) {
+    if (!E.classic || !os_queue_event(cls))
+        return;
+    int n = 0, oldest = -1;
+    for (int k = 0; k < E.qcount; k++)
+        if (os_queue_event(E.events[E.queue[(E.qhead + k) % EV_MAX_EVENTS]].cls) && n++ == 0)
+            oldest = k;
+    if (n < EV_CLASSIC_QUEUE)
+        return;
+    if (!warned_os_queue_full)
+        log_msg("events: the event queue is full; dropping its oldest input, as a Mac does");
+    warned_os_queue_full = true;
+    release(&E.events[dequeue_at(oldest)]);
+}
+
 /* Queues a new event (the queue holds its reference). Returns it, or NULL
-   if the queue is full (logged once). */
+   if the queue is full (logged once), or for a classic game's key-up or
+   modifier change: classic_what gives those no record, and a Mac's
+   SysEvtMask keeps key-ups out of its queue, so they would only take
+   places among its 20. */
 static ev_event *post(uint32_t cls, uint32_t kind) {
+    if (E.classic && cls == EV_CLASS_KEYBOARD && kind != EV_RAW_KEY_DOWN && kind != EV_RAW_KEY_REPEAT)
+        return NULL;
+    make_room_in_the_os_queue(cls);
     int i = 0;
     while (i < EV_MAX_EVENTS && E.events[i].refs)
         i++;
@@ -300,11 +337,32 @@ void events_post_activation(bool active) {
     post(EV_CLASS_APPLICATION, active ? EV_APP_ACTIVATED : EV_APP_DEACTIVATED);
 }
 
+/* Whether the game can take the quit Apple Event, decided from its
+   imports so that it holds from launch, before its first event call (Tristan
+   shows its startup alerts first). A classic program, one that imports
+   WaitNextEvent or GetNextEvent, that imports neither AEInstallEventHandler
+   nor AEProcessAppleEvent (Tristan) can't, and System 7 quit such a program
+   as if its user chose Quit: with Cmd-Q, which a game ignores while its
+   menus are disabled. Every other game imports AEInstallEventHandler. */
+static bool takes_apple_events(void) {
+    if (trap_find("AEInstallEventHandler") >= 0 || trap_find("AEProcessAppleEvent") >= 0)
+        return true;
+    return trap_find("WaitNextEvent") < 0 && trap_find("GetNextEvent") < 0;
+}
+
 void events_request_quit(void) {
     if (E.quit_deadline == 0) {
-        ev_event *e = post(EV_CLASS_APPLE_EVENT, EV_APPLE_EVENT);
-        if (e)
-            e->command = AE_ID_QUIT;
+        ev_event *e;
+        if (takes_apple_events()) {
+            e = post(EV_CLASS_APPLE_EVENT, EV_APPLE_EVENT);
+            if (e)
+                e->command = AE_ID_QUIT;
+        } else if ((e = post(EV_CLASS_KEYBOARD, EV_RAW_KEY_DOWN))) {
+            log_msg("sending the quit as Cmd-Q; the game takes no Apple Events");
+            e->key_code = 0x0C; /* Q */
+            e->modifiers = KM_CMD;
+            e->chr = 'q';
+        }
         E.quit_deadline = wall_seconds() + QUIT_GRACE_SECONDS;
     }
 }
@@ -781,11 +839,6 @@ static void h_get_event_kind(void) { trap_return(need_event("GetEventKind", trap
 
 static void h_get_event_class(void) { trap_return(need_event("GetEventClass", trap_arg(0))->cls); }
 
-/* FlushEvents(EventMask, EventMask stopMask): does nothing. It empties the
-   classic Event Manager's queue, which nothing here fills. MONSTER FAIR
-   imports it but never calls it. */
-static void h_flush_events(void) {}
-
 static void h_release_event(void) {
     ev_event *e = need_event("ReleaseEvent", trap_arg(0));
     if (e->queued)
@@ -989,7 +1042,9 @@ static void h_quit_application_event_loop(void) { E.quit = true; }
    an osEvt (suspend or resume); a window coming to the front is an
    activateEvt (activeFlag in modifiers), after the deactivate of the one
    it covers, ahead of everything queued; the quit Apple Event is a kHighLevelEvent
-   that AEProcessAppleEvent hands to the game's quit handler. Modifier
+   that AEProcessAppleEvent hands to the game's quit handler. After the
+   queue, a window that needs drawing gets an updateEvt (qd.h's
+   qd_pending_update), again each time until BeginUpdate. Modifier
    changes and commands have no EventRecord and are dropped. */
 
 #define CL_NULL       0
@@ -997,6 +1052,7 @@ static void h_quit_application_event_loop(void) { E.quit = true; }
 #define CL_MOUSE_UP   2
 #define CL_KEY_DOWN   3
 #define CL_AUTO_KEY   5
+#define CL_UPDATE     6
 #define CL_ACTIVATE   8
 #define CL_OS         15
 #define CL_HIGH_LEVEL 23
@@ -1101,8 +1157,40 @@ static bool classic_next(uint32_t mask, uint32_t rec, bool take) {
             release(&E.events[dequeue_at(k)]);
         return true;
     }
+    uint32_t window = qd_pending_update();
+    if (window && (mask & (1u << CL_UPDATE))) { /* until BeginUpdate takes it */
+        write_record(rec, CL_UPDATE, window, E.mouse_h, E.mouse_v, current_modifiers(), E.mouse_down);
+        return true;
+    }
     write_record(rec, CL_NULL, 0, E.mouse_h, E.mouse_v, current_modifiers(), E.mouse_down);
     return false;
+}
+
+/* FlushEvents(EventMask, EventMask stopMask): for a classic game, removes
+   the queued keyboard and mouse events whose what is in eventMask, oldest
+   first, until one whose what is in stopMask. Those are the Operating
+   System queue's; high-level and suspend/resume events aren't in it, so
+   they stay. A Carbon game's queue is left alone: MONSTER FAIR imports
+   FlushEvents but never calls it. Tristan calls it often, with 0xFFFF. */
+static void h_flush_events(void) {
+    uint32_t mask = trap_arg(0) & 0xFFFF, stop = trap_arg(1) & 0xFFFF;
+    if (!E.classic)
+        return;
+    for (int k = 0; k < E.qcount;) {
+        ev_event *e = &E.events[E.queue[(E.qhead + k) % EV_MAX_EVENTS]];
+        uint32_t message;
+        int what = classic_what(e, &message);
+        if (!os_queue_event(e->cls) || what < 0) {
+            k++;
+            continue;
+        }
+        if (stop & 1u << what)
+            break;
+        if (mask & 1u << what)
+            release(&E.events[dequeue_at(k)]);
+        else
+            k++;
+    }
 }
 
 /* WaitNextEvent(EventMask, EventRecord *, UInt32 sleep, RgnHandle mouseRgn)

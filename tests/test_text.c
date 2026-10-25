@@ -14,7 +14,7 @@ static const char *const names[] = {
     "GetPortTextFace", "GetPortTextMode", "GetFNum",        "GetAppFont",      "GetSysFont",
     "GetFontInfo",    "FMSwapFont",      "DrawString",      "DrawText",        "DrawChar",
     "StringWidth",    "TextWidth",       "CharWidth",       "EqualString",     "IdenticalString",
-    "IdenticalText",  "CompareText",     "StringToNum",
+    "IdenticalText",  "CompareText",     "StringToNum",     "InitFonts",       "TEInit",
 };
 
 #define RED 0xFF0000u
@@ -195,4 +195,13 @@ TEST(text_utilities_compare_strings_and_read_numbers) {
     CHECK_EQ((int32_t)gm_r32(n), -1234);
     call_import("StringToNum", 2, pstr("42"), n);
     CHECK_EQ(gm_r32(n), 42);
+}
+
+/* A System 7 program's start: InitFonts and TEInit set nothing up. */
+TEST(text_init_fonts_and_te_init_change_nothing) {
+    setup();
+    call_import("TextSize", 1, 18u);
+    call_import("InitFonts", 0);
+    call_import("TEInit", 0);
+    CHECK_EQ(call_import("GetPortTextSize", 1, qd_current_port()), 18);
 }
