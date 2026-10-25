@@ -13,6 +13,8 @@
    Egg (3.0.1) is a Mach-O bundle too, a classic Toolbox program built with
    CodeWarrior, and plays in a 1024x768 window. Golden Logres (3.0.4) is
    another, built with PowerPlant, and takes the display at 1024x768.
+   Tristan (2.5.1) is older than Carbon, a PEF calling InterfaceLib, and
+   plays on a 640x480 screen.
    Adding a game is a row in game.c (the picker lays out two to PICKER_MAX games). */
 typedef enum {
     GAME_PEF_FOLDER,   /* a folder holding a PEF program with a resource fork */

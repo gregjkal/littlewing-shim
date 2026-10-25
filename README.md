@@ -1,11 +1,13 @@
 # littlewing-shim
 
-Runs seven PowerPC Mac pinball games by LittleWing natively on Apple Silicon:
+Runs eight PowerPC Mac pinball games by LittleWing natively on Apple Silicon:
 *Loony Labyrinth 3.0.1* and *Crystal Caliburn 3.0.1* (2003, Carbon programs for
 Mac OS 9 and X), *Jinni Zeala 1.2.2* (2004, an older build of the same engine),
 *MONSTER FAIR 1.2.5* and *Mad Daedalus 1.1.9* (2010, Mac OS X applications),
 *Angel Egg 3.0.1* (the 1996 table, as a 2005 Mac OS X application) and
-*Golden Logres 3.0.4* (2005, a Mac OS X application). It
+*Golden Logres 3.0.4* (2005, a Mac OS X application) and *Tristan 2.5.1*
+(the Internet Edition of the 1992 table, a classic Mac OS program from
+before Carbon). It
 emulates their CPU (Unicorn) and reimplements the Mac OS calls they make in C.
 This repo contains no game files: you need your own copies of the games. The
 one exception is `hd-art/`, enlarged art made from the game's pictures (see HD
@@ -43,11 +45,12 @@ file:
 | Mad Daedalus | `/Applications/Mad Daedalus.app` | `Contents/MacOS/Mad Daedalus` | the Mac OS X version, 1.1.9 |
 | Angel Egg | `/Applications/Angel Egg.app` | `Contents/MacOS/Angel Egg` | the Mac OS X version, 3.0.1 |
 | Golden Logres | `/Applications/Golden Logres.app` | `Contents/MacOS/Golden Logres` | the Mac OS X version, 3.0.4 |
+| Tristan | `/Applications/TRISTAN IE` | `TRISTAN IE 2.5.1` | the Mac version, 2.5.1 (a demo: no key code is known) |
 
 To get a game, download it from LittleWing's [download
 page](http://www.littlewingpinball.com/doc/en/downloads/index.html), open the
 disk image, and drag the game onto the Applications shortcut next to it: the
-game's folder for Loony Labyrinth, Crystal Caliburn and Jinni Zeala, the app
+game's folder for Loony Labyrinth, Crystal Caliburn, Jinni Zeala and Tristan, the app
 itself for MONSTER FAIR, Mad Daedalus, Angel Egg and Golden Logres. Keep its name. To keep
 the games together, put them in a folder of their own in Applications instead,
 such as `/Applications/LittleWing Games/Loony Labyrinth`; any folder name
@@ -59,7 +62,7 @@ Download `LittleWing-<version>.zip` from
 [Releases](https://github.com/gregjkal/littlewing-shim/releases), unzip it,
 and move `LittleWing.app` to `/Applications` (or anywhere); or build it as
 above and copy `build-release/LittleWing.app`. Double-click it. With two to
-seven games installed, it opens on a picker showing each game's title picture
+eight games installed, it opens on a picker showing each game's title picture
 (MONSTER FAIR's, Jinni Zeala's, Mad Daedalus's, Angel Egg's and Golden Logres's cards show their icons): the arrow keys (or
 the mouse) choose, and Return (or a click) plays. It starts on the last game
 played. With one game installed, it plays that game. Choosing QUIT in a game's
@@ -90,7 +93,7 @@ LOONY_GAME=crystal-caliburn ./build-release/loony   # that game, from its usual 
 ```
 
 `LOONY_GAME` takes `loony-labyrinth`, `crystal-caliburn`, `monster-fair`,
-`jinni-zeala`, `mad-daedalus`, `angel-egg` or `golden-logres`.
+`jinni-zeala`, `mad-daedalus`, `angel-egg`, `golden-logres` or `tristan`.
 
 Until it is registered, each game first shows two windows: the shareware screen
 (Play Demo, Buy Now, Enter Key-Code, Quit) and the key list. Click a button, or
@@ -107,7 +110,9 @@ the table's left and right sides, and in Jinni Zeala, which has no demo to
 stop, and in Mad Daedalus, the first Esc opens the menu). Angel Egg keeps
 its menus in a menu bar it hides, so Cmd-N (its New Game) starts a game, and
 Esc pauses it. So does Golden Logres, whose Esc first skips its opening story,
-then the title; its Cmd-P pauses and Cmd-R resumes too:
+then the title; its Cmd-P pauses and Cmd-R resumes too. Tristan starts a game
+with Cmd-N as well; its shareware screen offers Start Demo instead of Play
+Demo:
 
 | Key | Does |
 |---|---|
@@ -132,9 +137,11 @@ Each game's preferences (options, keys, the high-score table and the license)
 are saved when it quits (and at any exit but a crash), in
 `~/Library/Application Support/littlewing-shim/<game>/prefs.plist`, where `<game>`
 is `loony-labyrinth`, `crystal-caliburn`, `monster-fair`, `jinni-zeala`,
-`mad-daedalus`, `angel-egg` or `golden-logres`. Any
+`mad-daedalus`, `angel-egg`, `golden-logres` or `tristan`. Any
 file a game writes goes to its own folder there, never into the game's folder
-or app.
+or app. Tristan saves its settings and high scores into its own program
+file, so those saves go to a copy of that file there, which it plays from
+after that.
 Delete a game's folder to start it over. The picker's last game and the volume
 are kept in `littlewing-shim/picker.plist`. Saves from before the project was
 renamed (`loony-shim/`) move to `littlewing-shim/` on the next launch, and
@@ -179,7 +186,7 @@ upscaler, or redrawn by hand, can replace the generated file. `LOONY_HD_SCALE`
   score display keeps the original font.
 - **Other games:** art for another game goes in `hd-art/<game id>`
   (`crystal-caliburn`, `monster-fair`, `jinni-zeala`, `mad-daedalus`, `angel-egg`,
-  `golden-logres`), and the app uses it
+  `golden-logres`, `tristan`), and the app uses it
   from then on.
 
 ## Giving it to someone
@@ -338,14 +345,16 @@ is the size each game expects: 800x600 for the classic games, 1024x768 at
 1024x768 at 32 bits for Mad Daedalus, which plays at the display's own size
 (its DESKTOP SCREEN option) and whose table is drawn for 768 lines, as is
 Angel Egg's, which sizes its window to the 1024x768 screen, and Golden
-Logres's, which takes the display over at 1024x768 and 16 bits. The host
+Logres's, which takes the display over at 1024x768 and 16 bits. Tristan,
+the oldest, gets a 640x480 screen. The host
 window keeps its size and scales it to fit.
 
 Tests that need a game's files skip when it isn't installed (`SKIP_UNLESS_GAME`,
 `SKIP_UNLESS_CC`, `SKIP_UNLESS_MF`, `SKIP_UNLESS_JZ`, `SKIP_UNLESS_MD`,
-`SKIP_UNLESS_AE` and `SKIP_UNLESS_GL` in `tests/test.h`). `LOONY_GAME_DIR`,
-`LOONY_CC_DIR`, `LOONY_MF_APP`, `LOONY_JZ_DIR`, `LOONY_MD_APP`, `LOONY_AE_APP`
-and `LOONY_GL_APP` point them at copies elsewhere. The tests
+`SKIP_UNLESS_AE`, `SKIP_UNLESS_GL` and `SKIP_UNLESS_TR` in `tests/test.h`).
+`LOONY_GAME_DIR`, `LOONY_CC_DIR`, `LOONY_MF_APP`, `LOONY_JZ_DIR`,
+`LOONY_MD_APP`, `LOONY_AE_APP`, `LOONY_GL_APP` and `LOONY_TR_DIR` point them
+at copies elsewhere. The tests
 that register take the address and key code from the environment and skip
 without them: `LOONY_TEST_EMAIL` and `LOONY_TEST_KEY` (Loony Labyrinth), and
 `LOONY_TEST_MF_EMAIL` and `LOONY_TEST_MF_KEY` (MONSTER FAIR; the public key in
