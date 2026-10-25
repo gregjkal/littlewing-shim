@@ -259,4 +259,29 @@ TEST(classic_events_activate_the_front_window) {
     CHECK_EQ(e.message, a);
     CHECK_EQ(e.modifiers & 1, 1);
     CHECK(!wne(EVERY, &e));
+
+    call_import("HideWindow", 1, a); /* hidden: deactivated, nothing in front */
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.message, a);
+    CHECK_EQ(e.modifiers & 1, 0);
+    CHECK(!wne(EVERY, &e));
+}
+
+/* A window made after the active one is disposed of can get its address;
+   it is still a new window, and is activated. */
+TEST(classic_events_activate_a_window_at_a_disposed_ones_address) {
+    setup();
+    take_launch_events();
+    record e;
+    uint32_t a = qd_new_window(800, 600);
+    call_import("ShowWindow", 1, a);
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.message, a);
+    call_import("DisposeWindow", 1, a);
+    uint32_t b = qd_new_window(800, 600);
+    call_import("ShowWindow", 1, b);
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 8);
+    CHECK_EQ(e.message, b);
+    CHECK_EQ(e.modifiers & 1, 1);
 }

@@ -761,6 +761,8 @@ void events_forget_window(uint32_t window) {
         if (E.handlers[i].target != t)
             E.handlers[kept++] = E.handlers[i];
     E.nhandlers = kept;
+    if (E.active_window == window) /* a Mac sends no deactivate for a disposed window */
+        E.active_window = 0;
     if (E.focus_window == t) {
         E.focus_window = 0;
         for (int i = 0; i < E.nhandlers; i++) /* the newest window still with a handler */
@@ -984,7 +986,9 @@ static void h_quit_application_event_loop(void) { E.quit = true; }
    (a Point, 4) and modifiers (2). A raw key down or repeat is a keyDown or
    autoKey whose message is the key code << 8 | the character; key ups are
    left out, as the Mac's default system event mask has them; activation is
-   an osEvt (suspend or resume); the quit Apple Event is a kHighLevelEvent
+   an osEvt (suspend or resume); a window coming to the front is an
+   activateEvt (activeFlag in modifiers), after the deactivate of the one
+   it covers, ahead of everything queued; the quit Apple Event is a kHighLevelEvent
    that AEProcessAppleEvent hands to the game's quit handler. Modifier
    changes and commands have no EventRecord and are dropped. */
 
@@ -1055,7 +1059,7 @@ static void write_record(uint32_t rec, int what, uint32_t message, int16_t h, in
    window comes to the front waits on this. */
 static bool classic_activate(uint32_t mask, uint32_t rec, bool take) {
     uint32_t front = qd_front_window();
-    if (E.active_window && !qd_is_window(E.active_window))
+    if (E.active_window && !qd_is_window(E.active_window)) /* events_forget_window clears it too */
         E.active_window = 0;
     if (front == E.active_window || !(mask & 1u << CL_ACTIVATE))
         return false;

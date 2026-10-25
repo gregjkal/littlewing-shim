@@ -1108,6 +1108,7 @@ static void h_begin_full_screen(void) {
    restores the screen size. */
 static void h_end_full_screen(void) {
     port_info *info = need_port("EndFullScreen", trap_arg(0));
+    events_forget_window(info->addr);
     dispose_port(info);
     uint32_t pm = gm_r32(Q.screen_pm);
     if (Q.saved_w && Q.saved_h)
