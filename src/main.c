@@ -279,16 +279,24 @@ static void close_replay(const char *why) {
    put back (snapshot_set_load_failed): a replay that started from the
    recording's snapshot of the game's start plays again from launch, in
    the same window and with what it was started with, which takes the
-   snapshot again (gamestart.h). It saves into a folder of its own
-   (replay_open makes one), since the first one's holds preferences
-   already, and the viewer's export stops first, as for any restart. An
+   snapshot again (gamestart.h). It saves into a new folder inside the
+   first one's, which holds preferences already, and the viewer's export
+   stops first, as for any restart. An
    export fails as before, since a restart would leave its clip half
    written, and the next one plays from launch. */
 static void retry_from_launch(void) {
     if (!gamestart_drop() || clip_on())
         return;
     watch_stop_export();
-    unsetenv("LOONY_DATA_DIR");
+    const char *data = getenv("LOONY_DATA_DIR");
+    char dir[PATH_MAX];
+    snprintf(dir, sizeof dir, "%s/retry-XXXXXX", data && *data ? data : ".");
+    if (!data || !*data || !mkdtemp(dir)) {
+        log_msg("replay: can't make a folder to replay again into");
+        return;
+    }
+    setenv("LOONY_DATA_DIR", dir, 1);
+    replay_abandon();
     restart_self("replay: starting again from launch", true);
 }
 

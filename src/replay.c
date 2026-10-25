@@ -156,9 +156,6 @@ static void snap_walk(snapshot_walker *w) {
     SNAPSHOT_HOST(w, R.nspans);
     SNAPSHOT_HOST(w, R.ended);
     SNAPSHOT_HOST(w, R.end_us);
-    snapshot_check(w, R.next.kind >= 0 && R.next.kind < REPLAY_KINDS &&
-                          memchr(R.next.text, 0, sizeof R.next.text),
-                   "the next record");
     SNAPSHOT_HOST(w, R.header);
     SNAPSHOT_HOST(w, R.session);
     SNAPSHOT_HOST(w, R.out);
@@ -181,12 +178,16 @@ static void snap_walk(snapshot_walker *w) {
     uint64_t pos = R.in.pos - R.records_at;
     SNAPSHOT_HOST(w, R.in.pos);
     snapshot_bytes(w, &pos, sizeof pos);
-    if (snapshot_loading(w)) {
-        if (pos > R.in.len - R.records_at)
-            fatal("snapshot: the replay is at byte %llu of its records, which are %zu bytes",
-                  (unsigned long long)pos, R.in.len - R.records_at);
+    /* Checked once the host's fields are back, so a snapshot that fails
+       them leaves R whole for snapshot_set_load_failed's hook. */
+    snapshot_check(w, R.next.kind >= 0 && R.next.kind < REPLAY_KINDS &&
+                          memchr(R.next.text, 0, sizeof R.next.text),
+                   "the next record");
+    snapshot_check(w, pos <= R.in.len - R.records_at,
+                   "the replay is at byte %llu of its records, which are %zu bytes",
+                   (unsigned long long)pos, R.in.len - R.records_at);
+    if (snapshot_loading(w))
         R.in.pos = R.records_at + (size_t)pos;
-    }
 }
 SNAPSHOT_STATE_WALK(R, snap_walk)
 
@@ -226,10 +227,10 @@ _Noreturn void replay_desync(const char *fmt, ...) {
     vsnprintf(msg, sizeof msg, fmt, ap);
     va_end(ap);
     log_msg("replay: desync at step %llu (tick %u): %s", (unsigned long long)R.step, tick(), msg);
-    R.desynced = true; /* replay_finish, if retry restarts, says nothing more */
     if (retry)
         retry();
     R.mode = OFF; /* nothing more to report at exit */
+    R.desynced = true;
     if (R.desync)
         R.desync(msg);
     exit(REPLAY_DESYNC_STATUS);
@@ -239,6 +240,7 @@ void replay_set_pace(void (*fn)(uint64_t clock_us)) { R.pace = fn; }
 void replay_set_end(void (*fn)(void)) { R.end = fn; }
 void replay_set_desync(void (*fn)(const char *msg)) { R.desync = fn; }
 void replay_set_retry(void (*fn)(void)) { retry = fn; }
+void replay_abandon(void) { R.mode = OFF; }
 
 bool replay_desynced(void) { return R.desynced; }
 bool replay_reached_end(void) { return R.reached_end; }
@@ -1399,7 +1401,7 @@ void replay_finish(void) {
             close_file();
             log_msg("replay: recorded %llu steps", (unsigned long long)R.step);
         }
-    } else if (R.mode == PLAYING && !R.desynced) {
+    } else if (R.mode == PLAYING) {
         /* The game quit where it did when it was recorded. */
         if (R.next.kind == REPLAY_END && R.next.step == R.step) {
             R.reached_end = true;

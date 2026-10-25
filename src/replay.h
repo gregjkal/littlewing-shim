@@ -305,6 +305,9 @@ void replay_set_desync(void (*fn)(const char *msg));
    which does when the replay started from the recording's snapshot of
    the game's start (gamestart_drop). */
 void replay_set_retry(void (*fn)(void));
+/* Replay: ends it with nothing more logged (replay_finish says nothing),
+   before the program starts over. */
+void replay_abandon(void);
 /* For what runs at exit: true once replay_desync has run, and true once the
    replay has exited where the recording stopped (run past its end, or
    finished at it, as when the game quits there on its own). */
