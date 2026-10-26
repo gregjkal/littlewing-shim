@@ -106,6 +106,17 @@ uint8_t *snapshot_encode(const snapshot *s, const snapshot *base, const snapshot
    size. */
 snapshot *snapshot_decode(const uint8_t *data, size_t len, char *err, size_t errlen);
 
+/* A hash of what decides how this build lays a snapshot out: the
+   encoding's version, the module state's, and the inventory's layout (its
+   blocks' names and struct sizes, in order). An encoding from a build
+   with another can't be put back here: putting its module state back
+   would fail hard. It doesn't see a change that keeps every block's size,
+   such as a walk listing other fields, a struct a block owns
+   (SNAPSHOT_OWNED) changing size, or a field's meaning changing, so a
+   recording's snapshot is also keyed to GAMESTART_SNAPSHOT_VERSION
+   (gamestart.h). */
+uint32_t snapshot_layout(void);
+
 /* For a snapshot decoded from a file another install may have written
    (gamestart.h): whether it brings the emulator data and register values
    alone, never code. Its guest memory must be the same as now in the
@@ -143,6 +154,12 @@ void snapshot_register(const char *file, const char *name, void *p, size_t len,
         snapshot_register(__FILE__, #var, &(var), sizeof(var), walk);                             \
     }
 #define SNAPSHOT_STATE(var) SNAPSHOT_STATE_WALK(var, NULL)
+
+/* fn runs when putting a snapshot's module state back fails, after the
+   failure is logged and before it is fatal, and doesn't return if it
+   starts the program over: main.c's, for a recording's snapshot from a
+   build whose walks differ at the same sizes (gamestart.h). */
+void snapshot_set_load_failed(void (*fn)(void));
 
 /* In a walk: whether it is loading. */
 bool snapshot_loading(const snapshot_walker *w);
