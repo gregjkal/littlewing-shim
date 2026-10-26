@@ -163,7 +163,8 @@ bool replay_file_snapshot(const char *path, uint8_t **section, size_t *len,
    the section's bytes is only a backstop: it can't see into the guest
    pages, which the section holds XORed with the baseline's. What keeps the
    license out of those is the scan of the snapshot's changed pages at
-   capture (snapshot_changed_holds, gamestart.h). */
+   capture (snapshot_changed_holds, gamestart.h). A NULL section removes
+   the file's snapshot section. */
 bool replay_set_snapshot(const uint8_t *section, size_t len);
 
 /* Before the app restarts to watch path, so a file it can't play doesn't
@@ -299,6 +300,14 @@ _Noreturn void replay_desync(const char *fmt, ...) __attribute__((format(printf,
 /* fn hears of a desync, with what replay_desync logs, before the exit:
    the viewer says so while its window is still up. */
 void replay_set_desync(void (*fn)(const char *msg));
+/* fn runs first at a desync, after it is logged and while the replay is
+   still on, and doesn't return if it starts the replay over: main.c's,
+   which does when the replay started from the recording's snapshot of
+   the game's start (gamestart_drop). */
+void replay_set_retry(void (*fn)(void));
+/* Replay: ends it with nothing more logged (replay_finish says nothing),
+   before the program starts over. */
+void replay_abandon(void);
 /* For what runs at exit: true once replay_desync has run, and true once the
    replay has exited where the recording stopped (run past its end, or
    finished at it, as when the game quits there on its own). */
