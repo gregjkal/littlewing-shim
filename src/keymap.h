@@ -27,6 +27,9 @@ typedef struct {
 /* The mapping for an SDL scancode (SDL_Scancode values). */
 keymap_entry keymap_lookup(int scancode);
 
+/* The virtual key code of the key that types chr with no modifiers, or -1. */
+int keymap_vkey_for_char(uint8_t chr);
+
 /* The character a key produces with the given modifier bits. */
 uint8_t keymap_char(const keymap_entry *k, uint32_t modifiers);
 

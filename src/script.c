@@ -87,6 +87,12 @@ static bool parse(const char *text, char *err, size_t errlen) {
                 snprintf(err, errlen, "line %d: click needs x and y", line_no);
                 return false;
             }
+        } else if (strcmp(verb, "menu") == 0) {
+            a->kind = SCRIPT_MENU;
+            if (sscanf(s, "%*u %*s %d %d", &a->x, &a->y) != 2) {
+                snprintf(err, errlen, "line %d: menu needs a menu ID and an item", line_no);
+                return false;
+            }
         } else if (strcmp(verb, "type") == 0) {
             a->kind = SCRIPT_TYPE;
             const char *text = strstr(s, "type") + 4;

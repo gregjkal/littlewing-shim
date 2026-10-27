@@ -98,6 +98,16 @@ void events_post_key(int scancode, bool down, bool repeat);
    and GetGlobalMouse. The Carbon games use none. */
 void events_post_mouse(int x, int y, bool down);
 
+/* A Command-key down typing chr (in lower case), posted for the game
+   alone: no key is held, and none comes up. How a choice in the host's
+   menu bar reaches a classic game's menus. False if a modal dialog is up
+   or the queue is full. (A quit to a game that takes no Apple Events is
+   such a Cmd-Q too, posted even under a dialog, for once it closes.) */
+bool events_post_command_key(uint8_t chr);
+
+/* Whether a modal dialog is up and taking the input. */
+bool events_modal_up(void);
+
 /* Text to insert (Cmd-V, or a script's "type"), UTF-8. Only a modal sink
    sees it. */
 void events_post_text(const char *utf8);
@@ -114,6 +124,11 @@ typedef struct {
     void (*text)(const char *utf8);
 } ev_modal_sink;
 void events_set_modal(const ev_modal_sink *sink);
+
+/* Writes a classic EventRecord at rec, as WaitNextEvent would: what,
+   message and modifiers as given, with the mouse where it is now and the
+   button's state. For a dialog's filter proc. */
+void events_write_record(uint32_t rec, int what, uint32_t message, uint32_t modifiers);
 
 /* Called on every pump with whether the mouse pointer should show: when the
    game hasn't hidden it (HideCursor), or while a modal dialog runs. */

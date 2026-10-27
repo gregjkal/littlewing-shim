@@ -72,6 +72,13 @@ TEST(script_clicks_typing_and_focus) {
     CHECK_EQ(a.kind, SCRIPT_MARK);
     CHECK(!script_parse("5 click 320\n", err, sizeof err));
     CHECK_CONTAINS(err, "line 1: click needs x and y");
+    CHECK(script_parse("11 menu 131 6\n", err, sizeof err));
+    CHECK(script_next(11, &a));
+    CHECK_EQ(a.kind, SCRIPT_MENU);
+    CHECK_EQ(a.x, 131);
+    CHECK_EQ(a.y, 6);
+    CHECK(!script_parse("5 menu 131\n", err, sizeof err));
+    CHECK_CONTAINS(err, "line 1: menu needs a menu ID and an item");
 }
 
 /* An hour of scripted play is thousands of actions. */

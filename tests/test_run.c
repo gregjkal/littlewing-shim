@@ -2867,6 +2867,47 @@ TEST(run_golden_logres_quits_on_the_quit_apple_event) {
     CHECK(!strstr(out, "didn't quit"));
 }
 
+/* Its Operation menu (MENU 131), which it hides, chosen from the host's
+   menu bar (the script's menu): item 6, Practice "Land's End", which has no
+   Command-key, takes it from Fisher King's table to Land's End's. */
+TEST(run_golden_logres_takes_a_practice_table_from_its_menu) {
+    SKIP_UNLESS_GL();
+    char out[32768];
+    uint32_t ticks[2] = {990, 1400}, shots[2];
+    setenv("LOONY_EXIT_AFTER", "1420", 1);
+    int status = run_script_in(test_gl_app(), "700 down esc\n704 up esc\n820 down esc\n824 up esc\n1000 menu 131 6\n",
+                               ticks, shots, 2, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_EQ(shots[0], 0x6f3b6d72u); /* Fisher King's table */
+    CHECK_EQ(shots[1], 0x619b3f75u); /* Land's End's */
+}
+
+/* Its Game Controls (item 13) asks for a key for each of six buttons in
+   turn, in DLOG 600, whose filter waits for one with GetKeys while
+   ModalDialog runs it; then the game goes on. Its demo alerts are
+   answered with Return, since ModalDialog can't be answered automatically. */
+TEST(run_golden_logres_takes_new_keys_from_its_game_controls) {
+    SKIP_UNLESS_GL();
+    real_alerts = true;
+    char out[32768];
+    uint32_t ticks[2] = {1080, 1500}, shots[2];
+    setenv("LOONY_EXIT_AFTER", "1520", 1);
+    int status = run_script_in(test_gl_app(),
+                               "100 down return\n104 up return\n200 down return\n204 up return\n"
+                               "700 down esc\n704 up esc\n820 down esc\n824 up esc\n1000 menu 131 13\n"
+                               "1100 down m\n1104 up m\n1160 down n\n1164 up n\n1220 down b\n1224 up b\n"
+                               "1280 down v\n1284 up v\n1340 down c\n1344 up c\n1400 down g\n1404 up g\n",
+                               ticks, shots, 2, out, sizeof out);
+    real_alerts = false;
+    CHECK_EQ(status, 0);
+    int asked = 0;
+    for (const char *p = out; (p = strstr(p, "GetNewDialog 600")); p++)
+        asked++;
+    CHECK_EQ(asked, 6);
+    CHECK_EQ(shots[0], 0x51a7c4dcu); /* "Please press key to be assigned to "Left Flipper" button." */
+    CHECK_EQ(shots[1], 0x9f1d447bu); /* the table again */
+}
+
 TEST(run_reports_missing_game_folder) {
     char out[4096];
     int status = test_run_child(run_loony, (void *)"/nonexistent/loony", out, sizeof out);

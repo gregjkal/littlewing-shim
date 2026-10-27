@@ -171,6 +171,43 @@ TEST(classic_events_get_keys_maps_key_codes_to_bits) {
     CHECK_EQ(gm_r32(km + 4), 0x2000u);
 }
 
+static int dialog_keys, dialog_clicks;
+static void count_key(uint32_t vkey, uint8_t chr, uint32_t mods) {
+    (void)vkey, (void)chr, (void)mods;
+    dialog_keys++;
+}
+static void count_click(int x, int y, bool down) {
+    (void)x, (void)y;
+    dialog_clicks += down;
+}
+static void no_text(const char *utf8) { (void)utf8; }
+
+/* Under a modal dialog the keys and clicks are the dialog's, but GetKeys
+   and Button still see them, as on a Mac: Golden Logres's key-setting
+   dialog waits for a key that way. */
+TEST(classic_events_get_keys_and_button_see_through_a_dialog) {
+    setup();
+    take_launch_events();
+    static const ev_modal_sink sink = {count_key, count_click, no_text};
+    events_set_modal(&sink);
+    events_post_key(SDL_SCANCODE_M, true, false); /* key code 0x2E */
+    events_post_mouse(10, 20, true);
+    CHECK_EQ(dialog_keys, 1);
+    CHECK_EQ(dialog_clicks, 1);
+    uint32_t km = scratch(16);
+    call_import("GetKeys", 1, km);
+    CHECK_EQ(gm_r8(km + 5), 1u << 6);
+    CHECK_EQ(call_import("Button", 0), 1);
+    events_post_key(SDL_SCANCODE_M, false, false);
+    events_post_mouse(10, 20, false);
+    call_import("GetKeys", 1, km);
+    CHECK_EQ(gm_r8(km + 5), 0);
+    CHECK_EQ(call_import("Button", 0), 0);
+    events_set_modal(NULL);
+    record e;
+    CHECK(!wne(EVERY, &e)); /* none of it was the game's */
+}
+
 /* A timer proc that adds 1 to COUNTER. */
 static void emit_counter(void) {
     uint32_t code[] = {
@@ -232,6 +269,24 @@ TEST(classic_events_the_quit_comes_as_cmd_q_without_apple_events) {
     CHECK_EQ(e.message, 0x0C71u);
     CHECK(e.modifiers & 0x0100u); /* cmdKey */
     CHECK(events_quit_requested());
+}
+
+/* A quit while a dialog is up waits for it: the game reads its Cmd-Q
+   once the dialog closes. */
+TEST(classic_events_a_quit_under_a_dialog_comes_once_it_closes) {
+    static const char *const plain[] = {"WaitNextEvent"};
+    setup_with(plain, sizeof plain / sizeof plain[0]);
+    take_launch_events();
+    static const ev_modal_sink sink = {count_key, count_click, no_text};
+    events_set_modal(&sink);
+    events_request_quit();
+    CHECK(!events_post_command_key('n')); /* a menu choice isn't held for later */
+    events_set_modal(NULL);
+    record e;
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 3);
+    CHECK_EQ(e.message, 0x0C71u);
+    CHECK(!wne(EVERY, &e));
 }
 
 /* The same before the game's first event call: Tristan shows its startup

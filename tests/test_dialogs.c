@@ -9,10 +9,12 @@
 #include "dialogs.h"
 #include "events.h"
 #include "files.h"
+#include "fork_build.h"
 #include "harness.h"
 #include "memmgr.h"
 #include "mixer.h"
 #include "misc.h"
+#include "ppc.h"
 #include "qd.h"
 #include "rsrc.h"
 #include "script.h"
@@ -408,6 +410,87 @@ TEST(dialogs_unsupported_uses_crash_with_a_report) {
     CHECK_CONTAINS(out, "GetNewDialog: caller-supplied dialog storage is not supported");
     CHECK_EQ(test_run_child(child_auto_modal, NULL, out, sizeof out), 2);
     CHECK_CONTAINS(out, "ModalDialog: DLOG 911 can't be answered automatically");
+}
+
+/* ---- ModalDialog's filter proc (no game needed) ---- */
+
+/* DLOG 200: OK (item 1) and an edit field (item 2), in DITL 200. */
+static const uint8_t filter_dlog[] = {
+    0, 0, 0, 0, 0, 100, 0, 200, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 200, 0, 0, 0, 0,
+};
+static const uint8_t filter_ditl[] = {
+    0, 1,
+    0, 0, 0, 0, 0, 70, 0, 10, 0, 90, 0, 60, DLG_ITEM_BUTTON, 2, 'O', 'K',
+    0, 0, 0, 0, 0, 10, 0, 10, 0, 26, 0, 150, DLG_ITEM_EDIT_TEXT, 0,
+};
+
+static uint8_t *filter_fork;
+
+static void filter_setup(void) {
+    harness_init(names, sizeof names / sizeof names[0]);
+    mm_init();
+    const res rs[] = {
+        {FOURCC('D', 'I', 'T', 'L'), 200, filter_ditl, sizeof filter_ditl},
+        {FOURCC('D', 'L', 'O', 'G'), 200, filter_dlog, sizeof filter_dlog},
+    };
+    size_t len;
+    free(filter_fork);
+    filter_fork = build_fork(rs, 2, &len);
+    char err[256];
+    if (!rsrc_open(filter_fork, len, err, sizeof err))
+        fatal("rsrc_open: %s", err);
+    setenv("LOONY_FIXED_CLOCK", "1", 1);
+    misc_init();
+    unsetenv("LOONY_FIXED_CLOCK");
+    qd_init(800, 600, 8);
+    events_init();
+    dialogs_init();
+    dialogs_register();
+}
+
+/* filter(dialog, event, itemHit): counts its calls in calls[0] and keeps
+   the event's modifiers in calls[1]; on a key down it answers item 2. */
+static uint32_t emit_filter(uint32_t calls) {
+    const uint32_t words[] = {
+        ppc_lis(8, calls >> 16), ppc_ori(8, 8, calls & 0xFFFF),
+        ppc_lwz(9, 0, 8), ppc_addi(9, 9, 1), ppc_stw(9, 0, 8),
+        0xA0C40000u, /* lhz r6,0(r4): what */
+        0xA0E4000Eu, /* lhz r7,14(r4): modifiers */
+        ppc_stw(7, 4, 8),
+        ppc_cmpwi(6, 3),
+        0x40820014u, /* bne +20 */
+        ppc_addi(6, 0, 2),
+        0xB0C50000u, /* sth r6,0(r5) */
+        ppc_addi(3, 0, 1),
+        PPC_BLR,
+        ppc_addi(3, 0, 0),
+        PPC_BLR,
+    };
+    uint32_t code = scratch(sizeof words);
+    put_words(code, words, (int)(sizeof words / sizeof words[0]));
+    uint32_t tv = scratch(8);
+    gm_w32(tv, code);
+    return tv;
+}
+
+TEST(dialogs_modal_dialog_gives_its_filter_the_events_first) {
+    filter_setup();
+    uint32_t calls = scratch(8), hit = scratch(2);
+    uint32_t filter = emit_filter(calls);
+    uint32_t dlg = call_import("GetNewDialog", 3, 200u, 0u, 0xFFFFFFFFu);
+    script("5 down a\n6 up a\n");
+    call_import("ModalDialog", 2, filter, hit);
+    CHECK_EQ(gm_r16(hit), 2); /* the filter's answer, not a button */
+    CHECK(gm_r32(calls) > 2);  /* null events, then the key */
+    CHECK(gm_r32(calls + 4) & 0x80u); /* btnState: the button is up */
+    char t[256];
+    CHECK_EQ(item_text(dlg, 2, t), DLG_ITEM_EDIT_TEXT);
+    CHECK_STR(t, ""); /* the filter took the key: nothing was typed */
+    uint32_t n = gm_r32(calls);
+    script("10 down return\n11 up return\n");
+    call_import("ModalDialog", 2, 0u, hit);
+    CHECK_EQ(gm_r16(hit), 1);
+    CHECK_EQ(gm_r32(calls), n); /* the filter was for the call that passed it */
 }
 
 /* ---- nib windows and standard alerts (a Mac OS X game's) ---- */

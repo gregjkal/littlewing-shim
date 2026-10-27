@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "events.h"
 #include "guest_mem.h"
 #include "memmgr.h"
 #include "rsrc.h"
@@ -41,6 +42,8 @@ static struct {
     int nbar;
     bool bar_visible;
     int16_t hilited;
+    uint32_t chosen;    /* an item chosen in the host's menu bar, for the key below */
+    uint8_t chosen_key; /* the Command-key sent for it */
 } N;
 
 /* A snapshot's walk (snapshot.h): only the counts and the slots in the
@@ -360,8 +363,18 @@ static void h_menu_select(void) {
 }
 
 /* The menu and item, (menuID << 16) | item, of the enabled item in the
-   bar whose key equivalent is c (letters in either case), or 0. */
+   bar whose key equivalent is c (letters in either case), or 0. The key
+   sent for an item chosen in the host's menu bar stands for that item. */
 static uint32_t find_key(uint8_t c) {
+    if (N.chosen && toupper(c) == toupper(N.chosen_key)) {
+        uint32_t chosen = N.chosen;
+        N.chosen = 0;
+        menumgr_item_info info; /* the game may have disabled it since */
+        if (!menumgr_item((int16_t)(chosen >> 16), (int)(chosen & 0xFFFF), &info) || !info.enabled)
+            return 0;
+        N.hilited = (int16_t)(chosen >> 16);
+        return chosen;
+    }
     for (int b = 0; b < N.nbar; b++) {
         const menu *m = &N.menus[N.bar[b]];
         if (!m->enabled)
@@ -395,6 +408,75 @@ static void h_is_cmd_char(void) {
     uint16_t what = gm_r16(ev), mods = gm_r16(ev + 14);
     bool key = (what == KEY_DOWN || what == AUTO_KEY) && (mods & CMD_KEY);
     trap_return(key && (uint8_t)gm_r32(ev + 2) == (uint8_t)trap_arg(1));
+}
+
+/* ---- the host's menu bar ---- */
+
+static menu *bar_menu_with_id(int16_t id) {
+    int at = bar_index(id);
+    return at < 0 ? NULL : &N.menus[N.bar[at]];
+}
+
+bool menumgr_bar_menu(int i, menumgr_menu_info *out) {
+    if (i < 0 || i >= N.nbar)
+        return false;
+    const menu *m = &N.menus[N.bar[i]];
+    *out = (menumgr_menu_info){.id = m->id, .enabled = m->enabled, .nitems = m->nitems};
+    snprintf(out->title, sizeof out->title, "%s", m->title);
+    return true;
+}
+
+/* Items whose window the shim can't open, which the host's menu bar shows
+   disabled. Display Options (Golden Logres, Angel Egg) picks the screen
+   size, which the shim sets itself, in a window of controls it lacks. */
+static const char *const cant_open[] = {"Display Options..."};
+
+static bool can_open(const char *text) {
+    for (size_t i = 0; i < sizeof cant_open / sizeof cant_open[0]; i++)
+        if (strcmp(text, cant_open[i]) == 0)
+            return false;
+    return true;
+}
+
+bool menumgr_item(int16_t menu_id, int item, menumgr_item_info *out) {
+    menu *m = bar_menu_with_id(menu_id);
+    const menu_item *it = m ? item_of(m, item) : NULL;
+    if (!it)
+        return false;
+    *out = (menumgr_item_info){.key = it->key > ' ' && it->key < 0x7F ? it->key : 0,
+                               .checked = it->mark == CHECK_MARK,
+                               .enabled = m->enabled && it->enabled && can_open(it->text) && !events_modal_up()};
+    snprintf(out->text, sizeof out->text, "%s", it->text);
+    return true;
+}
+
+/* Whether an item in the bar has c, in either case, for its key. */
+static bool key_taken(uint8_t c) {
+    for (int b = 0; b < N.nbar; b++) {
+        const menu *m = &N.menus[N.bar[b]];
+        for (int i = 0; i < m->nitems; i++)
+            if (toupper(m->items[i].key) == toupper(c))
+                return true;
+    }
+    return false;
+}
+
+void menumgr_choose(int16_t menu_id, int item) {
+    menumgr_item_info info;
+    if (!menumgr_item(menu_id, item, &info) || !info.enabled)
+        return;
+    uint8_t key = info.key;
+    for (uint8_t c = 'z'; !key && c >= 'a'; c--)
+        if (!key_taken(c))
+            key = c;
+    if (!key) {
+        log_msg("menu: every letter is a key in the game's menus; can't send %s", info.text);
+        return;
+    }
+    if (events_post_command_key(key)) {
+        N.chosen = (uint32_t)(uint16_t)menu_id << 16 | (uint32_t)item;
+        N.chosen_key = key;
+    }
 }
 
 void menumgr_register(void) {
