@@ -41,6 +41,23 @@ TEST(display_present_works_with_the_dummy_driver) {
     CHECK_EQ(display_frames(), before + 2);
 }
 
+/* The pump presents when the display is due: before the window opens,
+   three quarters of a refresh after the last present, and always without
+   vsync (the fixed clock). */
+TEST(display_is_due_most_of_a_refresh_after_a_present) {
+    gm_init();
+    mm_init();
+    qd_init(64, 48, 16);
+    CHECK(display_due()); /* no window yet */
+    display_present();
+    CHECK(!display_due());
+    SDL_Delay(30); /* a refresh at 34 Hz or more, the rate when SDL reports none */
+    CHECK(display_due());
+    display_present();
+    display_set_vsync(false);
+    CHECK(display_due());
+}
+
 static int keys, quits, last_scancode, clicks, mouse_x, mouse_y;
 static char pasted[64];
 static bool last_down;
