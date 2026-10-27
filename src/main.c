@@ -110,7 +110,14 @@ static void save_prefs_at_exit(void) {
 /* The event pump's present: when a frame check is due (a recording or a
    replay), the screen's hash goes to replay_frame first. A clip, or a
    watched replay, takes the frame in place of the window, and a take
-   (gamestart.h) has none. */
+   (gamestart.h) has none. Angel Egg draws a frame in pieces, reading
+   TickCount (a pump) after each, and a present at each would wait for a
+   refresh each: its window gets what was drawn once the display is due
+   (display_due), and until then it waits for a later pump. The other games
+   present once a frame, and presenting whenever they pump shows them all. */
+static bool throttled; /* presents only when the display is due */
+static bool unshown;   /* drawn, not yet presented to the window */
+
 static void present_frame(void) {
     bool dirty = qd_take_dirty();
     if (dirty && replay_frame_due()) {
@@ -126,8 +133,13 @@ static void present_frame(void) {
         clip_present(dirty);
     else if (watch_on())
         watch_present(dirty);
-    else if (dirty && !gamestart_taking())
-        display_present();
+    else if (!gamestart_taking()) {
+        unshown |= dirty && !qd_flush_only();
+        if (unshown && (!throttled || display_due())) {
+            display_present();
+            unshown = false;
+        }
+    }
     measure_present();
 }
 
@@ -486,6 +498,7 @@ int main(int argc, char **argv) {
     }
     qd_init(game->screen_width, game->screen_height, macho ? 32 : 8);
     qd_pad_gworld_rows(strcmp(game->id, "angel-egg") == 0);
+    throttled = strcmp(game->id, "angel-egg") == 0;
     dialogs_init();
     menumgr_init();
     cgimage_init();
