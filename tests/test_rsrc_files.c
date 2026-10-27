@@ -16,7 +16,7 @@ static const char *const names[] = {
     "AddResource",     "CountResources",   "GetIndResource", "GetResAttrs",     "SetResAttrs",
     "GetResInfo",      "SetResInfo",       "GetIndString",  "Get1NamedResource", "Count1Resources",
     "Get1IndResource", "GetPicture", "KillPicture", "RemoveResource",
-    "OpenResFile", "OpenRFPerm", "CreateResFile",
+    "OpenResFile", "OpenRFPerm", "CreateResFile", "UniqueID", "Unique1ID",
 };
 
 #define TEXT FOURCC('T', 'E', 'X', 'T')
@@ -256,6 +256,24 @@ TEST(rsrcfile_closing_gives_back_handles_and_the_file_below) {
     call_import("CloseResFile", 1, (uint32_t)RSRC_APP_REFNUM); /* stays open */
     CHECK_EQ(res_error(), 0);
     CHECK_STR(text_of(call_import("GetResource", 2, TEXT, 128u)), "from app");
+    teardown();
+}
+
+/* Unique1ID is the first ID from 128 the current file doesn't use for the
+   type; UniqueID, the first no open file does (the application has TEXT 128). */
+TEST(rsrcfile_unique_ids_are_the_first_free_from_128) {
+    setup();
+    uint32_t s = spec("Prefs");
+    call_import("FSpCreateResFile", 4, s, 0u, 0u, 0u);
+    int16_t ref = (int16_t)call_import("FSpOpenResFile", 2, s, 3u);
+    CHECK(ref > 0);
+    CHECK_EQ(call_import("Unique1ID", 1, SND), 128);
+    call_import("AddResource", 4, mm_new_handle(1, false), SND, 128u, 0u);
+    CHECK_EQ(call_import("Unique1ID", 1, SND), 129);
+    CHECK_EQ(call_import("Unique1ID", 1, TEXT), 128);
+    CHECK_EQ(call_import("UniqueID", 1, TEXT), 129);
+    CHECK_EQ(res_error(), 0);
+    call_import("CloseResFile", 1, (uint32_t)ref);
     teardown();
 }
 

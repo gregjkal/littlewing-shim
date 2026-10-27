@@ -133,6 +133,15 @@ Demo:
 The keys can be changed from the game's OPTIONS menu. Unregistered, games are
 time-limited.
 
+Angel Egg, Golden Logres and Tristan have menus of their own (Golden Logres's
+Operation menu, with New Game, Resume, the practice tables, Save Game and
+Restore Game). The game hides them, so they appear in the Mac's menu bar
+instead, after the app menu; in full screen, move the pointer to the top of
+the screen to show it. Each menu shows what the game has enabled and
+checked when it opens, and its keyboard shortcuts, and choosing an item does
+what it does in the game. Display Options stays greyed out: it only sets the
+screen size, which LittleWing chooses itself.
+
 The **Sound** menu in the menu bar has a volume slider, from silent at the left
 to the game's own level at the right. It starts at 80%, 6 dB below the game's
 level. The slider follows how loudness is heard, not the signal, so 50% is
@@ -328,7 +337,9 @@ action per line:
 Scripts can also click (`20 click 460 270`, in emulated-screen pixels) and type
 into a dialog (`50 type me@example.com`, the rest of the line), take focus away
 and give it back (`60 blur`, `90 focus`), mark a clip while recording
-(`70 mark`, as Cmd-S does), and may be any length. `tools/soak_script.py` writes one that keeps playing for an hour (game
+(`70 mark`, as Cmd-S does), choose an item from one of the game's own menus
+(`80 menu 131 6`: the menu's resource ID, then the item, counting from 1,
+separators included), and may be any length. `tools/soak_script.py` writes one that keeps playing for an hour (game
 starts, plunger, flippers, nudges, a screenshot every 5 minutes):
 
 ```bash

@@ -726,6 +726,29 @@ static void h_add_resource(void) {
     R.error = 0;
 }
 
+/* UniqueID and Unique1ID (ResType) -> short: an ID for a new resource of
+   that type that no open file (the current one, for Unique1ID) uses.
+   The smallest from 128 rather than a random one, as the Mac's are, so a
+   run goes the same way every time; below 128 is the system's. */
+static void unique_id(bool all) {
+    uint32_t type = trap_arg(0);
+    int32_t first = all ? 0 : R.cur, last = all ? (int32_t)nfiles - 1 : R.cur;
+    for (int32_t id = 128; id <= INT16_MAX; id++) {
+        bool used = false;
+        for (int32_t f = first; f >= 0 && f <= last && !used; f++)
+            used = find_in(&files[f], type, (int16_t)id) != NULL;
+        if (!used) {
+            R.error = 0;
+            trap_return((uint32_t)id);
+            return;
+        }
+    }
+    trap_crash("%s: every ID of a type is used", all ? "UniqueID" : "Unique1ID");
+}
+
+static void h_unique_id(void) { unique_id(true); }
+static void h_unique1_id(void) { unique_id(false); }
+
 static void h_count_resources(void) {
     R.error = 0;
     trap_return(rsrc_count(trap_arg(0)) & 0xFFFF);
@@ -861,6 +884,8 @@ void rsrc_register(void) {
     trap_register("WriteResource", h_write_resource);
     trap_register("ChangedResource", h_changed_resource);
     trap_register("AddResource", h_add_resource);
+    trap_register("UniqueID", h_unique_id);
+    trap_register("Unique1ID", h_unique1_id);
     trap_register("CountResources", h_count_resources);
     trap_register("GetIndResource", h_get_ind_resource);
     trap_register("Count1Resources", h_count1_resources);

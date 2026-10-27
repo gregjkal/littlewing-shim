@@ -13,6 +13,8 @@
      <tick> blur              the window loses focus (kEventAppDeactivated)
      <tick> focus             the window gains focus (kEventAppActivated)
      <tick> mark              mark the moment for a clip, as Cmd-S would (replay.h)
+     <tick> menu <id> <item>  choose item <item> (from 1) of the game's menu
+                              <id>, as the host's menu bar does (menumgr_choose)
    Blank lines and lines starting with '#' are ignored. Ticks are 1/60 s
    since launch and must not decrease. */
 
@@ -26,6 +28,7 @@ typedef enum {
     SCRIPT_BLUR,
     SCRIPT_FOCUS,
     SCRIPT_MARK,
+    SCRIPT_MENU,
 } script_kind;
 
 typedef struct {
@@ -33,7 +36,7 @@ typedef struct {
     script_kind kind;
     int scancode;       /* key actions */
     char path[256];     /* screenshot; the text to type */
-    int x, y;           /* click */
+    int x, y;           /* click; menu: the menu's ID and the item */
 } script_action;
 
 /* Parses a script file. On failure writes err (with the line number) and
