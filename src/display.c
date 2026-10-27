@@ -439,6 +439,18 @@ void display_take_launch_events(uint32_t wait_ms) {
     } while (SDL_GetTicks() < until);
 }
 
+bool display_due(void) {
+    if (D.no_vsync || !D.window)
+        return true;
+    float hz = 0;
+    const SDL_DisplayMode *m = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(D.window));
+    if (m)
+        hz = m->refresh_rate;
+    if (hz < 30)
+        hz = 60;
+    return SDL_GetTicksNS() - D.presented >= (uint64_t)(1e9 / hz * 3 / 4);
+}
+
 void display_set_vsync(bool on) {
     D.no_vsync = !on;
     if (D.renderer)

@@ -280,9 +280,19 @@ TEST(qd_begin_full_screen_makes_a_window_on_the_screen) {
     call_import("PaintRect", 1, rect(0, 0, 1, 1));
     CHECK_EQ(rd_be16(px.base), 0x7C00);
     CHECK(qd_take_dirty());
+    CHECK(!qd_flush_only());
     CHECK(!qd_take_dirty());
-    call_import("QDFlushPortBuffer", 2, win, 0u); /* presented at the next pump */
+    /* A flush with nothing drawn: dirty, for the replays' count, but the
+       frame shown already. */
+    call_import("QDFlushPortBuffer", 2, win, 0u);
     CHECK(qd_take_dirty());
+    CHECK(qd_flush_only());
+    CHECK(!qd_take_dirty());
+    CHECK(!qd_flush_only());
+    call_import("PaintRect", 1, rect(0, 0, 1, 1));
+    call_import("QDFlushPortBuffer", 2, win, 0u);
+    CHECK(qd_take_dirty());
+    CHECK(!qd_flush_only());
     call_import("HideWindow", 1, win);
     call_import("ShowWindow", 1, win);
     call_import("InvalWindowRect", 2, win, r);

@@ -49,6 +49,8 @@ static struct {
     int nports;
     uint32_t cur_port, cur_device;
     bool dirty;
+    bool flushed;         /* QDFlushPortBuffer since the last qd_take_dirty */
+    bool flush_only;      /* the last qd_take_dirty's answer came from flushed alone */
     int saved_w, saved_h; /* screen size before BeginFullScreen */
     qd_window_fn window_hook;
     qd_dialog_fn dialog_hook;
@@ -437,12 +439,17 @@ void qd_screen(qd_pixels *out, qd_palette *pal) { qd_bits("screen", gm_r32(Q.scr
 void qd_mark_dirty(void) { Q.dirty = true; }
 
 bool qd_take_dirty(void) {
-    bool d = Q.dirty || Q.direct;
-    Q.dirty = false;
-    return d;
+    bool drawn = Q.dirty || Q.direct;
+    Q.flush_only = Q.flushed && !drawn;
+    Q.dirty = Q.flushed = false;
+    return drawn || Q.flush_only;
 }
 
+bool qd_flush_only(void) { return Q.flush_only; }
+
 void qd_set_direct_drawing(bool on) { Q.direct = on; }
+
+bool qd_direct_drawing(void) { return Q.direct; }
 
 uint32_t qd_screen_base(void) { return gm_r32(gm_r32(Q.screen_pm) + PM_BASE_ADDR); }
 
@@ -1351,8 +1358,9 @@ static void h_get_available_window_positioning_bounds(void) {
     trap_return(QD_NO_ERR);
 }
 
-/* QDFlushPortBuffer(port, region): the screen is presented at the next pump. */
-static void h_qd_flush_port_buffer(void) { Q.dirty = true; }
+/* QDFlushPortBuffer(port, region): the screen is dirty at the next pump,
+   though it shows nothing new unless something drew (qd_flush_only). */
+static void h_qd_flush_port_buffer(void) { Q.flushed = true; }
 
 /* BeginFullScreen(Ptr *restoreState, GDHandle gd, short *desiredWidth,
    short *desiredHeight, WindowRef *newWindow, RGBColor *eraseColor, long flags) */
