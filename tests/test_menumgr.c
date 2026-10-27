@@ -3,12 +3,14 @@
 #include <stdlib.h>
 
 #include "cgimage.h"
+#include "events.h"
 #include "files.h"
 #include "harness.h"
 #include "memmgr.h"
 #include "menumgr.h"
 #include "misc.h"
 #include "mixer.h"
+#include "qd.h"
 #include "rsrc.h"
 #include "snapshot.h"
 #include "util.h"
@@ -19,7 +21,7 @@ static const char *const names[] = {
     "IsMenuItemEnabled", "GetItemCmd", "GetItemMark", "SetItemMark", "SetMenuItemText",
     "MenuSelect", "MenuKey", "MenuEvent", "IsCmdChar", "GetCCursor", "InitMenus",
     "GetMenuItemText", "CheckItem", "InsertMenuItem", "DeleteMenuItem", "AppendResMenu",
-    "EnableItem", "DisableItem", "OpenDeskAcc", "SystemClick", "SystemEdit",
+    "EnableItem", "DisableItem", "OpenDeskAcc", "SystemClick", "SystemEdit", "WaitNextEvent",
 };
 
 /* ---- a resource fork: File (MENU 128), Operation (MENU 129), crsr 128 ---- */
@@ -110,8 +112,13 @@ static void setup(void) {
     char err[256];
     if (!rsrc_open(fork_buf, len, err, sizeof err))
         fatal("rsrc_open: %s", err);
+    setenv("LOONY_FIXED_CLOCK", "1", 1);
     misc_init();
     misc_register();
+    qd_init(800, 600, 8);
+    qd_register();
+    events_init();
+    events_register();
     menumgr_init();
     menumgr_register();
 }
@@ -175,6 +182,76 @@ TEST(menumgr_menu_event_and_is_cmd_char_want_command) {
     CHECK_EQ(call_import("IsCmdChar", 2, key_record('.', 0x0100), (uint32_t)'.'), 1);
     CHECK_EQ(call_import("IsCmdChar", 2, key_record('.', 0), (uint32_t)'.'), 0);
     CHECK_EQ(call_import("MenuSelect", 1, 0x00050005u), 0); /* no bar on screen to click */
+}
+
+/* The game's bar as the host's menu bar shows it. */
+TEST(menumgr_the_host_reads_the_bar) {
+    setup();
+    uint32_t file = call_import("GetMenu", 1, 128u);
+    call_import("InsertMenu", 2, file, 0u);
+    uint32_t op = call_import("GetMenu", 1, 129u);
+    call_import("InsertMenu", 2, op, 0u);
+    menumgr_menu_info m;
+    CHECK(menumgr_bar_menu(1, &m));
+    CHECK_EQ(m.id, 129);
+    CHECK_STR(m.title, "Operation");
+    CHECK_EQ(m.nitems, 1);
+    CHECK(!menumgr_bar_menu(2, &m));
+    menumgr_item_info it;
+    CHECK(menumgr_item(129, 1, &it));
+    CHECK_STR(it.text, "Pause");
+    CHECK_EQ(it.key, 'p');
+    CHECK(it.checked);
+    CHECK(menumgr_item(128, 2, &it));
+    CHECK(!it.enabled);
+    call_import("DisableMenuItem", 2, file, 0u);
+    CHECK(menumgr_item(128, 1, &it));
+    CHECK(!it.enabled); /* its menu is disabled */
+    CHECK(!menumgr_item(128, 4, &it));
+    CHECK(!menumgr_item(130, 1, &it));
+    uint32_t text = scratch(256);
+    gm_write_pstr(text, "Display Options...");
+    call_import("SetMenuItemText", 3, op, 1u, text);
+    CHECK(menumgr_item(129, 1, &it));
+    CHECK(!it.enabled); /* a window of controls the shim can't open */
+}
+
+/* The next keyDown WaitNextEvent gives, in a record MenuEvent can read. */
+static uint32_t next_key_down(void) {
+    for (int i = 0; i < 8; i++) {
+        uint32_t r = scratch(16);
+        if (call_import("WaitNextEvent", 4, 0xFFFFu, r, 0u, 0u) && gm_r16(r) == 3)
+            return r;
+    }
+    return 0;
+}
+
+/* An item chosen in the host's menu bar comes to the game as a Command-key
+   that MenuEvent turns into it: its own key, or a letter no item has. */
+TEST(menumgr_an_item_chosen_on_the_host_comes_as_a_command_key) {
+    setup();
+    uint32_t file = call_import("GetMenu", 1, 128u);
+    call_import("InsertMenu", 2, file, 0u);
+
+    menumgr_choose(128, 3); /* Quit, Cmd-Q */
+    uint32_t r = next_key_down();
+    CHECK(r);
+    CHECK_EQ(gm_r32(r + 2), 0x0C71u); /* Q's key code, 'q' */
+    CHECK(gm_r16(r + 14) & 0x0100u);
+    CHECK_EQ(call_import("MenuEvent", 1, r), ITEM(128, 3));
+
+    call_import("InsertMenuItem", 3, file, scratch(256), 3u); /* an empty fourth item, no key */
+    menumgr_choose(128, 4);
+    r = next_key_down();
+    CHECK(r);
+    CHECK_EQ(gm_r32(r + 2) & 0xFF, 'z');
+    CHECK_EQ(call_import("MenuEvent", 1, r), ITEM(128, 4));
+    CHECK_EQ(call_import("MenuKey", 1, (uint32_t)'z'), 0); /* only once */
+
+    call_import("DisableMenuItem", 2, file, 3u);
+    menumgr_choose(128, 3); /* disabled: nothing */
+    menumgr_choose(129, 1); /* not in the bar */
+    CHECK_EQ(next_key_down(), 0);
 }
 
 TEST(menumgr_the_menu_bar_shows_until_hidden) {

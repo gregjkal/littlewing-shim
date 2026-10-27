@@ -98,6 +98,12 @@ void events_post_key(int scancode, bool down, bool repeat);
    and GetGlobalMouse. The Carbon games use none. */
 void events_post_mouse(int x, int y, bool down);
 
+/* A Command-key down typing chr (in lower case), posted for the game
+   alone: no key is held, and none comes up. How a quit or a choice in the
+   host's menu bar reaches a classic game's menus. False if a modal dialog
+   is up or the queue is full. */
+bool events_post_command_key(uint8_t chr);
+
 /* Text to insert (Cmd-V, or a script's "type"), UTF-8. Only a modal sink
    sees it. */
 void events_post_text(const char *utf8);

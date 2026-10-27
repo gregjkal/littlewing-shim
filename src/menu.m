@@ -13,6 +13,7 @@
 #include "display.h"
 #include "game.h"
 #include "gamestart.h"
+#include "menumgr.h"
 #include "recordings.h"
 #include "replay.h"
 #include "settings.h"
@@ -368,6 +369,88 @@ void menu_add_replay(void) {
     replay_wanted = true;
     @autoreleasepool {
         add_replay_menu();
+    }
+}
+
+/* The game's own menus (menumgr.h), mirrored after the app menu. Each
+   item's tag is its menu's ID and its number, and its menu is rebuilt from
+   the game's as it opens, so it shows what is enabled and checked then.
+   As in the Replay menu, an item's own key does nothing here: SDL has sent
+   the key to the game already. */
+@interface LoonyGameMenus : NSObject <NSMenuDelegate>
+@end
+
+@implementation LoonyGameMenus
+- (void)choose:(NSMenuItem *)item {
+    NSEvent *e = NSApp.currentEvent;
+    if (e.type == NSEventTypeKeyDown && item.keyEquivalent.length &&
+        [e.charactersIgnoringModifiers caseInsensitiveCompare:item.keyEquivalent] == NSOrderedSame)
+        return;
+    menumgr_choose((int16_t)(item.tag >> 16), (int)(item.tag & 0xFFFF));
+}
+
+- (void)menuNeedsUpdate:(NSMenu *)menu {
+    [menu removeAllItems];
+    NSMenu *bar = menu.supermenu;
+    int16_t id = (int16_t)[bar itemAtIndex:[bar indexOfItemWithSubmenu:menu]].tag;
+    menumgr_item_info info;
+    for (int i = 1; menumgr_item(id, i, &info); i++) {
+        if (info.text[0] == '-') {
+            [menu addItem:[NSMenuItem separatorItem]];
+            continue;
+        }
+        NSString *key = info.key ? [NSString stringWithFormat:@"%c", tolower(info.key)] : @"";
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:mac_roman(info.text)
+                                                      action:@selector(choose:)
+                                               keyEquivalent:key];
+        item.target = self;
+        item.tag = (NSInteger)((uint32_t)(uint16_t)id << 16 | (uint32_t)i);
+        item.enabled = info.enabled;
+        item.state = info.checked ? NSControlStateValueOn : NSControlStateValueOff;
+        [menu addItem:item];
+    }
+}
+@end
+
+static LoonyGameMenus *game_menus; /* their delegate and their items' target */
+static NSMutableArray *game_items; /* their titles in the bar */
+static NSString *game_bar;         /* the game's bar they show, as "id title\n..." */
+
+void menu_sync_game(void) {
+    NSMenu *bar = NSApp.mainMenu;
+    if (!controller || !bar)
+        return;
+    @autoreleasepool {
+        NSMutableString *now = [NSMutableString string];
+        menumgr_menu_info m;
+        for (int i = 0; menumgr_bar_menu(i, &m); i++)
+            [now appendFormat:@"%d %@\n", m.id, mac_roman(m.title)];
+        if ([now isEqualToString:game_bar ?: @""])
+            return;
+        game_bar = now;
+        if (!game_menus) {
+            game_menus = [[LoonyGameMenus alloc] init];
+            game_items = [NSMutableArray array];
+        }
+        for (NSMenuItem *item in game_items)
+            [bar removeItem:item];
+        [game_items removeAllObjects];
+        NSInteger at = 1; /* after the app menu */
+        for (int i = 0; menumgr_bar_menu(i, &m); i++) {
+            if (!strcmp(m.title, "\x14")) /* the Apple menu: the app menu stands for it */
+                continue;
+            NSString *title = mac_roman(m.title);
+            NSMenu *menu = [[NSMenu alloc] initWithTitle:title];
+            menu.delegate = game_menus;
+            menu.autoenablesItems = NO;
+            NSMenuItem *entry = [[NSMenuItem alloc] initWithTitle:title action:nil keyEquivalent:@""];
+            entry.tag = m.id;
+            entry.submenu = menu;
+            [bar insertItem:entry atIndex:at++];
+            [game_items addObject:entry];
+            [game_menus menuNeedsUpdate:menu]; /* its key equivalents, before it first opens */
+        }
+        log_msg("menu: the game's menus are %lu", (unsigned long)game_items.count);
     }
 }
 

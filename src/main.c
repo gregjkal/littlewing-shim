@@ -147,6 +147,7 @@ static void present_frame(void) {
    games recorded, in the background (gamestart.h). */
 static void poll_host(void) {
     display_poll();
+    menu_sync_game();
     gamestart_tend();
 }
 

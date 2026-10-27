@@ -1,4 +1,5 @@
 #include "events.h"
+#include <ctype.h>
 
 #include <math.h>
 #include <stdlib.h>
@@ -9,6 +10,7 @@
 #include "guest_mem.h"
 #include "keymap.h"
 #include "memmgr.h"
+#include "menumgr.h"
 #include "misc.h"
 #include "play.h"
 #include "qd.h"
@@ -78,6 +80,8 @@ static struct {
     int nheld;
     int game_down[MAX_HELD]; /* other keys whose key-down the game was sent */
     int ngame_down;
+    int dialog_down[MAX_HELD]; /* other keys that went down while a modal dialog ran */
+    int ndialog_down;
     bool quit;
     int loop_depth; /* inside RunApplicationEventLoop or a ReceiveNextEvent wait */
     ev_present_fn present;
@@ -116,8 +120,9 @@ static void snap_walk(snapshot_walker *w) {
         int idx = E.queue[(E.qhead + k) % EV_MAX_EVENTS];
         snapshot_check(w, idx >= 0 && idx < EV_MAX_EVENTS, "event %d in the queue", idx);
     }
-    snapshot_check(w, E.nheld >= 0 && E.nheld <= MAX_HELD && E.ngame_down >= 0 && E.ngame_down <= MAX_HELD,
-                   "%d modifiers and %d keys down", E.nheld, E.ngame_down);
+    snapshot_check(w, E.nheld >= 0 && E.nheld <= MAX_HELD && E.ngame_down >= 0 && E.ngame_down <= MAX_HELD &&
+                          E.ndialog_down >= 0 && E.ndialog_down <= MAX_HELD,
+                   "%d modifiers and %d keys down", E.nheld, E.ngame_down + E.ndialog_down);
     for (int i = 0; i < EV_MAX_TIMERS; i++)
         snapshot_check(w, isfinite(E.timers[i].next) && isfinite(E.timers[i].interval) &&
                               E.timers[i].interval >= 0,
@@ -283,6 +288,16 @@ void events_post_key(int scancode, bool down, bool repeat) {
         }
         return;
     }
+    /* GetKeys sees a key held while a dialog runs, as on a Mac: a dialog's
+       filter may wait for one that way (Golden Logres's, for a new key). */
+    int in_dialog = -1;
+    for (int i = 0; i < E.ndialog_down; i++)
+        if (E.dialog_down[i] == scancode)
+            in_dialog = i;
+    if (E.modal && down && in_dialog < 0 && E.ndialog_down < MAX_HELD)
+        E.dialog_down[E.ndialog_down++] = scancode;
+    else if (!down && in_dialog >= 0)
+        E.dialog_down[in_dialog] = E.dialog_down[--E.ndialog_down];
     int at = -1;
     for (int i = 0; i < E.ngame_down; i++)
         if (E.game_down[i] == scancode)
@@ -306,21 +321,36 @@ void events_post_key(int scancode, bool down, bool repeat) {
 }
 
 void events_post_mouse(int x, int y, bool down) {
+    if (E.classic) { /* Button sees it under a dialog too */
+        E.mouse_h = (int16_t)x;
+        E.mouse_v = (int16_t)y;
+        E.mouse_down = down;
+    }
     if (E.modal) {
         E.modal->mouse(x, y, down);
         return;
     }
-    if (!E.classic)
-        return;
-    E.mouse_h = (int16_t)x;
-    E.mouse_v = (int16_t)y;
-    E.mouse_down = down;
-    post(EV_CLASS_MOUSE, down ? EV_MOUSE_DOWN : EV_MOUSE_UP);
+    if (E.classic)
+        post(EV_CLASS_MOUSE, down ? EV_MOUSE_DOWN : EV_MOUSE_UP);
 }
 
 void events_post_text(const char *utf8) {
     if (E.modal)
         E.modal->text(utf8);
+}
+
+bool events_post_command_key(uint8_t chr) {
+    if (E.modal)
+        return false;
+    chr = (uint8_t)tolower(chr);
+    int vkey = keymap_vkey_for_char(chr);
+    ev_event *e = post(EV_CLASS_KEYBOARD, EV_RAW_KEY_DOWN);
+    if (!e)
+        return false;
+    e->key_code = vkey < 0 ? 0 : (uint32_t)vkey;
+    e->modifiers = KM_CMD;
+    e->chr = chr;
+    return true;
 }
 
 void events_set_modal(const ev_modal_sink *sink) { E.modal = sink; }
@@ -357,11 +387,8 @@ void events_request_quit(void) {
             e = post(EV_CLASS_APPLE_EVENT, EV_APPLE_EVENT);
             if (e)
                 e->command = AE_ID_QUIT;
-        } else if ((e = post(EV_CLASS_KEYBOARD, EV_RAW_KEY_DOWN))) {
+        } else if (events_post_command_key('q')) {
             log_msg("sending the quit as Cmd-Q; the game takes no Apple Events");
-            e->key_code = 0x0C; /* Q */
-            e->modifiers = KM_CMD;
-            e->chr = 'q';
         }
         E.quit_deadline = wall_seconds() + QUIT_GRACE_SECONDS;
     }
@@ -695,6 +722,7 @@ static void run_action(const script_action *a) {
             log_msg("script: can't write the screenshot %s", a->path);
         break;
     case SCRIPT_QUIT: events_host_quit(); break;
+    case SCRIPT_MENU: menumgr_choose((int16_t)a->x, a->y); break;
     case SCRIPT_CLICK:
         events_host_mouse(a->x, a->y, true);
         events_host_mouse(a->x, a->y, false);
@@ -1270,8 +1298,10 @@ static void h_get_keys(void) {
     uint32_t out = trap_arg(0);
     for (uint32_t i = 0; i < 16; i++)
         gm_w8(out + i, 0);
-    for (int i = 0; i < E.ngame_down + E.nheld; i++) {
-        int sc = i < E.ngame_down ? E.game_down[i] : E.held[i - E.ngame_down].scancode;
+    for (int i = 0; i < E.ngame_down + E.ndialog_down + E.nheld; i++) {
+        int sc = i < E.ngame_down                  ? E.game_down[i]
+                 : i < E.ngame_down + E.ndialog_down ? E.dialog_down[i - E.ngame_down]
+                                                     : E.held[i - E.ngame_down - E.ndialog_down].scancode;
         int vk = keymap_lookup(sc).vkey;
         if (vk >= 0 && vk < 128)
             gm_w8(out + (uint32_t)vk / 8, gm_r8(out + (uint32_t)vk / 8) | (uint8_t)(1u << (vk % 8)));

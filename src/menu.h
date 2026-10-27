@@ -61,3 +61,11 @@ void menu_note_recent(const char *path);
 /* Shows the n files in Finder, selected. Does nothing with a video driver
    other than Cocoa. */
 void menu_reveal(const char *const *paths, size_t n);
+
+/* Shows the game's own menus (menumgr.h), the ones it puts in a menu bar
+   it hides, after the app menu, all but the Apple menu: called on every
+   pump, it puts them there again when the game changes which there are.
+   Each shows the game's items as it opens, enabled, checked and with their
+   Command-keys as the game has them then, and choosing one sends it to
+   the game (menumgr_choose). Does nothing before menu_install. */
+void menu_sync_game(void);

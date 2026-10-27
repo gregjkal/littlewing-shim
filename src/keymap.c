@@ -124,6 +124,13 @@ keymap_entry keymap_lookup(int scancode) {
     return (keymap_entry){-1, 0, 0, 0};
 }
 
+int keymap_vkey_for_char(uint8_t chr) {
+    for (size_t i = 0; i < sizeof table / sizeof table[0]; i++)
+        if (!table[i].modifier && table[i].chr == chr)
+            return table[i].vkey;
+    return -1;
+}
+
 uint8_t keymap_char(const keymap_entry *k, uint32_t modifiers) {
     bool shift = (modifiers & KM_SHIFT) != 0;
     bool caps = (modifiers & KM_ALPHA_LOCK) != 0 && k->chr >= 'a' && k->chr <= 'z';
