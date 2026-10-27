@@ -392,7 +392,10 @@ void menu_add_replay(void) {
 - (void)menuNeedsUpdate:(NSMenu *)menu {
     [menu removeAllItems];
     NSMenu *bar = menu.supermenu;
-    int16_t id = (int16_t)[bar itemAtIndex:[bar indexOfItemWithSubmenu:menu]].tag;
+    NSInteger at = [bar indexOfItemWithSubmenu:menu];
+    if (at < 0)
+        return;
+    int16_t id = (int16_t)[bar itemAtIndex:at].tag;
     menumgr_item_info info;
     for (int i = 1; menumgr_item(id, i, &info); i++) {
         if (info.text[0] == '-') {

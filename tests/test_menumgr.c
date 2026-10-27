@@ -5,6 +5,7 @@
 #include "cgimage.h"
 #include "events.h"
 #include "files.h"
+#include "fork_build.h"
 #include "harness.h"
 #include "memmgr.h"
 #include "menumgr.h"
@@ -26,13 +27,6 @@ static const char *const names[] = {
 
 /* ---- a resource fork: File (MENU 128), Operation (MENU 129), crsr 128 ---- */
 
-typedef struct {
-    uint32_t type;
-    int16_t id;
-    const uint8_t *data;
-    uint32_t len;
-} res;
-
 static const uint8_t file_menu[] = {
     0, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFB, /* item 2 disabled */
     4, 'F', 'i', 'l', 'e',
@@ -50,51 +44,6 @@ static const uint8_t operation_menu[] = {
 };
 
 static const uint8_t cursor[] = {0x80, 0x01, 1, 2, 3, 4};
-
-/* A resource fork holding rs, those of a type next to each other, as
-   rsrc_open reads one. The caller keeps it until the test ends. */
-static uint8_t *build_fork(const res *rs, int n, size_t *len) {
-    int ntypes = 0;
-    uint32_t data_len = 0;
-    for (int i = 0; i < n; i++) {
-        data_len += 4 + rs[i].len;
-        ntypes += i == 0 || rs[i].type != rs[i - 1].type;
-    }
-    uint32_t type_list = 28, refs = type_list + 2 + 8u * (uint32_t)ntypes;
-    uint32_t map_len = refs + 12u * (uint32_t)n;
-    uint32_t data_off = 256, map_off = data_off + data_len;
-    *len = map_off + map_len;
-    uint8_t *f = calloc(1, *len);
-    wr_be32(f, data_off);
-    wr_be32(f + 4, map_off);
-    wr_be32(f + 8, data_len);
-    wr_be32(f + 12, map_len);
-    uint8_t *m = f + map_off;
-    wr_be16(m + 24, (uint16_t)type_list);
-    wr_be16(m + 26, (uint16_t)map_len);
-    wr_be16(m + type_list, (uint16_t)(ntypes - 1));
-    uint32_t at = 0;
-    int t = -1;
-    for (int i = 0; i < n; i++) {
-        uint8_t *r = m + refs + 12 * i;
-        if (i == 0 || rs[i].type != rs[i - 1].type) {
-            uint8_t *e = m + type_list + 2 + 8 * ++t;
-            int count = 0;
-            while (i + count < n && rs[i + count].type == rs[i].type)
-                count++;
-            wr_be32(e, rs[i].type);
-            wr_be16(e + 4, (uint16_t)(count - 1));
-            wr_be16(e + 6, (uint16_t)(refs + 12 * (uint32_t)i - type_list));
-        }
-        wr_be16(r, (uint16_t)rs[i].id);
-        wr_be16(r + 2, 0xFFFF);
-        wr_be32(r + 4, at);
-        wr_be32(f + data_off + at, rs[i].len);
-        memcpy(f + data_off + at + 4, rs[i].data, rs[i].len);
-        at += 4 + rs[i].len;
-    }
-    return f;
-}
 
 static uint8_t *fork_buf;
 
@@ -185,6 +134,11 @@ TEST(menumgr_menu_event_and_is_cmd_char_want_command) {
 }
 
 /* The game's bar as the host's menu bar shows it. */
+static void no_key(uint32_t vkey, uint8_t chr, uint32_t modifiers) { (void)vkey, (void)chr, (void)modifiers; }
+static void no_mouse(int x, int y, bool down) { (void)x, (void)y, (void)down; }
+static void no_text(const char *utf8) { (void)utf8; }
+static const ev_modal_sink no_input = {no_key, no_mouse, no_text};
+
 TEST(menumgr_the_host_reads_the_bar) {
     setup();
     uint32_t file = call_import("GetMenu", 1, 128u);
@@ -214,6 +168,13 @@ TEST(menumgr_the_host_reads_the_bar) {
     call_import("SetMenuItemText", 3, op, 1u, text);
     CHECK(menumgr_item(129, 1, &it));
     CHECK(!it.enabled); /* a window of controls the shim can't open */
+    call_import("EnableMenuItem", 2, file, 0u);
+    CHECK(menumgr_item(128, 3, &it));
+    CHECK(it.enabled);
+    events_set_modal(&no_input);
+    CHECK(menumgr_item(128, 3, &it));
+    CHECK(!it.enabled); /* a modal dialog is up, as a Mac greys the bar */
+    events_set_modal(NULL);
 }
 
 /* The next keyDown WaitNextEvent gives, in a record MenuEvent can read. */
@@ -247,6 +208,12 @@ TEST(menumgr_an_item_chosen_on_the_host_comes_as_a_command_key) {
     CHECK_EQ(gm_r32(r + 2) & 0xFF, 'z');
     CHECK_EQ(call_import("MenuEvent", 1, r), ITEM(128, 4));
     CHECK_EQ(call_import("MenuKey", 1, (uint32_t)'z'), 0); /* only once */
+
+    menumgr_choose(128, 4);
+    r = next_key_down();
+    CHECK(r);
+    call_import("DisableMenuItem", 2, file, 4u);
+    CHECK_EQ(call_import("MenuEvent", 1, r), 0); /* disabled before the game read it */
 
     call_import("DisableMenuItem", 2, file, 3u);
     menumgr_choose(128, 3); /* disabled: nothing */

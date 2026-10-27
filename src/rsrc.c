@@ -743,7 +743,7 @@ static void unique_id(bool all) {
             return;
         }
     }
-    trap_crash("Unique1ID: every ID of a type is used");
+    trap_crash("%s: every ID of a type is used", all ? "UniqueID" : "Unique1ID");
 }
 
 static void h_unique_id(void) { unique_id(true); }

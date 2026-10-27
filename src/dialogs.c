@@ -101,6 +101,7 @@ typedef struct {
     int hit;        /* the item ModalDialog or Alert returns (1-based), 0 = none yet */
     uint32_t filter; /* ModalDialog's filter proc, while it runs, or 0 */
     bool filtered;  /* the filter took an event and answered: ModalDialog returns hit */
+    bool filtering; /* the filter is running */
     bool shown;
     unsigned order; /* when it opened: ModalDialog runs the newest */
     uint8_t *saved; /* the screen under the dialog and its frame, at saved_r */
@@ -649,20 +650,17 @@ static uint32_t ref_of(dialog *d) { return DLG_TAG_BASE + 16u * (uint32_t)(d - G
 /* Gives the event to the filter of the ModalDialog d runs, as the Dialog
    Manager does before handling it: a filter that returns true has handled
    it, and ModalDialog returns the item it put in itemHit. */
-static bool filter_event(dialog *d, uint16_t what, uint32_t message, int x, int y, uint32_t mods) {
-    if (!d->filter)
+static bool filter_event(dialog *d, uint16_t what, uint32_t message, uint32_t mods) {
+    if (!d->filter || d->filtering) /* a filter that waits for events doesn't see its own */
         return false;
     uint32_t rec = mm_new_ptr(16 + 2, true); /* the EventRecord, then itemHit */
     if (!rec)
         trap_crash("ModalDialog: out of guest memory");
-    gm_w16(rec, what);
-    gm_w32(rec + 2, message);
-    gm_w32(rec + 6, misc_ticks() + MISC_BOOT_TICKS);
-    gm_w16(rec + 10, (uint16_t)y);
-    gm_w16(rec + 12, (uint16_t)x);
-    gm_w16(rec + 14, (uint16_t)mods);
+    events_write_record(rec, what, message, mods);
     uint32_t args[3] = {ref_of(d), rec, rec + 16};
+    d->filtering = true;
     bool took = (guest_call(d->filter, 3, args) & 0xFF) != 0;
+    d->filtering = false;
     int hit = (int16_t)gm_r16(rec + 16);
     mm_dispose_ptr(rec);
     if (took) {
@@ -674,7 +672,7 @@ static bool filter_event(dialog *d, uint16_t what, uint32_t message, int x, int 
 
 static void on_key(uint32_t vkey, uint8_t chr, uint32_t mods) {
     dialog *d = G.front;
-    if (!d || filter_event(d, EV_KEY_DOWN, vkey << 8 | chr, 0, 0, mods))
+    if (!d || filter_event(d, EV_KEY_DOWN, vkey << 8 | chr, mods))
         return;
     bool cmd = (mods & KM_CMD) != 0;
     if (vkey == VK_RETURN || vkey == VK_ENTER) {
@@ -697,7 +695,7 @@ static void on_key(uint32_t vkey, uint8_t chr, uint32_t mods) {
 
 static void on_mouse(int x, int y, bool down) {
     dialog *d = G.front;
-    if (!d || filter_event(d, down ? EV_MOUSE_DOWN : EV_MOUSE_UP, 0, x, y, 0))
+    if (!d || filter_event(d, down ? EV_MOUSE_DOWN : EV_MOUSE_UP, 0, 0))
         return;
     int i = item_at(d, x, y);
     if (down) {
@@ -742,7 +740,7 @@ static int run_modal(dialog *d) {
     events_set_modal(&sink);
     while (!d->hit && !d->filtered) {
         events_pump();
-        if (!d->hit && !d->filtered && !filter_event(d, EV_NULL, 0, 0, 0, 0))
+        if (!d->hit && !d->filtered && !filter_event(d, EV_NULL, 0, 0))
             misc_wait(1.0 / 60);
     }
     G.front = outer;

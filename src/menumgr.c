@@ -369,6 +369,9 @@ static uint32_t find_key(uint8_t c) {
     if (N.chosen && toupper(c) == toupper(N.chosen_key)) {
         uint32_t chosen = N.chosen;
         N.chosen = 0;
+        menumgr_item_info info; /* the game may have disabled it since */
+        if (!menumgr_item((int16_t)(chosen >> 16), (int)(chosen & 0xFFFF), &info) || !info.enabled)
+            return 0;
         N.hilited = (int16_t)(chosen >> 16);
         return chosen;
     }
@@ -442,7 +445,7 @@ bool menumgr_item(int16_t menu_id, int item, menumgr_item_info *out) {
         return false;
     *out = (menumgr_item_info){.key = it->key > ' ' && it->key < 0x7F ? it->key : 0,
                                .checked = it->mark == CHECK_MARK,
-                               .enabled = m->enabled && it->enabled && can_open(it->text)};
+                               .enabled = m->enabled && it->enabled && can_open(it->text) && !events_modal_up()};
     snprintf(out->text, sizeof out->text, "%s", it->text);
     return true;
 }

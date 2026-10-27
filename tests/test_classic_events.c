@@ -271,6 +271,24 @@ TEST(classic_events_the_quit_comes_as_cmd_q_without_apple_events) {
     CHECK(events_quit_requested());
 }
 
+/* A quit while a dialog is up waits for it: the game reads its Cmd-Q
+   once the dialog closes. */
+TEST(classic_events_a_quit_under_a_dialog_comes_once_it_closes) {
+    static const char *const plain[] = {"WaitNextEvent"};
+    setup_with(plain, sizeof plain / sizeof plain[0]);
+    take_launch_events();
+    static const ev_modal_sink sink = {count_key, count_click, no_text};
+    events_set_modal(&sink);
+    events_request_quit();
+    CHECK(!events_post_command_key('n')); /* a menu choice isn't held for later */
+    events_set_modal(NULL);
+    record e;
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 3);
+    CHECK_EQ(e.message, 0x0C71u);
+    CHECK(!wne(EVERY, &e));
+}
+
 /* The same before the game's first event call: Tristan shows its startup
    alerts before it calls WaitNextEvent, and a quit then must still come as
    Cmd-Q, not as an Apple Event it never reads. */

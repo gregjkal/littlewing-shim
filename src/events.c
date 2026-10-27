@@ -339,9 +339,8 @@ void events_post_text(const char *utf8) {
         E.modal->text(utf8);
 }
 
-bool events_post_command_key(uint8_t chr) {
-    if (E.modal)
-        return false;
+/* Posts it even under a modal dialog, for the game once the dialog closes. */
+static bool post_command_key(uint8_t chr) {
     chr = (uint8_t)tolower(chr);
     int vkey = keymap_vkey_for_char(chr);
     ev_event *e = post(EV_CLASS_KEYBOARD, EV_RAW_KEY_DOWN);
@@ -352,6 +351,10 @@ bool events_post_command_key(uint8_t chr) {
     e->chr = chr;
     return true;
 }
+
+bool events_post_command_key(uint8_t chr) { return !E.modal && post_command_key(chr); }
+
+bool events_modal_up(void) { return E.modal != NULL; }
 
 void events_set_modal(const ev_modal_sink *sink) { E.modal = sink; }
 
@@ -387,7 +390,7 @@ void events_request_quit(void) {
             e = post(EV_CLASS_APPLE_EVENT, EV_APPLE_EVENT);
             if (e)
                 e->command = AE_ID_QUIT;
-        } else if (events_post_command_key('q')) {
+        } else if (post_command_key('q')) {
             log_msg("sending the quit as Cmd-Q; the game takes no Apple Events");
         }
         E.quit_deadline = wall_seconds() + QUIT_GRACE_SECONDS;
@@ -1134,6 +1137,10 @@ static void write_record(uint32_t rec, int what, uint32_t message, int16_t h, in
     gm_w16(rec + 10, (uint16_t)v);
     gm_w16(rec + 12, (uint16_t)h);
     gm_w16(rec + 14, (uint16_t)((modifiers & 0xFF00u) | (button ? 0 : CL_BTN_STATE)));
+}
+
+void events_write_record(uint32_t rec, int what, uint32_t message, uint32_t modifiers) {
+    write_record(rec, what, message, E.mouse_h, E.mouse_v, modifiers, E.mouse_down);
 }
 
 /* The Window Manager's activate events, which come before any other: when
