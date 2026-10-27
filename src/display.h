@@ -46,6 +46,13 @@ bool display_fullscreen(void);
    off for fixed-clock runs, where waiting would only slow the run down. */
 void display_set_vsync(bool on);
 
+/* Whether a present now would wait for the display only briefly: three
+   quarters of a refresh or more have passed since the last one began. A
+   present sooner waits for most of a refresh, and a game that draws a
+   frame in pieces, pumping after each (Angel Egg), would wait once a
+   piece. Always true without vsync or a window. */
+bool display_due(void);
+
 /* A rectangle in the window's pixels. */
 typedef struct {
     float x, y, w, h;
@@ -158,7 +165,8 @@ void display_set_cursor(bool visible);
 /* Writes the current screen as a PNG. */
 bool display_write_png(const char *path);
 
-/* Presents only if something drew to the screen since the last present. */
+/* Presents only if something drew to the screen since the last present
+   (a flush alone draws nothing: qd_flush_only). */
 void display_present_if_dirty(void);
 
 /* Number of presents so far. */

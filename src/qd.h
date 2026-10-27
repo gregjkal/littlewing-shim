@@ -111,9 +111,19 @@ void qd_screen(qd_pixels *out, qd_palette *pal);
 /* Notes that something drew to the screen outside QuickDraw (dialogs). */
 void qd_mark_dirty(void);
 
-/* True if anything drew to the screen since the last call, and always
-   while direct drawing is on. */
+/* True if anything drew to the screen or QDFlushPortBuffer was called
+   since the last call, and always while direct drawing is on. Replays count
+   these for their frame checks, so what counts can't change. */
 bool qd_take_dirty(void);
+
+/* Whether the last qd_take_dirty was true only for QDFlushPortBuffer, with
+   nothing drawn: the screen holds the frame last shown. Angel Egg draws a
+   frame, reads TickCount (a pump, which may show it), then flushes;
+   showing that frame again at the next pump would wait for a second
+   refresh and halve its frame rate. A flush is taken to change nothing
+   QuickDraw didn't draw: a game that writes a window's pixels itself and
+   flushes them needs direct drawing (qd_set_direct_drawing) to be seen. */
+bool qd_flush_only(void);
 
 /* Pads every new GWorld's rows as System 7.1's NewGWorld did: rounded up
    to 16 bytes, and 16 more. Angel Egg's data files hold images at those

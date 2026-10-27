@@ -42,6 +42,7 @@ static struct {
     float pointer_x, pointer_y;
     bool redraw;          /* the window wants drawing again: resized or uncovered */
     uint64_t presented;   /* SDL_GetTicksNS at the last present to the window */
+    uint64_t began;       /* and when the game's last present began (display_due) */
     bool raise; /* on opening */
     const char *title;
     char flash[256];      /* a message in the title, in place of the title */
@@ -312,7 +313,7 @@ static void present(const uint8_t *rgba, int w, int h, int lw, int lh, const qd_
         if (!D.tex_hd)
             n = -1;
         D.tex_hd = hd;
-        uint64_t bytes = 0, t0 = SDL_GetTicksNS();
+        uint64_t bytes = 0, t0 = D.began = SDL_GetTicksNS();
         if (n < 0) {
             SDL_UpdateTexture(D.texture, NULL, rgba, w * 4);
             bytes = (uint64_t)w * (uint64_t)h * 4;
@@ -367,7 +368,7 @@ bool display_fullscreen(void) {
 }
 
 void display_present_if_dirty(void) {
-    if (qd_take_dirty())
+    if (qd_take_dirty() && !qd_flush_only())
         display_present();
 }
 
@@ -437,6 +438,18 @@ void display_take_launch_events(uint32_t wait_ms) {
         if (SDL_GetTicks() < until)
             SDL_Delay(5);
     } while (SDL_GetTicks() < until);
+}
+
+bool display_due(void) {
+    if (D.no_vsync || !D.window)
+        return true;
+    float hz = 0;
+    const SDL_DisplayMode *m = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(D.window));
+    if (m)
+        hz = m->refresh_rate;
+    if (hz < 30)
+        hz = 60;
+    return SDL_GetTicksNS() - D.began >= (uint64_t)(1e9 / hz * 3 / 4);
 }
 
 void display_set_vsync(bool on) {
