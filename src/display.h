@@ -165,7 +165,8 @@ void display_set_cursor(bool visible);
 /* Writes the current screen as a PNG. */
 bool display_write_png(const char *path);
 
-/* Presents only if something drew to the screen since the last present. */
+/* Presents only if something drew to the screen since the last present
+   (a flush alone draws nothing: qd_flush_only). */
 void display_present_if_dirty(void);
 
 /* Number of presents so far. */

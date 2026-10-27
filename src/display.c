@@ -368,7 +368,7 @@ bool display_fullscreen(void) {
 }
 
 void display_present_if_dirty(void) {
-    if (qd_take_dirty())
+    if (qd_take_dirty() && !qd_flush_only())
         display_present();
 }
 
