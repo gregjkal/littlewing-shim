@@ -47,10 +47,10 @@ bool display_fullscreen(void);
 void display_set_vsync(bool on);
 
 /* Whether a present now would wait for the display only briefly: three
-   quarters of a refresh or more have passed since the last one. A present
-   sooner waits for most of a refresh, and a game that draws a frame in
-   pieces, pumping after each (Angel Egg), would wait once a piece. Always
-   true without vsync or a window. */
+   quarters of a refresh or more have passed since the last one began. A
+   present sooner waits for most of a refresh, and a game that draws a
+   frame in pieces, pumping after each (Angel Egg), would wait once a
+   piece. Always true without vsync or a window. */
 bool display_due(void);
 
 /* A rectangle in the window's pixels. */

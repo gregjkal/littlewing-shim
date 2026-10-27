@@ -41,9 +41,9 @@ TEST(display_present_works_with_the_dummy_driver) {
     CHECK_EQ(display_frames(), before + 2);
 }
 
-/* The pump presents when the display is due: before the window opens,
-   three quarters of a refresh after the last present, and always without
-   vsync (the fixed clock). */
+/* Angel Egg's pump presents when the display is due: before the window
+   opens, three quarters of a refresh after the last present began, and
+   always without vsync (the fixed clock). */
 TEST(display_is_due_most_of_a_refresh_after_a_present) {
     gm_init();
     mm_init();
@@ -51,7 +51,7 @@ TEST(display_is_due_most_of_a_refresh_after_a_present) {
     CHECK(display_due()); /* no window yet */
     display_present();
     CHECK(!display_due());
-    SDL_Delay(30); /* a refresh at 34 Hz or more, the rate when SDL reports none */
+    SDL_Delay(30); /* three quarters of a refresh at 25 Hz or more; the dummy driver reports none, taken as 60 */
     CHECK(display_due());
     display_present();
     display_set_vsync(false);

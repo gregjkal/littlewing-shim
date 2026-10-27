@@ -136,7 +136,6 @@ void qd_pad_gworld_rows(bool on);
 /* A game is drawing into the screen's pixels itself (a captured display),
    so QuickDraw can't tell when they change. */
 void qd_set_direct_drawing(bool on);
-bool qd_direct_drawing(void);
 
 /* The guest address of the screen's pixels. */
 uint32_t qd_screen_base(void);

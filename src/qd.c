@@ -449,8 +449,6 @@ bool qd_flush_only(void) { return Q.flush_only; }
 
 void qd_set_direct_drawing(bool on) { Q.direct = on; }
 
-bool qd_direct_drawing(void) { return Q.direct; }
-
 uint32_t qd_screen_base(void) { return gm_r32(gm_r32(Q.screen_pm) + PM_BASE_ADDR); }
 
 static void resize_screen(int w, int h, int depth) {
