@@ -125,7 +125,8 @@ bool replay_find_recording(const char *dir, const char *game_id, time_t when, ch
    preferences, and the copy is marked shared. A replay of a
    shared copy puts in the license from LOONY_REPLAY_LICENSE's preferences:
    by default, where the viewer's own copy of the game saves them (set by
-   replay_open, so a restart keeps it); without a license there it refuses.
+   replay_open, so a restart keeps it), or, without a license there, the
+   one every game starts with (license.h).
    The game only checks the license, and never shows it, so the frames are
    the same. Everything else is shared as recorded: the high-score names,
    and anything typed while playing. A recording still being written copies
@@ -169,10 +170,8 @@ bool replay_set_snapshot(const uint8_t *section, size_t len);
 
 /* Before the app restarts to watch path, so a file it can't play doesn't
    end the game being played: whether path is a replay of a game it knows,
-   in a format it reads, and, if shared, whether the viewer's own
-   preferences (under HOME) hold a license. False, with err saying why
-   ("it was shared without a license: ..."). The game's program is
-   checked once the replay starts. */
+   in a format it reads. False, with err saying why ("it can't be
+   read"). The game's program is checked once the replay starts. */
 bool replay_check(const char *path, char *err, size_t errlen);
 
 /* What a list of recordings shows of one (recordings.h). */

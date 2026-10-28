@@ -2322,6 +2322,30 @@ TEST(run_a_key_code_registers_and_survives_a_relaunch) {
     CHECK(!strstr(out, key));
 }
 
+/* Without LOONY_UNREGISTERED (which the tests set), the license is saved
+   before the game looks (license.h): it skips the shareware alerts, and
+   the next launch finds the license there and saves nothing. */
+TEST(run_a_game_starts_registered_by_default) {
+    SKIP_UNLESS_GAME();
+    test_tmp_dir(run_data, sizeof run_data);
+    unsetenv("LOONY_UNREGISTERED");
+    real_alerts = true;
+    char out[32768], again[32768];
+    int status = run_script("300 quit\n", NULL, NULL, 0, out, sizeof out);
+    int status2 = run_script("300 quit\n", NULL, NULL, 0, again, sizeof again);
+    real_alerts = false;
+    setenv("LOONY_UNREGISTERED", "1", 1);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: license: registered in");
+    CHECK_CONTAINS(out, "loony: sending the quit Apple Event");
+    CHECK(!strstr(out, "Alert 90"));
+    CHECK_EQ(status2, 0);
+    CHECK(!strstr(again, "license: registered"));
+    CHECK(!strstr(again, "Alert 90"));
+}
+
 /* A run that ends without the game synchronizing (here LOONY_EXIT_AFTER;
    for the user, a quit during a sequence that outlasts the 3-second grace)
    still saves what the game set, as macOS would. */
@@ -2620,6 +2644,23 @@ TEST(run_tristan_refuses_a_made_up_key_code) {
     char p[1200];
     snprintf(p, sizeof p, "%s/TRISTAN IE Registration", test_tr_dir());
     CHECK(access(p, F_OK) != 0);
+}
+
+/* Tristan keeps its license in a file of its own, saved by default
+   (license.h): it skips Alert 901 and plays. */
+TEST(run_tristan_starts_registered_by_default) {
+    SKIP_UNLESS_TR();
+    unsetenv("LOONY_UNREGISTERED");
+    real_alerts = true;
+    char out[32768];
+    int status = run_script_in(test_tr_dir(), "700 quit\n", NULL, NULL, 0, out, sizeof out);
+    real_alerts = false;
+    setenv("LOONY_UNREGISTERED", "1", 1);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: license: registered in");
+    CHECK_CONTAINS(out, "TRISTAN IE Registration");
+    CHECK_CONTAINS(out, "loony: ExitToShell");
+    CHECK(!strstr(out, "Alert 90"));
 }
 
 /* Tristan takes no Apple Events, so Cmd-Q in the app (a script's quit)

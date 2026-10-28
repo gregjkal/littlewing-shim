@@ -20,6 +20,7 @@
 #include "plist.h"
 #include "qd.h"
 #include "gamestart.h"
+#include "license.h"
 #include "replay.h"
 #include "sound.h"
 #include "strip.h"
@@ -648,10 +649,25 @@ TEST(replay_share_refuses_a_game_played_unregistered) {
     CHECK_STR(err, "this game was played before Loony Labyrinth was registered, so it can't be shared");
 }
 
-/* A shared copy needs a license to replay: by default, the one in the
-   viewer's own save folder, found before LOONY_DATA_DIR names the
-   replay's. */
-TEST(replay_of_a_shared_copy_needs_the_viewers_license) {
+/* Whether the replay's save folder was given this license; then empties
+   the folder for another replay. */
+static bool played_with(const char *email, const char *id) {
+    char played[1400], err[256];
+    snprintf(played, sizeof played, "%s/play/prefs.plist", dir);
+    plist_entry *e;
+    uint32_t n;
+    if (plist_read(played, &e, &n, err, sizeof err) != PLIST_OK)
+        return false;
+    bool same = strcmp(string_in(e, n, "user email"), email) == 0 && strcmp(string_in(e, n, "user id"), id) == 0;
+    plist_free(e, n);
+    unlink(played);
+    return same;
+}
+
+/* A shared copy replays with a license put back: by default, the one in
+   the viewer's own save folder, found before LOONY_DATA_DIR names the
+   replay's, or, when that has none, the one every game starts with. */
+TEST(replay_of_a_shared_copy_takes_the_viewers_license_or_the_default) {
     BEGIN_TEST();
     CHECK(record_licensed("me@example.com", "123456789012"));
     char shared[1300], err[512], unlicensed[1300], want[1600];
@@ -662,16 +678,11 @@ TEST(replay_of_a_shared_copy_needs_the_viewers_license) {
     CHECK(write_prefs(unlicensed, "", ""));
     snprintf(unlicensed, sizeof unlicensed, "%s/unlicensed/prefs.plist", dir);
     setenv("LOONY_REPLAY_LICENSE", unlicensed, 1);
-    CHECK(!play("loony-labyrinth", exe, sizeof exe, err, sizeof err));
-    snprintf(want, sizeof want,
-             "this replay was shared without a license: register Loony Labyrinth in LittleWing to "
-             "watch it (%s has none)",
-             unlicensed);
-    CHECK_STR(err, want);
+    CHECK(play("loony-labyrinth", exe, sizeof exe, err, sizeof err));
+    CHECK(played_with(LICENSE_EMAIL, LICENSE_KEY));
     unsetenv("LOONY_REPLAY_LICENSE");
-    CHECK(!play("loony-labyrinth", exe, sizeof exe, err, sizeof err));
-    CHECK_STR(err, "this replay was shared without a license: set LOONY_REPLAY_LICENSE to the "
-                   "preferences of a registered Loony Labyrinth");
+    CHECK(play("loony-labyrinth", exe, sizeof exe, err, sizeof err));
+    CHECK(played_with(LICENSE_EMAIL, LICENSE_KEY));
 
     /* With no LOONY_DATA_DIR, the viewer's own preferences under HOME. */
     char *home = getenv("HOME") ? strdup(getenv("HOME")) : NULL;
@@ -694,20 +705,16 @@ TEST(replay_of_a_shared_copy_needs_the_viewers_license) {
 }
 
 /* What the app checks before it restarts to watch a file: a replay it can
-   read, and for a shared copy, a license in the viewer's own preferences. */
+   read, of a game it knows. */
 TEST(replay_check_says_why_a_file_cant_be_watched) {
     BEGIN_TEST();
-    char err[512], shared[1300], other[1300], own[1300];
+    char err[512], shared[1300], other[1300];
     CHECK(record_licensed("me@example.com", "123456789012"));
     CHECK(replay_check(file, err, sizeof err));
     snprintf(shared, sizeof shared, "%s/shared.lwreplay", dir);
     CHECK(replay_share(file, shared, err, sizeof err));
     setenv("HOME", dir, 1);
-    CHECK(!replay_check(shared, err, sizeof err));
-    CHECK_STR(err, "it was shared without a license: register Loony Labyrinth in LittleWing to watch it");
-    snprintf(own, sizeof own, "%s/Library/Application Support/littlewing-shim/loony-labyrinth", dir);
-    CHECK(write_prefs(own, "you@example.org", "999"));
-    CHECK(replay_check(shared, err, sizeof err));
+    CHECK(replay_check(shared, err, sizeof err)); /* with no license of the viewer's, the default */
     snprintf(other, sizeof other, "%s/not-a-replay.lwreplay", dir);
     gzFile g = gzopen(other, "wb");
     gzwrite(g, "PNG", 3);
