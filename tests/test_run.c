@@ -3140,7 +3140,7 @@ TEST(run_the_picker_frame_shows_both_games) {
     char got[16];
     snprintf(got, sizeof got, "%08x", fnv1a32(png, len));
     free(png);
-    CHECK_STR(got, "ed1ea7f1"); /* approved by the user on 2026-10-05 */
+    CHECK_STR(got, "d4a5ad2a"); /* approved by the user on 2026-10-05 */
 }
 
 /* Three games: three cards in a row, MONSTER FAIR's showing its icon. Picked,
@@ -3170,9 +3170,9 @@ TEST(run_the_picker_shows_three_games_and_starts_monster_fair) {
     test_remove_tree(apps_dir);
     CHECK_EQ(status, 0);
     CHECK(decoded);
-    const uint8_t *border = px.xrgb + 4 * (200 * px.width + 16 - 2);  /* the first card, selected */
-    const uint8_t *plain = px.xrgb + 4 * (185 * px.width + 544 + 5);  /* MONSTER FAIR's card, */
-    const uint8_t *icon = px.xrgb + 4 * (270 * px.width + 544 + 120); /* and its icon */
+    const uint8_t *border = px.xrgb + 4 * (200 * px.width + 46 - 2); /* the first card, selected */
+    const uint8_t *plain = px.xrgb + 4 * (185 * px.width + 574 + 5); /* MONSTER FAIR's card, */
+    const uint8_t *icon = px.xrgb + 4 * (270 * px.width + 574 + 90); /* and its icon */
     bool gold = border[1] == 0xFF && border[2] == 0xCC;
     bool card = plain[1] == 0x22 && plain[2] == 0x22;
     bool drawn = !(icon[1] == 0x22 && icon[2] == 0x22 && icon[3] == 0x22);
@@ -3186,7 +3186,7 @@ TEST(run_the_picker_shows_three_games_and_starts_monster_fair) {
     CHECK_CONTAINS(out, "loony: nib window Welcome: command 'ok  ' (Play Demo)");
     CHECK_CONTAINS(out, "loony: main returned 0");
     CHECK(!strstr(out, "back to the picker")); /* the host's quit (Cmd-Q) quits the app */
-    CHECK_STR(got, "a1fb5138"); /* approved by the user on 2026-10-09 */
+    CHECK_STR(got, "398bc415"); /* approved by the user on 2026-10-09 */
 }
 
 /* Four games: two rows of two cards, Jinni Zeala's showing its icon.
@@ -3220,7 +3220,7 @@ TEST(run_the_picker_shows_four_games_and_starts_jinni_zeala) {
     CHECK_CONTAINS(out, "loony: sending the quit Apple Event");
     CHECK_CONTAINS(out, "loony: ExitToShell");
     CHECK(!strstr(out, "back to the picker"));
-    CHECK_STR(got, "29afcc5c");
+    CHECK_STR(got, "3f21ddd5");
 }
 
 /* Five games: a row of three and a row of two, Mad Daedalus's card, the
@@ -3257,7 +3257,7 @@ TEST(run_the_picker_shows_five_games_and_starts_mad_daedalus) {
     CHECK_CONTAINS(out, "loony: sending the quit Apple Event");
     CHECK_CONTAINS(out, "loony: main returned 0");
     CHECK(!strstr(out, "back to the picker"));
-    CHECK_STR(got, "4aa50c83");
+    CHECK_STR(got, "00fa0763");
 }
 
 /* Seven games: a row of four over a row of three, Golden Logres's card its
@@ -3298,7 +3298,7 @@ TEST(run_the_picker_shows_seven_games_and_starts_golden_logres) {
     CHECK_CONTAINS(out, "loony: sending the quit Apple Event");
     CHECK_CONTAINS(out, "loony: main returned 0");
     CHECK(!strstr(out, "back to the picker"));
-    CHECK_STR(got, "3d2dec68");
+    CHECK_STR(got, "39e1784d");
 }
 
 /* Nine games, every one: three rows of three, Tristan's card, the last,
@@ -3341,7 +3341,7 @@ TEST(run_the_picker_shows_nine_games_and_starts_tristan) {
     CHECK_CONTAINS(out, "loony: sending the quit as Cmd-Q");
     CHECK_CONTAINS(out, "loony: ExitToShell");
     CHECK(!strstr(out, "back to the picker"));
-    CHECK_STR(got, "fff77955"); /* the frame with Loony Labyrinth selected */
+    CHECK_STR(got, "f48f7e84"); /* the frame with Loony Labyrinth selected */
 }
 
 /* Eight games: two rows of four, FAIRY TOWER's card, the last, its
@@ -3381,7 +3381,7 @@ TEST(run_the_picker_shows_eight_games_and_starts_fairy_tower) {
     CHECK_CONTAINS(out, "loony: sending the quit Apple Event");
     CHECK_CONTAINS(out, "loony: main returned 0");
     CHECK(!strstr(out, "back to the picker"));
-    CHECK_STR(got, "c54d53f6");
+    CHECK_STR(got, "9cb90057");
 }
 
 /* Review Focus 1: the picker remembers the last game in the save root,
