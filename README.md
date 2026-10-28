@@ -66,18 +66,27 @@ LOONY_GAME=crystal-caliburn ./build-release/loony   # that game, from its usual 
 `LOONY_GAME` takes `loony-labyrinth`, `crystal-caliburn`, `monster-fair`,
 `jinni-zeala`, `mad-daedalus`, `angel-egg`, `golden-logres`, `fairy-tower` or `tristan`.
 
-Until it is registered, each game first shows two windows: the shareware screen
-(Play Demo, Buy Now, Enter Key-Code, Quit) and the key list. Click a button, or
-press Return for the outlined one. To register, click **Enter Key-Code**, type
-or paste (Cmd-V) your e-mail address and key code, using Tab to move between
-the fields, and click **Register** (or press Return). The license is saved with
-the preferences, so later launches go straight to the game. LittleWing's store
-is gone, so no key can be bought. Every build drops each game's verdict on the
-key (`src/unlock.c`, with the patches in `src/games.inc`): any e-mail address and
-a made-up key code of 24 or more digits register (24 or more letters and digits
-for MONSTER FAIR). For example, `tester@example.com` and `123456789012345678901234`
-work in every game. The log says `UNLOCK ACTIVE for <game id>` at launch; if it
-says `nothing patched`, the game's code isn't the version the patches expect.
+Every game starts registered. LittleWing's store is gone, so no key can be
+bought, and every build drops each game's verdict on the key (`src/unlock.c`,
+with the patches in `src/games.inc`): any e-mail address and a made-up key
+code of 24 or more digits register (24 or more letters and digits for MONSTER
+FAIR). So before a game first looks, the app saves `tester@example.com` and
+`123456789012345678901234` where the game keeps its license (`src/license.h`),
+and the game goes straight to its opening, as if you had typed them into its
+Register window. A license already saved, such as one you typed yourself, is
+kept. The log says `license: registered in <file>` when it saves one, and
+`UNLOCK ACTIVE for <game id>` at launch; if it says `nothing patched`, the
+game's code isn't the version the patches expect.
+
+`LOONY_UNREGISTERED=1` saves no license, so in a save folder that has none yet
+(a fresh `LOONY_DATA_DIR`) the game starts unregistered; one already saved
+stays. Unregistered, each game first shows two windows: the shareware
+screen (Play Demo, Buy Now, Enter Key-Code, Quit) and the key list.
+Click a button, or press Return for the outlined one. To register, click
+**Enter Key-Code**, type or paste (Cmd-V) your e-mail address and key code,
+using Tab to move between the fields, and click **Register** (or press
+Return). The license is saved with the preferences, so later launches go
+straight to the game. Unregistered, games are time-limited.
 
 The game then plays its opening and a self-playing demo. All the games use
 the same keys by default (MONSTER FAIR and Jinni Zeala add X and . to nudge
@@ -100,8 +109,7 @@ Demo:
 | Cmd-S | Mark the moment for a clip (Loony Labyrinth; see Replays) |
 | Cmd-Q or closing the window | Quit |
 
-The keys can be changed from the game's OPTIONS menu. Unregistered, games are
-time-limited.
+The keys can be changed from the game's OPTIONS menu.
 
 Angel Egg, Golden Logres and Tristan have menus of their own (Golden Logres's
 Operation menu, with New Game, Resume, the practice tables, Save Game and
@@ -199,7 +207,7 @@ tools/notarize.sh build-release/LittleWing.app loony-notary   # takes a few minu
 This sends the app to Apple for checking, staples the ticket to it, and
 leaves `build-release/LittleWing.zip` to send. The other person
 downloads the games as in [Play](#play), unzips the app into Applications,
-and double-clicks it. They register the same way, with any e-mail address and a made-up key code (see [Play](#play)).
+and double-clicks it. Every game starts registered (see [Play](#play)).
 
 ### Releases
 
@@ -259,6 +267,7 @@ SDL_AUDIO_DRIVER=dummy ./build/loony  # no sound output
 LOONY_FIXED_CLOCK=1 LOONY_SCRIPT=play.txt SDL_VIDEO_DRIVER=dummy ./build/loony
 LOONY_AUTO_ALERTS=1 ./build/loony     # answer alerts with their default button, without showing them
 LOONY_DATA_DIR=/tmp/fresh ./build/loony   # use another folder for preferences and saved files
+LOONY_DATA_DIR=$(mktemp -d) LOONY_UNREGISTERED=1 ./build/loony   # no license: the shareware screens show
 ```
 
 To read a game's own code, `tools/disasm.py` disassembles its PowerPC
@@ -314,7 +323,7 @@ starts, plunger, flippers, nudges, a screenshot every 5 minutes):
 
 ```bash
 python3 tools/soak_script.py 216000 /tmp/soak > /tmp/soak.txt
-LOONY_DATA_DIR=$(mktemp -d) LOONY_AUTO_ALERTS=1 LOONY_FIXED_CLOCK=1 LOONY_SCRIPT=/tmp/soak.txt \
+LOONY_DATA_DIR=$(mktemp -d) LOONY_UNREGISTERED=1 LOONY_AUTO_ALERTS=1 LOONY_FIXED_CLOCK=1 LOONY_SCRIPT=/tmp/soak.txt \
   SDL_VIDEO_DRIVER=dummy SDL_AUDIO_DRIVER=dummy ./build-release/loony
 ```
 
@@ -341,9 +350,11 @@ Tests that need a game's files skip when it isn't installed (`SKIP_UNLESS_GAME`,
 `tests/test.h`). `LOONY_GAME_DIR`, `LOONY_CC_DIR`, `LOONY_MF_APP`,
 `LOONY_JZ_DIR`, `LOONY_MD_APP`, `LOONY_AE_APP`, `LOONY_GL_APP`,
 `LOONY_FT_APP` and `LOONY_TR_DIR` point them at copies elsewhere. The tests
-that register type a made-up address and a 24-digit key code (`TEST_EMAIL` and
-`TEST_KEY` in `tests/test_run.c`), which the unlock accepts, so they need no
-secrets.
+run with `LOONY_UNREGISTERED=1`, so the games start unregistered, as in the
+frames they check; the tests of the license saved by default unset it. The
+tests that register type a made-up address and a 24-digit key code
+(`TEST_EMAIL` and `TEST_KEY` in `tests/test_run.c`), which the unlock accepts,
+so they need no secrets.
 The slow tests, the three-minute regression runs (`run_three_minutes_*`) and
 MONSTER FAIR's play past its second license check, take a minute or more each,
 so they skip unless `LOONY_SLOW_TESTS=1` is set (`SLOW_TEST`). `--slow` runs
@@ -724,12 +735,12 @@ last frame stays up until you close the window, which quits the app.
 **File > Open Recent** lists the recordings watched lately, however they
 were opened, and **Clear Menu** forgets them.
 
-To watch a shared replay you need Loony Labyrinth installed and registered
-in LittleWing: the replay uses your registration in place of the one left
-out. The game only checks the registration and never draws it, so the
-frames still match the recording. Without one, the app says so and doesn't
-play it. The replay also needs the same version of LittleWing, or it may
-desync. From a terminal, `LOONY_REPLAY_LICENSE` names the preferences to
+To watch a shared replay you need Loony Labyrinth installed: the replay
+uses your registration in place of the one left out, or, if you have none
+saved yet, the one every game starts with (see [Play](#play)). The game
+only checks the registration and never draws it, so the frames still match
+the recording. The replay also needs the same version of LittleWing, or it
+may desync. From a terminal, `LOONY_REPLAY_LICENSE` names the preferences to
 take the registration from; by default they're your own copy's, in
 `littlewing-shim/loony-labyrinth/prefs.plist`. Shared files are format 6,
 like recordings, with a flag that says the registration is out. One that

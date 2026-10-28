@@ -419,6 +419,9 @@ int main(int argc, char **argv) {
     /* No test may open a real window or play sound; children inherit this too. */
     setenv("SDL_VIDEO_DRIVER", "dummy", 1);
     setenv("SDL_AUDIO_DRIVER", "dummy", 1);
+    /* The games start unregistered, as the frames the tests check were
+       taken; the tests of the license saved by default unset this. */
+    setenv("LOONY_UNREGISTERED", "1", 1);
     /* -j N runs N tests at a time, each in a child of its own (the default is
        one per CPU); -j 1 runs them one after another in this process. --slow
        picks the slow tests alone and runs them; --list prints the names of
