@@ -9,27 +9,12 @@ Mac OS 9 and X), *Jinni Zeala 1.2.2* (2004, an older build of the same engine),
 (2008, a Mac OS X application) and *Tristan 2.5.1* (the Internet Edition of
 the 1992 table, a classic Mac OS program from before Carbon). It
 emulates their CPU (Unicorn) and reimplements the Mac OS calls they make in C.
-This repo contains no game files: you need your own copies of the games. The
-exceptions are `hd-art/`, enlarged art made from the game's pictures (see HD
-art below), and `picker-art/`, the games' thumbnails from LittleWing's
-[download page](http://www.littlewingpinball.com/doc/en/downloads/index.html)
-enlarged to fill the picker's cards. It is an unofficial project, not made or endorsed by LittleWing.
 
-## Build
+This repo contains no game files: you need your own copies of the games.
+You can find them on Littlewing's
+[download page](http://www.littlewingpinball.com/doc/en/downloads/index.html).
 
-```bash
-brew install unicorn sdl3 cmake pkg-config
-cmake -S . -B build                                     # Debug (sanitizers): for development
-cmake --build build
-./build/loony_tests          # all tests; ./build/loony_tests <substring> to filter, =<name> for one
-LOONY_SLOW_TESTS=1 ./build/loony_tests  # also the slow tests (minutes of play each)
-./build/loony_tests --slow   # only the slow tests; filters narrow them, any one matching
-./build/loony_tests -j 1     # one at a time in one process (for a debugger)
-
-cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release  # for playing
-cmake --build build-release
-cmake --build build-release --target app                # build-release/LittleWing.app
-```
+This is an unofficial project, not made or endorsed by LittleWing.
 
 ## Play
 
