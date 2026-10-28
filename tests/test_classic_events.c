@@ -289,6 +289,43 @@ TEST(classic_events_a_quit_under_a_dialog_comes_once_it_closes) {
     CHECK(!wne(EVERY, &e));
 }
 
+/* A choice in the host's menu bar waits for the game's next event call,
+   past a FlushEvents. A game playing in its own loop reads no events, so
+   after 2 ticks Button reads a quick click, which brings Angel Egg and
+   Golden Logres back to their event loop; then the Command-key comes. */
+TEST(classic_events_a_menu_choice_clicks_a_game_out_of_its_play_loop) {
+    setup();
+    take_launch_events();
+    CHECK(events_post_command_key('q'));
+    call_import("FlushEvents", 2, EVERY, 0u);
+    CHECK_EQ(call_import("Button", 0), 0); /* not yet: a game in its event loop takes it sooner */
+    misc_wait(2 / 60.0);
+    CHECK_EQ(call_import("Button", 0), 1);
+    misc_wait(3 / 60.0);
+    CHECK_EQ(call_import("Button", 0), 1);
+    misc_wait(3 / 60.0);
+    CHECK_EQ(call_import("Button", 0), 0); /* let go, as a quick click is */
+    record e;
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 3);
+    CHECK_EQ(e.message, 0x0C71u);
+    CHECK(e.modifiers & 0x0100u);
+    CHECK(!wne(EVERY, &e));
+    CHECK_EQ(call_import("Button", 0), 0); /* taken: no more clicks */
+}
+
+/* A choice the game hasn't taken in 2 seconds is dropped, not acted on
+   when it next reads events (a game over, maybe minutes later). */
+TEST(classic_events_a_menu_choice_not_taken_is_dropped) {
+    setup();
+    take_launch_events();
+    CHECK(events_post_command_key('n'));
+    misc_wait(121 / 60.0);
+    CHECK_EQ(call_import("Button", 0), 0);
+    record e;
+    CHECK(!wne(EVERY, &e));
+}
+
 /* The same before the game's first event call: Tristan shows its startup
    alerts before it calls WaitNextEvent, and a quit then must still come as
    Cmd-Q, not as an Apple Event it never reads. */

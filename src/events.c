@@ -352,7 +352,58 @@ static bool post_command_key(uint8_t chr) {
     return true;
 }
 
-bool events_post_command_key(uint8_t chr) { return !E.modal && post_command_key(chr); }
+/* A choice in the host's menu bar (events_post_command_key), held until
+   the game next takes an event. Only a game with menus gets here, never
+   Loony Labyrinth, the one game that records, so it is no snapshot's. */
+static struct {
+    bool pending;
+    uint8_t chr;
+    uint32_t since;    /* misc_ticks() when it was chosen */
+    uint32_t click_at; /* misc_ticks() when Button first read the click, or 0 */
+} M;
+
+#define MENU_CLICK_AFTER_TICKS 2 /* a game in its event loop takes the choice sooner */
+#define MENU_CLICK_TICKS       6 /* how long the click holds the button, as a quick one would */
+#define MENU_CHOICE_TICKS      120 /* not taken by then: dropped, rather than acted on late */
+
+bool events_post_command_key(uint8_t chr) {
+    if (E.modal)
+        return false;
+    M = (typeof(M)){.pending = true, .chr = chr, .since = misc_ticks()};
+    return true;
+}
+
+/* Whether the choice waits still; one that waited too long is dropped. */
+static bool menu_choice_waits(void) {
+    if (M.pending && misc_ticks() - M.since > MENU_CHOICE_TICKS) {
+        log_msg("menu: the game didn't take the choice in %d ticks; dropping it", MENU_CHOICE_TICKS);
+        M.pending = false;
+    }
+    return M.pending;
+}
+
+/* The game asks for an event: a waiting choice is its Command-key now. */
+static void take_menu_choice(void) {
+    if (!E.modal && menu_choice_waits()) {
+        M.pending = false;
+        post_command_key(M.chr);
+    }
+}
+
+/* Whether Button reads a click for a waiting choice: a game playing in its
+   own loop (Angel Egg, Golden Logres) reads no events, but a click pauses
+   it and brings back its menu bar and event loop, as on a Mac, where the
+   player clicked to reach the menus. */
+static bool menu_click(void) {
+    if (!menu_choice_waits())
+        return false;
+    uint32_t now = misc_ticks();
+    if (now - M.since < MENU_CLICK_AFTER_TICKS)
+        return false;
+    if (!M.click_at)
+        M.click_at = now ? now : 1;
+    return now - M.click_at < MENU_CLICK_TICKS;
+}
 
 bool events_modal_up(void) { return E.modal != NULL; }
 
@@ -466,6 +517,7 @@ static void replay_input(void) {
 
 void events_init(void) {
     memset(&E, 0, sizeof E);
+    memset(&M, 0, sizeof M);
     const char *s = getenv("LOONY_EXIT_AFTER");
     if (s && *s)
         E.exit_after = strtol(s, NULL, 10);
@@ -1168,6 +1220,8 @@ static bool classic_activate(uint32_t mask, uint32_t rec, bool take) {
    with take, events that have no EventRecord go too. False if there is
    none: rec then gets a null event. */
 static bool classic_next(uint32_t mask, uint32_t rec, bool take) {
+    if (take)
+        take_menu_choice();
     if (classic_activate(mask, rec, take))
         return true;
     for (int k = 0; k < E.qcount;) {
@@ -1284,7 +1338,8 @@ static void poll_input(void) {
 
 static void h_button(void) {
     poll_input();
-    trap_return(E.mouse_down);
+    bool click = menu_click(); /* read every time, to drop a stale choice */
+    trap_return(E.mouse_down || click);
 }
 
 /* StillDown: the button is down and no mouse event is waiting. */

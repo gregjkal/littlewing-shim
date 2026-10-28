@@ -2843,6 +2843,19 @@ TEST(run_angel_egg_quits_from_its_own_menu) {
     CHECK(!strstr(out, "quit Apple Event"));
 }
 
+/* Its File menu's Quit (MENU 134), chosen from the host's menu bar during
+   a game, when it reads no events: the shim's click pauses it, as a click
+   did on a Mac, and its event loop takes the Quit. */
+TEST(run_angel_egg_quits_from_the_host_menu_during_a_game) {
+    SKIP_UNLESS_AE();
+    char out[32768];
+    setenv("LOONY_EXIT_AFTER", "2600", 1);
+    int status = run_script_in(test_ae_app(), "1200 menu 131 1\n1800 menu 134 1\n", NULL, NULL, 0, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: main returned ");
+    CHECK(!strstr(out, "exiting after"));
+}
+
 /* Cmd-Q (the script's quit) at its attract mode: the quit Apple Event, and
    its main returns. */
 TEST(run_angel_egg_quits_on_the_quit_apple_event) {

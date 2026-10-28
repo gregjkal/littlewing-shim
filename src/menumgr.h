@@ -62,7 +62,8 @@ bool menumgr_item(int16_t menu_id, int item, menumgr_item_info *out);
 
 /* The player chose an item in the host's menu bar: the game is sent a
    Command-key down, as on a Mac, for its event loop to pass to MenuKey or
-   MenuEvent, which answer with that item. The key is the item's own
+   MenuEvent, which answer with that item (events_post_command_key, which
+   pauses a game in play to reach its event loop). The key is the item's own
    Command-key if it has one, else a letter none of the bar's items has.
    Does nothing if the item isn't there and enabled, or a dialog is up.
    Only a game with menus gets here, which leaves out Loony Labyrinth, the
