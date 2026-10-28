@@ -111,9 +111,10 @@ kept. The log says `license: registered in <file>` when it saves one, and
 `UNLOCK ACTIVE for <game id>` at launch; if it says `nothing patched`, the
 game's code isn't the version the patches expect.
 
-`LOONY_UNREGISTERED=1` saves no license, for the games' shareware screens. In
-a game that isn't registered, each game first shows two windows: the
-shareware screen (Play Demo, Buy Now, Enter Key-Code, Quit) and the key list.
+`LOONY_UNREGISTERED=1` saves no license, so in a save folder that has none yet
+(a fresh `LOONY_DATA_DIR`) the game starts unregistered; one already saved
+stays. Unregistered, each game first shows two windows: the shareware
+screen (Play Demo, Buy Now, Enter Key-Code, Quit) and the key list.
 Click a button, or press Return for the outlined one. To register, click
 **Enter Key-Code**, type or paste (Cmd-V) your e-mail address and key code,
 using Tab to move between the fields, and click **Register** (or press
@@ -299,7 +300,7 @@ SDL_AUDIO_DRIVER=dummy ./build/loony  # no sound output
 LOONY_FIXED_CLOCK=1 LOONY_SCRIPT=play.txt SDL_VIDEO_DRIVER=dummy ./build/loony
 LOONY_AUTO_ALERTS=1 ./build/loony     # answer alerts with their default button, without showing them
 LOONY_DATA_DIR=/tmp/fresh ./build/loony   # use another folder for preferences and saved files
-LOONY_UNREGISTERED=1 ./build/loony    # save no license: the shareware screens and Register show
+LOONY_DATA_DIR=$(mktemp -d) LOONY_UNREGISTERED=1 ./build/loony   # no license: the shareware screens show
 ```
 
 To read a game's own code, `tools/disasm.py` disassembles its PowerPC

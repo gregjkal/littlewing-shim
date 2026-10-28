@@ -85,10 +85,12 @@ static bool save_in_file(const game_info *g, const char *data_dir) {
     if (f && fclose(f) != 0)
         ok = false;
     free(b);
-    if (ok)
+    if (ok) {
         log_msg("license: registered in %s", path);
-    else
+    } else {
         log_msg("license: can't write %s", path);
+        unlink(path); /* a short file would be kept as the player's own */
+    }
     return ok;
 }
 

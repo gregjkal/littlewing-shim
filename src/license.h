@@ -9,9 +9,9 @@
    (game_info's license_file) before the game first looks: the game finds
    it and skips its shareware screens, as if the player had typed it into
    Register. A license already saved, the player's own or this one, is
-   left alone. LOONY_UNREGISTERED=1 saves none, for the shareware screens
-   and Register (the tests set it, and their frames are of an unregistered
-   game). */
+   left alone. LOONY_UNREGISTERED=1 saves none, so a save folder without
+   one yet shows the shareware screens and Register (the tests set it, and
+   their frames are of an unregistered game). */
 #define LICENSE_EMAIL "tester@example.com"
 #define LICENSE_KEY "123456789012345678901234"
 

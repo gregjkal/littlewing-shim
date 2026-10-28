@@ -751,6 +751,9 @@ static uint8_t *licensed_prefs(size_t *len, char *err, size_t errlen) {
     if (st == PLIST_OK && has_license(e, n)) {
         out = with_license(R.h.prefs, R.h.prefs_len, e, n, len, err, errlen);
     } else {
+        if (from && *from)
+            log_msg("replay: %s holds no license%s%s, so the default one is used", from,
+                    st == PLIST_OK ? "" : ": ", st == PLIST_OK ? "" : perr);
         plist_entry def[] = {{(char *)license_keys[0], false, 0, LICENSE_EMAIL},
                              {(char *)license_keys[1], false, 0, LICENSE_KEY}};
         out = with_license(R.h.prefs, R.h.prefs_len, def, NLICENSE_KEYS, len, err, errlen);
