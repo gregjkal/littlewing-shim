@@ -10,8 +10,10 @@ Mac OS 9 and X), *Jinni Zeala 1.2.2* (2004, an older build of the same engine),
 the 1992 table, a classic Mac OS program from before Carbon). It
 emulates their CPU (Unicorn) and reimplements the Mac OS calls they make in C.
 This repo contains no game files: you need your own copies of the games. The
-one exception is `hd-art/`, enlarged art made from the game's pictures (see HD
-art below). It is an unofficial project, not made or endorsed by LittleWing.
+exceptions are `hd-art/`, enlarged art made from the game's pictures (see HD
+art below), and `picker-art/`, the games' thumbnails from LittleWing's
+[download page](http://www.littlewingpinball.com/doc/en/downloads/index.html)
+enlarged to fill the picker's cards. It is an unofficial project, not made or endorsed by LittleWing.
 
 ## Build
 
@@ -63,8 +65,9 @@ Download `LittleWing-<version>.zip` from
 [Releases](https://github.com/gregjkal/littlewing-shim/releases), unzip it,
 and move `LittleWing.app` to `/Applications` (or anywhere); or build it as
 above and copy `build-release/LittleWing.app`. Double-click it. With two to
-all nine games installed, it opens on a picker showing each game's title picture
-(MONSTER FAIR's, Jinni Zeala's, Mad Daedalus's, Angel Egg's, Golden Logres's and FAIRY TOWER's cards show their icons): the arrow keys (or
+all nine games installed, it opens on a picker showing each game's thumbnail
+from LittleWing's download page (`./build-release/loony`, outside the app,
+shows each game's title picture or icon instead): the arrow keys (or
 the mouse) choose, and Return (or a click) plays. It starts on the last game
 played. With one game installed, it plays that game. Choosing QUIT in a game's
 own menu goes back to the picker; Cmd-Q or closing the window quits. The app

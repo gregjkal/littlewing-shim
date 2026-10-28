@@ -3,6 +3,7 @@
 #include <SDL3/SDL_scancode.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 
 #include "game.h"
@@ -33,9 +34,10 @@ TEST(picker_draw_places_the_cards_and_marks_the_selection) {
     free(e[1].art);
     CHECK_EQ(px(10 + 100, 140 + 100)[1], 0xFF); /* the first card's art */
     CHECK_EQ(px(406 + 100, 140 + 100)[3], 0xFF); /* the second card's art */
-    CHECK_EQ(px(406 - 2, 200)[1], 0xFF);         /* gold border: the second is selected */
-    CHECK_EQ(px(406 - 2, 200)[2], 0xCC);
-    CHECK_EQ(px(10 - 2, 200)[1], 0x33);          /* gray border on the first */
+    CHECK_EQ(px(454 - 2, 200)[1], 0xFF);         /* gold border: the second is selected */
+    CHECK_EQ(px(454 - 2, 200)[2], 0xCC);
+    CHECK_EQ(px(58 - 2, 200)[1], 0x33);          /* gray border on the first */
+    CHECK_EQ(px(10 + 2, 200)[1], 0);             /* black beside the square card */
     CHECK_EQ(px(0, 0)[1], 0);                    /* black background */
 }
 
@@ -55,7 +57,7 @@ TEST(picker_frame_matches_its_recording) {
     free(e[0].art);
     char got[16];
     snprintf(got, sizeof got, "%08x", fnv1a32(screen, sizeof screen));
-    CHECK_STR(got, "df066ba5");
+    CHECK_STR(got, "4d3203a5");
 }
 
 TEST(picker_hit_finds_the_card_under_a_click) {
@@ -98,13 +100,13 @@ TEST(picker_draws_three_cards) {
     picker_draw(e, 3, 2, screen);
     free(e[0].art);
     free(e[2].art);
-    CHECK_EQ(px(16, 180)[1], 0xFF);               /* the first card's art, reduced */
-    CHECK_EQ(px(16 + 239, 180 + 179)[1], 0xFF);
-    CHECK_EQ(px(16 + 240, 200)[1], 0x33);         /* its gray border */
+    CHECK_EQ(px(46, 180)[1], 0xFF);               /* the first card's art, reduced */
+    CHECK_EQ(px(46 + 179, 180 + 179)[1], 0xFF);
+    CHECK_EQ(px(46 + 180, 200)[1], 0x33);         /* its gray border */
     CHECK_EQ(px(280 + 100, 180 + 90)[1], 0x22);   /* the second: a plain card */
     CHECK_EQ(px(544 + 100, 180 + 90)[3], 0xFF);   /* the third card's art */
-    CHECK_EQ(px(544 - 2, 200)[1], 0xFF);          /* gold border: the third is selected */
-    CHECK_EQ(px(544 - 2, 200)[2], 0xCC);
+    CHECK_EQ(px(574 - 2, 200)[1], 0xFF);          /* gold border: the third is selected */
+    CHECK_EQ(px(574 - 2, 200)[2], 0xCC);
     CHECK_EQ(px(268, 200)[1], 0);                 /* black between the cards */
 }
 
@@ -122,7 +124,7 @@ TEST(picker_left_and_right_move_across_three) {
     CHECK_EQ(picker_hit(3, 300, 100), -1);      /* the heading */
 }
 
-/* Four games: 224x168 cards in two rows of two, at x = 144 and 432, from
+/* Four games: 168x168 cards in two rows of two, at x = 172 and 460, from
    y = 108 and 324. */
 TEST(picker_draws_four_cards_in_two_rows) {
     picker_entry e[4] = {{game_at(0), solid_art(0xFF, 0, 0)}, {game_at(1), NULL}, {game_at(2), NULL},
@@ -130,14 +132,14 @@ TEST(picker_draws_four_cards_in_two_rows) {
     picker_draw(e, 4, 3, screen);
     free(e[0].art);
     free(e[3].art);
-    CHECK_EQ(px(144, 108)[1], 0xFF);              /* the first card's art, reduced */
-    CHECK_EQ(px(144 + 223, 108 + 167)[1], 0xFF);
-    CHECK_EQ(px(144 + 224, 200)[1], 0x33);        /* its gray border */
+    CHECK_EQ(px(172, 108)[1], 0xFF);              /* the first card's art, reduced */
+    CHECK_EQ(px(172 + 167, 108 + 167)[1], 0xFF);
+    CHECK_EQ(px(172 + 168, 200)[1], 0x33);        /* its gray border */
     CHECK_EQ(px(432 + 100, 108 + 80)[1], 0x22);   /* the second: a plain card, beside it */
     CHECK_EQ(px(144 + 100, 324 + 80)[1], 0x22);   /* the third: a plain card, under the first */
     CHECK_EQ(px(432 + 100, 324 + 80)[3], 0xFF);   /* the fourth card's art */
-    CHECK_EQ(px(432 - 2, 400)[1], 0xFF);          /* gold border: the fourth is selected */
-    CHECK_EQ(px(432 - 2, 400)[2], 0xCC);
+    CHECK_EQ(px(460 - 2, 400)[1], 0xFF);          /* gold border: the fourth is selected */
+    CHECK_EQ(px(460 - 2, 400)[2], 0xCC);
     CHECK_EQ(px(400, 200)[1], 0);                 /* black between the columns */
     CHECK_EQ(px(200, 318)[1], 0);                 /* and between the rows */
 }
@@ -171,14 +173,14 @@ TEST(picker_draws_five_cards_in_rows_of_three_and_two) {
     picker_draw(e, 5, 4, screen);
     free(e[0].art);
     free(e[4].art);
-    CHECK_EQ(px(8, 108)[1], 0xFF);               /* the first card's art, reduced */
-    CHECK_EQ(px(8 + 223, 108 + 167)[1], 0xFF);
+    CHECK_EQ(px(36, 108)[1], 0xFF);              /* the first card's art, reduced */
+    CHECK_EQ(px(36 + 167, 108 + 167)[1], 0xFF);
     CHECK_EQ(px(288 + 100, 108 + 80)[1], 0x22);  /* the second and third: plain cards */
-    CHECK_EQ(px(568 + 223, 108 + 80)[1], 0x22);
+    CHECK_EQ(px(596 + 167, 108 + 80)[1], 0x22);
     CHECK_EQ(px(148 + 100, 324 + 80)[1], 0x22);  /* the fourth, under the first two */
     CHECK_EQ(px(428 + 100, 324 + 80)[3], 0xFF);  /* the fifth card's art */
-    CHECK_EQ(px(428 - 2, 400)[1], 0xFF);         /* gold border: the fifth is selected */
-    CHECK_EQ(px(428 - 2, 400)[2], 0xCC);
+    CHECK_EQ(px(456 - 2, 400)[1], 0xFF);         /* gold border: the fifth is selected */
+    CHECK_EQ(px(456 - 2, 400)[2], 0xCC);
     CHECK_EQ(px(260, 200)[1], 0);                /* black between the columns */
     CHECK_EQ(px(100, 400)[1], 0);                /* and beside the short row */
 }
@@ -217,7 +219,7 @@ TEST(picker_draws_six_cards_in_two_rows_of_three) {
     CHECK_EQ(px(148 + 100, 324 + 80)[1], 0);    /* no longer a short row */
     CHECK_EQ(px(8 + 100, 324 + 80)[1], 0x22);   /* the fourth, under the first */
     CHECK_EQ(px(568 + 100, 324 + 80)[3], 0xFF); /* the sixth card's art */
-    CHECK_EQ(px(568 - 2, 400)[1], 0xFF);        /* gold border: the sixth is selected */
+    CHECK_EQ(px(596 - 2, 400)[1], 0xFF);        /* gold border: the sixth is selected */
     bool choose = false;
     CHECK_EQ(picker_key(6, 2, SDL_SCANCODE_DOWN, &choose), 5);
     CHECK_EQ(picker_key(6, 5, SDL_SCANCODE_UP, &choose), 2);
@@ -233,15 +235,15 @@ TEST(picker_draws_seven_cards_in_rows_of_four_and_three) {
     picker_draw(e, 7, 6, screen);
     free(e[0].art);
     free(e[6].art);
-    CHECK_EQ(px(12, 108)[1], 0xFF);               /* the first card's art, reduced */
-    CHECK_EQ(px(12 + 175, 108 + 131)[1], 0xFF);
-    CHECK_EQ(px(612 + 175, 108 + 131)[1], 0x22);  /* the fourth ends the first row */
+    CHECK_EQ(px(34, 108)[1], 0xFF);               /* the first card's art, reduced */
+    CHECK_EQ(px(34 + 131, 108 + 131)[1], 0xFF);
+    CHECK_EQ(px(634 + 131, 108 + 131)[1], 0x22);  /* the fourth ends the first row */
     CHECK_EQ(px(112 + 100, 308 + 80)[1], 0x22);   /* the fifth, the second row centered */
     CHECK_EQ(px(512 + 100, 308 + 80)[3], 0xFF);   /* the seventh card's art */
-    CHECK_EQ(px(512 - 2, 400)[1], 0xFF);          /* gold border: the seventh is selected */
+    CHECK_EQ(px(534 - 2, 400)[1], 0xFF);          /* gold border: the seventh is selected */
     CHECK_EQ(px(200, 200)[1], 0);                 /* black between the columns */
     CHECK_EQ(px(50, 400)[1], 0);                  /* and beside the short row */
-    /* ANGEL EGG (144 pixels) fits its 176-pixel card on one line, so
+    /* ANGEL EGG (144 pixels) fits its 176-pixel slot on one line, so
        nothing is drawn on a second; GOLDEN LOGRES (208) takes two, and so
        does MAD DAEDALUS (192), which would reach its neighbours on one. */
     bool second_line[3] = {false, false, false}; /* MAD DAEDALUS, GOLDEN LOGRES, ANGEL EGG */
@@ -277,7 +279,7 @@ TEST(picker_draws_eight_cards_in_two_rows_of_four) {
     CHECK_EQ(px(12 + 100, 108 + 80)[1], 0x22);   /* the first, where it is with seven */
     CHECK_EQ(px(12 + 100, 308 + 80)[1], 0x22);   /* the fifth, under the first: no short row */
     CHECK_EQ(px(612 + 100, 308 + 80)[3], 0xFF);  /* the eighth card's art */
-    CHECK_EQ(px(612 - 2, 400)[1], 0xFF);         /* gold border: the eighth is selected */
+    CHECK_EQ(px(634 - 2, 400)[1], 0xFF);         /* gold border: the eighth is selected */
     CHECK_EQ(px(200, 400)[1], 0);                /* black between the columns */
     /* FAIRY TOWER (176 pixels) fits its column on one line. */
     bool second_line = false;
@@ -305,11 +307,11 @@ TEST(picker_draws_nine_cards_in_three_rows_of_three) {
     picker_draw(e, 9, 8, screen);
     free(e[0].art);
     free(e[8].art);
-    CHECK_EQ(px(48, 76)[1], 0xFF);                /* the first card's art, reduced */
-    CHECK_EQ(px(48 + 159, 76 + 119)[1], 0xFF);
+    CHECK_EQ(px(68, 76)[1], 0xFF);                /* the first card's art, reduced */
+    CHECK_EQ(px(68 + 119, 76 + 119)[1], 0xFF);
     CHECK_EQ(px(320 + 80, 240 + 60)[1], 0x22);    /* the fifth, in the middle */
     CHECK_EQ(px(592 + 80, 404 + 60)[3], 0xFF);    /* the ninth card's art */
-    CHECK_EQ(px(592 - 2, 450)[1], 0xFF);          /* gold border: the ninth is selected */
+    CHECK_EQ(px(612 - 2, 450)[1], 0xFF);          /* gold border: the ninth is selected */
     CHECK_EQ(px(260, 150)[1], 0);                 /* black between the columns */
     CHECK_EQ(px(48 + 80, 76 + 120 + 6)[1], 0);    /* and between a card and its name */
     /* Every name fits its column on one line: CRYSTAL CALIBURN (256 pixels)
@@ -530,7 +532,7 @@ TEST(picker_art_for_jinni_zeala_is_its_icon) {
     CHECK_STR(err, "");
     CHECK(around_is_card);
     CHECK(clear_is_card);
-    CHECK_STR(got, "df198a6f"); /* the icon shown in the four-game picker */
+    CHECK_STR(got, "462c5e6f"); /* the icon shown in the four-game picker */
 }
 
 /* Mad Daedalus is a bundle: its card is appl.png, its 128x128 icon. */
@@ -548,7 +550,7 @@ TEST(picker_art_for_mad_daedalus_is_its_icon) {
     CHECK(ok);
     CHECK_STR(err, "");
     CHECK(around_is_card);
-    CHECK_STR(got, "4561d7ee"); /* the icon shown in the five-game picker */
+    CHECK_STR(got, "7d0970ee"); /* the icon shown in the five-game picker */
 }
 
 /* FAIRY TOWER is a bundle like Mad Daedalus: its card is appl.png. */
@@ -566,7 +568,7 @@ TEST(picker_art_for_fairy_tower_is_its_icon) {
     CHECK(ok);
     CHECK_STR(err, "");
     CHECK(around_is_card);
-    CHECK_STR(got, "7a6db75e"); /* the icon shown in the nine-game picker */
+    CHECK_STR(got, "c8a5485e"); /* the icon shown in the nine-game picker */
 }
 
 /* Tristan's PICT 800 is its credits, and it has no icns 128: its card is
@@ -576,8 +578,8 @@ TEST(picker_art_for_tristan_is_its_title) {
     char err[512] = "";
     uint8_t *art = malloc(PICKER_ART_W * PICKER_ART_H * 4);
     bool ok = picker_load_art(test_tr_exe_path(), art, err, sizeof err);
-    const uint8_t *side = art + ((size_t)144 * PICKER_ART_W + 25) * 4, *in = side + 2 * 4;
-    bool beside_is_card = side[1] == 0x22 && side[2] == 0x22 && side[3] == 0x22;
+    const uint8_t *side = art + 144 * 4, *in = art + ((size_t)144 * PICKER_ART_W + 144) * 4;
+    bool beside_is_card = side[1] == 0x22 && side[2] == 0x22 && side[3] == 0x22; /* above it */
     bool title_is_drawn = !(in[1] == 0x22 && in[2] == 0x22 && in[3] == 0x22);
     char got[16];
     snprintf(got, sizeof got, "%08x", fnv1a32(art, PICKER_ART_W * PICKER_ART_H * 4));
@@ -586,7 +588,7 @@ TEST(picker_art_for_tristan_is_its_title) {
     CHECK_STR(err, "");
     CHECK(beside_is_card);
     CHECK(title_is_drawn);
-    CHECK_STR(got, "648c7523"); /* the title shown in the nine-game picker */
+    CHECK_STR(got, "7af504b5"); /* the title shown in the nine-game picker */
 }
 
 /* An empty version 1 picture whose frame is w by h. */
@@ -635,7 +637,8 @@ static bool is_card(const uint8_t *art, int x, int y) {
 
 /* Without the game: a PICT 800 of the wrong size (Tristan's credits) is
    passed over for PICT 900, which is centered on the card at its own size
-   when it fits; a 512x384 PICT 800 fills the card; a PICT 900 larger than
+   when it fits; a 512x384 PICT 800 fills the card's width (288x216,
+   centered); a PICT 900 larger than
    512x384, or no picture at all, gives no art. */
 TEST(picker_art_falls_back_to_a_centered_pict_900) {
     char dir[1024], path[1200], err[512] = "", big_err[512] = "", none_err[512] = "", err800[512] = "";
@@ -655,7 +658,8 @@ TEST(picker_art_falls_back_to_a_centered_pict_900) {
     int l = (PICKER_ART_W - 100) / 2, cx = PICKER_ART_W / 2;
     bool centered = !is_card(art, l, 119) && !is_card(art, l + 99, 168) && is_card(art, l - 1, 144) &&
                     is_card(art, l + 100, 144) && is_card(art, cx, 118) && is_card(art, cx, 169);
-    bool fills = !is_card(art800, 0, 0) && !is_card(art800, PICKER_ART_W - 1, PICKER_ART_H - 1);
+    bool fills = !is_card(art800, 0, 36) && !is_card(art800, PICKER_ART_W - 1, 251) && is_card(art800, 0, 35) &&
+                 is_card(art800, 0, 252);
     free(art);
     free(art800);
     free(scratch_art);
@@ -685,7 +689,7 @@ TEST(picker_art_for_golden_logres_is_its_icon) {
     CHECK(ok);
     CHECK_STR(err, "");
     CHECK(around_is_card);
-    CHECK_STR(got, "e7fd1c8b"); /* the icon shown in the seven-game picker */
+    CHECK_STR(got, "3fae888b"); /* the icon shown in the seven-game picker */
 }
 
 TEST(picker_art_comes_from_the_games_title_picture) {
@@ -698,4 +702,42 @@ TEST(picker_art_comes_from_the_games_title_picture) {
     CHECK(ok);
     CHECK(!bad);
     CHECK_CONTAINS(err, "/nonexistent/LOONY LABYRINTH 3.0.1");
+}
+
+TEST(picker_finds_the_card_bundled_with_the_app) {
+    char dir[1024], res[1200], card[1300], exe[1200], out[1300];
+    test_tmp_dir(dir, sizeof dir);
+    snprintf(res, sizeof res, "%s/LittleWing.app/Contents/Resources/picker-art", dir);
+    CHECK(make_dirs(res));
+    snprintf(card, sizeof card, "%s/loony-labyrinth.png", res);
+    write_icon(card, 288);
+    snprintf(exe, sizeof exe, "%s/LittleWing.app/Contents/MacOS/loony", dir);
+    bool found = picker_bundled_art(exe, "loony-labyrinth", out, sizeof out);
+    bool same = found && strcmp(out, card) == 0;
+    bool other_game = picker_bundled_art(exe, "crystal-caliburn", out, sizeof out); /* no card for it */
+    char tiny[8];
+    bool too_long = picker_bundled_art(exe, "loony-labyrinth", tiny, sizeof tiny);
+    bool no_path = picker_bundled_art(NULL, "loony-labyrinth", out, sizeof out);
+    snprintf(exe, sizeof exe, "%s/build-release/loony", dir);
+    bool outside_app = picker_bundled_art(exe, "loony-labyrinth", out, sizeof out);
+    test_remove_tree(dir);
+    CHECK(found);
+    CHECK(same);
+    CHECK(!other_game);
+    CHECK(!too_long);
+    CHECK(!no_path);
+    CHECK(!outside_app);
+}
+
+/* Every game has a card in picker-art/, and each one fits a card. */
+TEST(picker_art_has_a_card_for_every_game) {
+    for (size_t i = 0; i < game_count(); i++) {
+        char path[1200], err[512] = "";
+        snprintf(path, sizeof path, "%s/picker-art/%s.png", LOONY_SRC_DIR, game_at(i)->id);
+        uint8_t *art = malloc(PICKER_ART_W * PICKER_ART_H * 4);
+        bool ok = picker_load_icon(path, art, err, sizeof err);
+        free(art);
+        CHECK_STR(err, "");
+        CHECK(ok);
+    }
 }

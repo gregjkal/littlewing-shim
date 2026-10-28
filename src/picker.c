@@ -4,6 +4,7 @@
 #include <SDL3/SDL_scancode.h>
 #include <ctype.h>
 #include <limits.h>
+#include <mach-o/dyld.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +22,8 @@
 
 #define ART_SRC_W 512
 #define ART_SRC_H 384
+#define SLOT_W 384 /* two cards: the room each takes, the art square in it */
+#define SLOT_H PICKER_ART_H
 #define CARD_TOP 140
 #define CARD_GAP 12
 #define CARD_LEFT0 10
@@ -80,9 +83,9 @@ static int columns(int n) { return n == 4 ? 2 : n == 5 || n == 6 || n == 9 ? 3 :
 /* Whether n cards take rows of four, where a name may need two lines. */
 static bool four_across(int n) { return n == 7 || n == 8; }
 
-/* Where card i's art goes: two cards side by side, three smaller ones, or
+/* The room card i takes, 4:3: two side by side, three smaller ones, or
    four to eight in two rows and nine in three, each row centered. */
-static qd_rect card(int n, int i) {
+static qd_rect slot(int n, int i) {
     if (n >= 4) {
         int cols = columns(n), row = i / cols;
         int w = n == 9 ? ART9_W : n >= 7 ? ART7_W : ART4_W, h = n == 9 ? ART9_H : n >= 7 ? ART7_H : ART4_H;
@@ -97,8 +100,15 @@ static qd_rect card(int n, int i) {
         int left = CARD3_LEFT0 + i * (ART3_W + CARD3_GAP);
         return (qd_rect){CARD3_TOP, (int16_t)left, CARD3_TOP + ART3_H, (int16_t)(left + ART3_W)};
     }
-    int left = CARD_LEFT0 + i * (PICKER_ART_W + CARD_GAP);
-    return (qd_rect){CARD_TOP, (int16_t)left, CARD_TOP + PICKER_ART_H, (int16_t)(left + PICKER_ART_W)};
+    int left = CARD_LEFT0 + i * (SLOT_W + CARD_GAP);
+    return (qd_rect){CARD_TOP, (int16_t)left, CARD_TOP + SLOT_H, (int16_t)(left + SLOT_W)};
+}
+
+/* Where card i's art goes: a square as tall as its slot, centered in it. */
+static qd_rect card(int n, int i) {
+    qd_rect r = slot(n, i);
+    int h = rect_h(r), left = r.left + (rect_w(r) - h) / 2;
+    return (qd_rect){r.top, (int16_t)left, r.bottom, (int16_t)(left + h)};
 }
 
 static int name_top(int n, int i) {
@@ -109,11 +119,11 @@ static int name_top(int n, int i) {
     return n >= 4 ? NAME4_TOP0 + i / columns(n) * CARD4_ROW : n == 3 ? NAME3_TOP : NAME_TOP;
 }
 
-/* The widest a name may be before it takes two lines: a column, one card
+/* The widest a name may be before it takes two lines: a column, one slot
    and the gap beside it, or with four across, where a name that wide
-   would touch its neighbour's, the card alone. */
+   would touch its neighbour's, the slot alone. */
 static int name_room(int n) {
-    qd_rect a = card(n, 0), b = card(n, 1);
+    qd_rect a = slot(n, 0), b = slot(n, 1);
     return four_across(n) ? rect_w(a) : b.left - a.left;
 }
 
@@ -208,7 +218,7 @@ void picker_draw(const picker_entry *e, int n, int selected, uint8_t *screen) {
 
 int picker_hit(int n, int x, int y) {
     for (int i = 0; i < n && i < PICKER_MAX; i++) {
-        qd_rect c = card(n, i);
+        qd_rect c = slot(n, i);
         int bottom = name_top(n, i) + 2 * FONT_H + (four_across(n) ? 2 * FONT_H + NAME_LEADING : 0);
         if (x >= c.left - BORDER && x < c.right + BORDER && y >= c.top - BORDER && y < bottom)
             return i;
@@ -297,6 +307,21 @@ bool picker_load_icns(const uint8_t *p, size_t len, uint8_t *art) {
     return true;
 }
 
+/* A picture (w x h xRGB), reduced to fit the card if it's larger and
+   centered on the plain card color, into art. */
+static void fit(const uint8_t *full, int w, int h, uint8_t *art) {
+    int dw = w, dh = h;
+    if (dw > PICKER_ART_W || dh > PICKER_ART_H) {
+        bool wide = w * PICKER_ART_H > h * PICKER_ART_W;
+        dw = wide ? PICKER_ART_W : w * PICKER_ART_H / h;
+        dh = wide ? h * PICKER_ART_W / w : PICKER_ART_H;
+    }
+    qd_pixels a = pixels(art, PICKER_ART_W, PICKER_ART_H);
+    qd_fill(&a, a.bounds, a.bounds, PLAIN);
+    reduce(full, w, h, art + ((size_t)(PICKER_ART_H - dh) / 2 * PICKER_ART_W + (size_t)(PICKER_ART_W - dw) / 2) * 4,
+           dw, dh, PICKER_ART_W * 4);
+}
+
 bool picker_load_art(const char *exe_path, uint8_t *art, char *err, size_t errlen) {
     char fork_path[PATH_MAX];
     snprintf(fork_path, sizeof fork_path, "%s/..namedfork/rsrc", exe_path);
@@ -335,27 +360,17 @@ bool picker_load_art(const char *exe_path, uint8_t *art, char *err, size_t errle
         qd_pixels t = pixels(full, ART_SRC_W, ART_SRC_H);
         ok = pict_draw(rsrc_data(e), e->len, t.bounds, &t, t.bounds, BLACK, WHITE, rerr, sizeof rerr);
         if (ok)
-            reduce(full, ART_SRC_W, ART_SRC_H, art, PICKER_ART_W, PICKER_ART_H, PICKER_ART_W * 4);
+            fit(full, ART_SRC_W, ART_SRC_H, art);
         else
             snprintf(err, errlen, "%s: PICT 800: %s", exe_path, rerr);
-    } else { /* the title, reduced to fit the card and centered on it */
+    } else {
         int w = rect_w(frame), h = rect_h(frame);
         qd_pixels t = pixels(full, w, h);
         ok = pict_draw(rsrc_data(title), title->len, t.bounds, &t, t.bounds, BLACK, WHITE, rerr, sizeof rerr);
-        if (ok) {
-            int dw = w, dh = h;
-            if (dw > PICKER_ART_W || dh > PICKER_ART_H) {
-                bool wide = w * PICKER_ART_H > h * PICKER_ART_W;
-                dw = wide ? PICKER_ART_W : w * PICKER_ART_H / h;
-                dh = wide ? h * PICKER_ART_W / w : PICKER_ART_H;
-            }
-            qd_pixels a = pixels(art, PICKER_ART_W, PICKER_ART_H);
-            qd_fill(&a, a.bounds, a.bounds, PLAIN);
-            reduce(full, w, h, art + ((size_t)(PICKER_ART_H - dh) / 2 * PICKER_ART_W + (size_t)(PICKER_ART_W - dw) / 2) * 4,
-                   dw, dh, PICKER_ART_W * 4);
-        } else {
+        if (ok)
+            fit(full, w, h, art);
+        else
             snprintf(err, errlen, "%s: PICT 900: %s", exe_path, rerr);
-        }
     }
     free(full);
     rsrc_close();
@@ -395,6 +410,15 @@ bool picker_load_bundle_art(const char *app, uint8_t *art, char *err, size_t err
         snprintf(err, errlen, "%s has neither appl.png nor an app.icns with a 128x128 icon", app);
     free(icns);
     return ok;
+}
+
+bool picker_bundled_art(const char *exe_path, const char *game_id, char *out, size_t cap) {
+    const char *macos = exe_path ? strstr(exe_path, ".app/Contents/MacOS/") : NULL;
+    if (!macos)
+        return false;
+    int n = snprintf(out, cap, "%.*s.app/Contents/Resources/picker-art/%s.png", (int)(macos - exe_path),
+                     exe_path, game_id);
+    return n > 0 && (size_t)n < cap && access(out, F_OK) == 0;
 }
 
 static struct {
@@ -439,15 +463,24 @@ const game_info *picker_run(const game_info *const *games, int n) {
     if (n > PICKER_MAX)
         n = PICKER_MAX;
     picker_entry e[PICKER_MAX];
+    char self[PATH_MAX];
+    uint32_t self_size = sizeof self;
+    bool have_self = _NSGetExecutablePath(self, &self_size) == 0;
     for (int i = 0; i < n; i++) {
         e[i].game = games[i];
         e[i].art = malloc(PICKER_ART_W * PICKER_ART_H * 4);
         char dir[PATH_MAX], path[PATH_MAX + 64], err[512];
         game_folder(games[i], dir, sizeof dir);
         bool bundle = games[i]->kind == GAME_MACHO_BUNDLE;
-        snprintf(path, sizeof path, "%s/%s", dir, games[i]->exe);
-        bool loaded = e[i].art && (bundle ? picker_load_bundle_art(dir, e[i].art, err, sizeof err)
-                                          : picker_load_art(path, e[i].art, err, sizeof err));
+        bool loaded = false;
+        if (e[i].art && have_self && picker_bundled_art(self, games[i]->id, path, sizeof path) &&
+            !(loaded = picker_load_icon(path, e[i].art, err, sizeof err)))
+            log_msg("picker: %s", err); /* the game's own art instead */
+        if (e[i].art && !loaded) {
+            snprintf(path, sizeof path, "%s/%s", dir, games[i]->exe);
+            loaded = bundle ? picker_load_bundle_art(dir, e[i].art, err, sizeof err)
+                            : picker_load_art(path, e[i].art, err, sizeof err);
+        }
         if (!loaded) {
             log_msg("picker: %s", e[i].art ? err : "out of memory");
             free(e[i].art);

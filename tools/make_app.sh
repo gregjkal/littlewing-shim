@@ -11,7 +11,8 @@
 # and the oldest macOS it claims to run on is the newest any of its binaries
 # needs (a release builds them all for macOS 14; see tools/release.sh).
 # Resources/Licenses holds this project's license and the bundled libraries',
-# and Resources/hd-art the HD art (src/hd.h).
+# Resources/hd-art the HD art (src/hd.h), and Resources/picker-art the
+# picker's card for each game (src/picker.h).
 # With LOONY_SPARKLE (a folder from tools/sparkle.sh), as a release has, the
 # app updates itself: it bundles Sparkle.framework, and its Info.plist names
 # the update feed (the latest release's appcast.xml), the public key that
@@ -40,6 +41,8 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resourc
 cp "$bin" "$app/Contents/MacOS/loony"
 # The HD art (hd-art/<game id>): the app plays a game in HD when it has art for it.
 cp -R "$here/../hd-art" "$app/Contents/Resources/hd-art"
+# The picker's cards (picker-art/<game id>.png): the download page's thumbnails.
+cp -R "$here/../picker-art" "$app/Contents/Resources/picker-art"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

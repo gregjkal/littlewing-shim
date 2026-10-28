@@ -3,6 +3,7 @@ build-*/
 *.png
 !/tools/AppIcon.icon/Assets/*.png
 !/hd-art/**/*.png
+!/picker-art/*.png
 /game/
 .DS_Store
 .claude/worktrees/
