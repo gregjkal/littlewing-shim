@@ -23,6 +23,7 @@ static const char *const names[] = {
     "MenuSelect", "MenuKey", "MenuEvent", "IsCmdChar", "GetCCursor", "InitMenus",
     "GetMenuItemText", "CheckItem", "InsertMenuItem", "DeleteMenuItem", "AppendResMenu",
     "EnableItem", "DisableItem", "OpenDeskAcc", "SystemClick", "SystemEdit", "WaitNextEvent",
+    "Button",
 };
 
 /* ---- a resource fork: File (MENU 128), Operation (MENU 129), crsr 128 ---- */
@@ -219,6 +220,21 @@ TEST(menumgr_an_item_chosen_on_the_host_comes_as_a_command_key) {
     menumgr_choose(128, 3); /* disabled: nothing */
     menumgr_choose(129, 1); /* not in the bar */
     CHECK_EQ(next_key_down(), 0);
+}
+
+/* A choice the game never takes (it played on for 2 seconds without
+   reading events or the button) is forgotten: a Cmd-Z typed later is no
+   item's, not the dropped choice of an item without a key of its own. */
+TEST(menumgr_a_dropped_choice_is_forgotten) {
+    setup();
+    uint32_t file = call_import("GetMenu", 1, 128u);
+    call_import("InsertMenu", 2, file, 0u);
+    call_import("InsertMenuItem", 3, file, scratch(256), 3u); /* an empty fourth item, no key */
+    menumgr_choose(128, 4); /* sent as Cmd-Z */
+    misc_wait(121 / 60.0);
+    CHECK_EQ(call_import("Button", 0), 0); /* drops it */
+    CHECK_EQ(next_key_down(), 0);
+    CHECK_EQ(call_import("MenuKey", 1, (uint32_t)'z'), 0);
 }
 
 TEST(menumgr_the_menu_bar_shows_until_hidden) {

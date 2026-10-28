@@ -2843,6 +2843,19 @@ TEST(run_angel_egg_quits_from_its_own_menu) {
     CHECK(!strstr(out, "quit Apple Event"));
 }
 
+/* Its File menu's Quit (MENU 134), chosen from the host's menu bar during
+   a game, when it reads no events: the shim's click pauses it, as a click
+   did on a Mac, and its event loop takes the Quit. */
+TEST(run_angel_egg_quits_from_the_host_menu_during_a_game) {
+    SKIP_UNLESS_AE();
+    char out[32768];
+    setenv("LOONY_EXIT_AFTER", "2600", 1);
+    int status = run_script_in(test_ae_app(), "1200 menu 131 1\n1800 menu 134 1\n", NULL, NULL, 0, out, sizeof out);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: main returned ");
+    CHECK(!strstr(out, "exiting after"));
+}
+
 /* Cmd-Q (the script's quit) at its attract mode: the quit Apple Event, and
    its main returns. */
 TEST(run_angel_egg_quits_on_the_quit_apple_event) {
@@ -2921,6 +2934,26 @@ TEST(run_golden_logres_takes_a_practice_table_from_its_menu) {
     CHECK_EQ(status, 0);
     CHECK_EQ(shots[0], 0x6f3b6d72u); /* Fisher King's table */
     CHECK_EQ(shots[1], 0x619b3f75u); /* Land's End's */
+}
+
+/* Game Controls (item 13) chosen from the host's menu bar during a game,
+   when it reads no events: the shim's click pauses it, and the choice,
+   held past the FlushEvents its pause makes, opens DLOG 600. Its demo
+   alerts are answered with Return, as below. */
+TEST(run_golden_logres_takes_a_menu_choice_during_a_game) {
+    SKIP_UNLESS_GL();
+    real_alerts = true; /* LOONY_AUTO_ALERTS can't answer DLOG 600 */
+    char out[32768];
+    setenv("LOONY_EXIT_AFTER", "1800", 1);
+    int status = run_script_in(test_gl_app(),
+                               "100 down return\n104 up return\n200 down return\n204 up return\n"
+                               "700 down esc\n704 up esc\n820 down esc\n824 up esc\n1000 menu 131 1\n"
+                               "1600 menu 131 13\n",
+                               NULL, NULL, 0, out, sizeof out);
+    real_alerts = false;
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "GetNewDialog 600");
+    CHECK(!strstr(out, "dropping"));
 }
 
 /* Its Game Controls (item 13) asks for a key for each of six buttons in
