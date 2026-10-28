@@ -29,6 +29,12 @@ typedef struct {
     const char *exe;         /* the program's path in that folder */
     game_kind kind;
     int screen_width, screen_height; /* the emulated display's size at launch */
+    /* Where it keeps its license (license.h): NULL for "user email" and
+       "user id" in its preferences, or a file of license_size bytes in its
+       save folder, the e-mail address at 0 and the key code at
+       license_key_at, each ended by a zero byte. */
+    const char *license_file;
+    int license_size, license_key_at;
 } game_info;
 
 size_t game_count(void);

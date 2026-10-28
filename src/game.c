@@ -14,25 +14,27 @@
 
 static const game_info games[] = {
     {"loony-labyrinth", "Loony Labyrinth", "Loony Labyrinth", "LOONY LABYRINTH 3.0.1",
-     GAME_PEF_FOLDER, 800, 600},
+     GAME_PEF_FOLDER, 800, 600, NULL, 0, 0},
     {"crystal-caliburn", "Crystal Caliburn", "Crystal Caliburn", "CRYSTAL CALIBURN 3.0.1",
-     GAME_PEF_FOLDER, 800, 600},
+     GAME_PEF_FOLDER, 800, 600, NULL, 0, 0},
     {"monster-fair", "MONSTER FAIR", "MONSTER FAIR.app", "Contents/MacOS/MONSTER FAIR",
-     GAME_MACHO_BUNDLE, 800, 600},
-    {"jinni-zeala", "Jinni Zeala", "Jinni Zeala", "JINNI ZEALA 1.2.2", GAME_PEF_FOLDER, 800, 600},
+     GAME_MACHO_BUNDLE, 800, 600, NULL, 0, 0},
+    {"jinni-zeala", "Jinni Zeala", "Jinni Zeala", "JINNI ZEALA 1.2.2", GAME_PEF_FOLDER, 800, 600,
+     NULL, 0, 0},
     /* Its table is drawn for 768 lines, and it plays at the display's size. */
     {"mad-daedalus", "Mad Daedalus", "Mad Daedalus.app", "Contents/MacOS/Mad Daedalus",
-     GAME_MACHO_BUNDLE, 1024, 768},
+     GAME_MACHO_BUNDLE, 1024, 768, NULL, 0, 0},
     {"angel-egg", "Angel Egg", "Angel Egg.app", "Contents/MacOS/Angel Egg", GAME_MACHO_BUNDLE, 1024,
-     768},
+     768, "Angel Egg IE Registration", 320, 0x100},
     /* It takes the screen at 1024x768 itself (BeginFullScreen). */
     {"golden-logres", "Golden Logres", "Golden Logres.app", "Contents/MacOS/Golden Logres",
-     GAME_MACHO_BUNDLE, 1024, 768},
+     GAME_MACHO_BUNDLE, 1024, 768, "Golden Logres 3.0 Registration", 320, 0x100},
     {"fairy-tower", "FAIRY TOWER", "FAIRY TOWER.app", "Contents/MacOS/FAIRY TOWER",
-     GAME_MACHO_BUNDLE, 1024, 768},
+     GAME_MACHO_BUNDLE, 1024, 768, NULL, 0, 0},
     /* A 13-inch Mac's screen: it centers its 580x443 window there, and its
        alerts are laid out for it (ALRT 900 reaches x 611). */
-    {"tristan", "Tristan", "TRISTAN IE", "TRISTAN IE 2.5.1", GAME_PEF_FOLDER, 640, 480},
+    {"tristan", "Tristan", "TRISTAN IE", "TRISTAN IE 2.5.1", GAME_PEF_FOLDER, 640, 480,
+     "TRISTAN IE Registration", 256, 0x80},
 };
 #define NGAMES (sizeof games / sizeof games[0])
 

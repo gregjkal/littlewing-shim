@@ -25,6 +25,7 @@
 #include "gamestart.h"
 #include "guest_mem.h"
 #include "hd.h"
+#include "license.h"
 #include "libc.h"
 #include "loader.h"
 #include "measure.h"
@@ -454,6 +455,8 @@ int main(int argc, char **argv) {
     bool have_data = files_data_dir(game->id, data_dir, sizeof data_dir);
     if (!have_data)
         log_msg("neither LOONY_DATA_DIR nor HOME is set: nothing will be saved");
+    if (have_data && (!replaying || !*replaying)) /* a replay's saves are its recording's */
+        license_save_default(game, data_dir);
     bool loony = strcmp(game->id, "loony-labyrinth") == 0; /* replays are its alone, for now */
     if (loony && !clip_on())
         menu_add_replays();

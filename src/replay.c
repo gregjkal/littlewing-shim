@@ -20,6 +20,7 @@
 #include "cf.h"
 #include "files.h"
 #include "game.h"
+#include "license.h"
 #include "snapshot.h"
 #include "plist.h"
 #include "util.h"
@@ -43,7 +44,7 @@
 
 /* The preferences that hold the license (the classic games' names). A
    shared copy has them empty, and a replay of it fills them in from
-   LOONY_REPLAY_LICENSE's. */
+   LOONY_REPLAY_LICENSE's, or with the one every game starts with. */
 static const char *const license_keys[] = {"user email", "user id"};
 #define NLICENSE_KEYS (sizeof license_keys / sizeof license_keys[0])
 
@@ -737,31 +738,28 @@ static uint8_t *with_license(const uint8_t *prefs, size_t len, plist_entry *from
 }
 
 /* A shared replay's preferences with the viewer's license in them (from
-   LOONY_REPLAY_LICENSE), malloc'd; NULL, with err, without one. */
+   LOONY_REPLAY_LICENSE), or, when the viewer has none, the one every game
+   starts with (license.h), malloc'd; NULL, with err, if they can't be
+   written. */
 static uint8_t *licensed_prefs(size_t *len, char *err, size_t errlen) {
     const char *from = getenv("LOONY_REPLAY_LICENSE");
-    const game_info *g = game_by_id(R.h.game_id);
-    const char *title = g ? g->title : R.h.game_id;
-    if (!from || !*from) {
-        snprintf(err, errlen,
-                 "this replay was shared without a license: set LOONY_REPLAY_LICENSE to the "
-                 "preferences of a registered %s",
-                 title);
-        return NULL;
-    }
-    plist_entry *e;
-    uint32_t n;
+    plist_entry *e = NULL;
+    uint32_t n = 0;
     char perr[256];
-    plist_status st = plist_read(from, &e, &n, perr, sizeof perr);
-    bool licensed = st == PLIST_OK && has_license(e, n);
-    uint8_t *out = licensed ? with_license(R.h.prefs, R.h.prefs_len, e, n, len, err, errlen) : NULL;
+    plist_status st = from && *from ? plist_read(from, &e, &n, perr, sizeof perr) : PLIST_MISSING;
+    uint8_t *out;
+    if (st == PLIST_OK && has_license(e, n)) {
+        out = with_license(R.h.prefs, R.h.prefs_len, e, n, len, err, errlen);
+    } else {
+        if (from && *from)
+            log_msg("replay: %s holds no license%s%s, so the default one is used", from,
+                    st == PLIST_OK ? "" : ": ", st == PLIST_OK ? "" : perr);
+        plist_entry def[] = {{(char *)license_keys[0], false, 0, LICENSE_EMAIL},
+                             {(char *)license_keys[1], false, 0, LICENSE_KEY}};
+        out = with_license(R.h.prefs, R.h.prefs_len, def, NLICENSE_KEYS, len, err, errlen);
+    }
     if (st == PLIST_OK)
         plist_free(e, n);
-    if (!licensed)
-        snprintf(err, errlen,
-                 "this replay was shared without a license: register %s in LittleWing to watch "
-                 "it (%s has none)",
-                 title, from);
     return out;
 }
 
@@ -1251,22 +1249,6 @@ bool replay_check(const char *path, char *err, size_t errlen) {
     if (ok && !g) {
         snprintf(err, errlen, "it is of a game LittleWing doesn't know");
         ok = false;
-    }
-    if (ok && (h.flags & FLAG_SHARED)) {
-        /* Where replay_open will look, once LOONY_DATA_DIR is unset. */
-        const char *home = getenv("HOME");
-        char prefs[PATH_MAX], perr[256];
-        plist_entry *e;
-        uint32_t n;
-        snprintf(prefs, sizeof prefs, "%s/Library/Application Support/littlewing-shim/%s/prefs.plist",
-                 home ? home : "", h.game_id);
-        plist_status st = plist_read(prefs, &e, &n, perr, sizeof perr);
-        ok = st == PLIST_OK && has_license(e, n);
-        if (st == PLIST_OK)
-            plist_free(e, n);
-        if (!ok)
-            snprintf(err, errlen, "it was shared without a license: register %s in LittleWing to watch it",
-                     g->title);
     }
     free(data);
     return ok;
