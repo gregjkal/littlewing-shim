@@ -472,13 +472,14 @@ const game_info *picker_run(const game_info *const *games, int n) {
         char dir[PATH_MAX], path[PATH_MAX + 64], err[512];
         game_folder(games[i], dir, sizeof dir);
         bool bundle = games[i]->kind == GAME_MACHO_BUNDLE;
-        bool loaded;
-        if (have_self && picker_bundled_art(self, games[i]->id, path, sizeof path))
-            loaded = e[i].art && picker_load_icon(path, e[i].art, err, sizeof err);
-        else {
+        bool loaded = false;
+        if (e[i].art && have_self && picker_bundled_art(self, games[i]->id, path, sizeof path) &&
+            !(loaded = picker_load_icon(path, e[i].art, err, sizeof err)))
+            log_msg("picker: %s", err); /* the game's own art instead */
+        if (e[i].art && !loaded) {
             snprintf(path, sizeof path, "%s/%s", dir, games[i]->exe);
-            loaded = e[i].art && (bundle ? picker_load_bundle_art(dir, e[i].art, err, sizeof err)
-                                         : picker_load_art(path, e[i].art, err, sizeof err));
+            loaded = bundle ? picker_load_bundle_art(dir, e[i].art, err, sizeof err)
+                            : picker_load_art(path, e[i].art, err, sizeof err);
         }
         if (!loaded) {
             log_msg("picker: %s", e[i].art ? err : "out of memory");

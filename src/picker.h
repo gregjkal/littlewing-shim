@@ -8,27 +8,28 @@
 /* The game picker LittleWing.app shows when more than one game is
    installed: each game's thumbnail from LittleWing's download page
    (picker-art/<game id>.png, bundled in the app's Resources, 288x288 so it
-   fills a card) on a square card, or, for a game without one or a loony run outside
-   the app, its title picture (PICT 800 in its own resource fork,
-   read from the user's copy) on a card, its name under it, and the
-   selection marked in gold. A bundle game (MONSTER FAIR, Mad Daedalus,
-   Golden Logres, Angel Egg, FAIRY TOWER) has no title picture the shim
-   reads: its card shows its icon centered, appl.png or, without one, the
-   128x128 image in app.icns. Neither does a classic game without PICT 800
-   (Jinni Zeala), whose card shows the 128x128 icon in its resource fork's
-   icns 128, and Tristan, whose PICT 800 is its credits and which has no
-   icns, shows its title, PICT 900; a title picture is reduced to fit the
-   card and centered on it. Each card is a square centered in a 4:3 slot
-   as tall as it. Two games get two large slots side by side (384x288);
-   three get three smaller ones (240x180) in a row; four get two rows of
-   two (224x168), five and six two rows of three, seven a row of four over
-   three and eight two rows of four (176x132), and nine three rows of
-   three (160x120, the columns 272 pixels apart, the heading and the hint
-   nearer the screen's top and bottom), each row centered, the art reduced
-   to fit. A name wider than its column (slot and gap), or with four
-   across wider than its slot, breaks onto two lines at a space; with nine, every name fits its column
-   on one line, 24 pixels or more from its neighbour's. This file draws and
-   reads input; picker_run (Task 5) shows it.
+   fills a card) on a square card, or, for a game without one, one whose
+   thumbnail can't be read, or a loony run outside the app, its title
+   picture (PICT 800 in its own resource fork, read from the user's copy);
+   its name under it, and the selection marked in gold. A bundle game
+   (MONSTER FAIR, Mad Daedalus, Golden Logres, Angel Egg, FAIRY TOWER) has
+   no title picture the shim reads: its card shows its icon centered,
+   appl.png or, without one, the 128x128 image in app.icns. Neither does a
+   classic game without PICT 800 (Jinni Zeala), whose card shows the
+   128x128 icon in its resource fork's icns 128, and Tristan, whose PICT
+   800 is its credits and which has no icns, shows its title, PICT 900; a
+   title picture is reduced to fit the card and centered on it. Each card
+   is a square centered in a 4:3 slot as tall as it. Two games get two
+   large slots side by side (384x288); three get three smaller ones
+   (240x180) in a row; four get two rows of two (224x168), five and six two
+   rows of three, seven a row of four over three and eight two rows of four
+   (176x132), and nine three rows of three (160x120, the columns 272 pixels
+   apart, the heading and the hint nearer the screen's top and bottom),
+   each row centered, the art reduced to fit. A name wider than its column
+   (slot and gap), or with four across wider than its slot, breaks onto two
+   lines at a space; with nine, every name fits its column on one line, 24
+   pixels or more from its neighbour's. This file draws and reads input;
+   picker_run (Task 5) shows it.
    Pixels here are QuickDraw 32-bit: big-endian xRGB. */
 
 #define PICKER_W 800
@@ -42,9 +43,9 @@ typedef struct {
     uint8_t *art; /* PICKER_ART_W x PICKER_ART_H, or NULL for a plain card */
 } picker_entry;
 
-/* Reads the program's resource fork (exe_path/..namedfork/rsrc), draws its
-   PICT 800 and reduces it to fit art, centered; a fork without a 512x384 PICT 800 but
-   with an icns 128 gets that icon's card instead, and one with neither
+/* Reads the program's resource fork (exe_path/..namedfork/rsrc), draws
+   its PICT 800 and reduces it to fit art, centered; a fork without a
+   512x384 PICT 800 but with an icns 128 gets that icon's card instead, and one with neither
    (Tristan) its title, PICT 900, reduced to fit and centered. False, with
    err naming the file, if the fork or the picture can't be read, it has
    none of the three, or the icon has no 128x128 image.
@@ -57,9 +58,10 @@ bool picker_load_art(const char *exe_path, uint8_t *art, char *err, size_t errle
    centered, into art. False if either is missing or malformed. */
 bool picker_load_icns(const uint8_t *icns, size_t len, uint8_t *art);
 
-/* A bundle game's card: the PNG at png_path (at most PICKER_ART_W x
-   PICKER_ART_H), centered on the plain card color, into art. False, with
-   err saying why, if it can't be read or is too large. */
+/* A card from a PNG (a bundled thumbnail, or a bundle game's appl.png):
+   the PNG at png_path (at most PICKER_ART_W x PICKER_ART_H), centered on
+   the plain card color, into art. False, with err saying why, if it can't
+   be read or is too large. */
 bool picker_load_icon(const char *png_path, uint8_t *art, char *err, size_t errlen);
 
 /* A bundle game's card from its .app at app: Contents/Resources/appl.png

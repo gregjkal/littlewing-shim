@@ -3140,7 +3140,7 @@ TEST(run_the_picker_frame_shows_both_games) {
     char got[16];
     snprintf(got, sizeof got, "%08x", fnv1a32(png, len));
     free(png);
-    CHECK_STR(got, "d4a5ad2a"); /* approved by the user on 2026-10-05 */
+    CHECK_STR(got, "d4a5ad2a"); /* recorded on 2026-10-27, square cards */
 }
 
 /* Three games: three cards in a row, MONSTER FAIR's showing its icon. Picked,
@@ -3186,7 +3186,7 @@ TEST(run_the_picker_shows_three_games_and_starts_monster_fair) {
     CHECK_CONTAINS(out, "loony: nib window Welcome: command 'ok  ' (Play Demo)");
     CHECK_CONTAINS(out, "loony: main returned 0");
     CHECK(!strstr(out, "back to the picker")); /* the host's quit (Cmd-Q) quits the app */
-    CHECK_STR(got, "398bc415"); /* approved by the user on 2026-10-09 */
+    CHECK_STR(got, "398bc415"); /* recorded on 2026-10-27, square cards */
 }
 
 /* Four games: two rows of two cards, Jinni Zeala's showing its icon.
@@ -3470,6 +3470,84 @@ TEST(run_as_the_app_logs_to_library_logs) {
     snprintf(log, sizeof log, "%s/Library/Logs/littlewing-shim/loony.previous.log", app_home);
     CHECK(access(log, F_OK) == 0);
     test_remove_tree(app_home);
+}
+
+static void run_app_picker(void *unused) {
+    (void)unused;
+    setenv("HOME", app_home, 1);
+    setenv("LOONY_APPS_DIR", apps_dir, 1);
+    setenv("LOONY_DATA_DIR", run_data, 1);
+    setenv("LOONY_PICK", "quit", 1);
+    setenv("LOONY_PICKER_SHOT", pick_shot, 1);
+    execl(app_bin, app_bin, (char *)NULL);
+    _exit(127);
+}
+
+/* As the app, the picker shows the thumbnails in its Resources/picker-art;
+   a thumbnail that can't be read gives way to the game's own art. The two
+   games are empty programs, so this needs neither installed. */
+TEST(run_the_app_picker_shows_its_bundled_thumbnails) {
+    test_tmp_dir(app_home, sizeof app_home);
+    test_tmp_dir(apps_dir, sizeof apps_dir);
+    test_tmp_dir(run_data, sizeof run_data);
+    tmp_name(pick_shot, sizeof pick_shot, "picker");
+    char dir[1300], path[1400], cmd[2800];
+    snprintf(dir, sizeof dir, "%s/LittleWing.app/Contents/MacOS", app_home);
+    CHECK(make_dirs(dir));
+    snprintf(app_bin, sizeof app_bin, "%s/loony", dir);
+    snprintf(cmd, sizeof cmd, "cp '%s' '%s'", LOONY_BIN, app_bin);
+    CHECK(system(cmd) == 0);
+    snprintf(dir, sizeof dir, "%s/LittleWing.app/Contents/Resources/picker-art", app_home);
+    CHECK(make_dirs(dir));
+    snprintf(path, sizeof path, "%s/loony-labyrinth.png", dir);
+    CHECK(symlink(LOONY_SRC_DIR "/picker-art/loony-labyrinth.png", path) == 0);
+    snprintf(path, sizeof path, "%s/crystal-caliburn.png", dir);
+    FILE *f = fopen(path, "w");
+    CHECK(f != NULL);
+    fputs("not a PNG", f);
+    fclose(f);
+    const char *programs[2][2] = {{"Loony Labyrinth", "LOONY LABYRINTH 3.0.1"},
+                                  {"Crystal Caliburn", "CRYSTAL CALIBURN 3.0.1"}};
+    for (int i = 0; i < 2; i++) {
+        snprintf(dir, sizeof dir, "%s/%s", apps_dir, programs[i][0]);
+        CHECK(make_dirs(dir));
+        snprintf(path, sizeof path, "%s/%s", dir, programs[i][1]);
+        CHECK((f = fopen(path, "w")) != NULL);
+        fclose(f);
+    }
+    char out[4096];
+    int status = test_run_child(run_app_picker, NULL, out, sizeof out);
+    snprintf(path, sizeof path, "%s/Library/Logs/littlewing-shim/loony.log", app_home);
+    size_t len = 0;
+    char *log = (char *)read_file(path, &len);
+    log = log ? realloc(log, len + 1) : NULL;
+    if (log)
+        log[len] = '\0';
+    cgimage_pixels shot = {0}, card = {0};
+    char err[256];
+    bool decoded = cgimage_decode_png(pick_shot, &shot, err, sizeof err) &&
+                   cgimage_decode_png(LOONY_SRC_DIR "/picker-art/loony-labyrinth.png", &card, err, sizeof err);
+    /* Two cards: the first square's 288x288 art at (58, 140), the thumbnail as it is. */
+    bool thumbnail = decoded && shot.width == 800 && card.width == 288;
+    for (int y = 0; thumbnail && y < 288; y += 7)
+        thumbnail = memcmp(shot.xrgb + ((size_t)(140 + y) * 800 + 58) * 4, card.xrgb + (size_t)y * 288 * 4,
+                           288 * 4) == 0;
+    free(shot.xrgb);
+    free(card.xrgb);
+    unlink(pick_shot);
+    pick_shot[0] = '\0';
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    test_remove_tree(apps_dir);
+    test_remove_tree(app_home);
+    CHECK_EQ(status, 0);
+    CHECK(log != NULL);
+    CHECK_CONTAINS(log, "picker: quit");
+    CHECK(thumbnail);
+    CHECK_CONTAINS(log, "crystal-caliburn.png"); /* the bad thumbnail, */
+    CHECK_CONTAINS(log, "CRYSTAL CALIBURN 3.0.1"); /* then the game's own art, tried */
+    CHECK(!strstr(log, "LOONY LABYRINTH 3.0.1"));  /* and never for the good one */
+    free(log);
 }
 
 static char bundle_bin[1300];
