@@ -11,39 +11,21 @@ the 1992 table, a classic Mac OS program from before Carbon). It
 emulates their CPU (Unicorn) and reimplements the Mac OS calls they make in C.
 
 This repo contains no game files: you need your own copies of the games.
-You can find them on Littlewing's
-[download page](http://www.littlewingpinball.com/doc/en/downloads/index.html).
+You can find them on Littlewing's [download
+page](http://www.littlewingpinball.com/doc/en/downloads/index.html).
 
 This is an unofficial project, not made or endorsed by LittleWing.
 
 ## Play
 
-A release needs an Apple Silicon Mac with macOS 14 (Sonoma) or later. An app you build
-yourself needs the macOS you built it on, or later, because Homebrew's Unicorn
-and SDL3 do. It plays the games from these places, which must hold the game's
-file:
-
-| Game | Where | File | Download |
-|---|---|---|---|
-| Loony Labyrinth | `/Applications/Loony Labyrinth` | `LOONY LABYRINTH 3.0.1` | `loony_labyrinth_301a.dmg` |
-| Crystal Caliburn | `/Applications/Crystal Caliburn` | `CRYSTAL CALIBURN 3.0.1` | `crystal_caliburn_301a.dmg` |
-| Jinni Zeala | `/Applications/Jinni Zeala` | `JINNI ZEALA 1.2.2` | the Mac version, 1.2.2 |
-| MONSTER FAIR | `/Applications/MONSTER FAIR.app` | `Contents/MacOS/MONSTER FAIR` | the Mac OS X version, 1.2.5 (the only version supported) |
-| Mad Daedalus | `/Applications/Mad Daedalus.app` | `Contents/MacOS/Mad Daedalus` | the Mac OS X version, 1.1.9 |
-| Angel Egg | `/Applications/Angel Egg.app` | `Contents/MacOS/Angel Egg` | the Mac OS X version, 3.0.1 |
-| Golden Logres | `/Applications/Golden Logres.app` | `Contents/MacOS/Golden Logres` | the Mac OS X version, 3.0.4 |
-| FAIRY TOWER | `/Applications/FAIRY TOWER.app` | `Contents/MacOS/FAIRY TOWER` | the Mac OS X version, 1.1.7 |
-| Tristan | `/Applications/TRISTAN IE` | `TRISTAN IE 2.5.1` | the Mac version, 2.5.1 |
+Games must be installed and in the Applications directory or a
+subdirectory within Applications.
 
 To get a game, download it from LittleWing's [download
-page](http://www.littlewingpinball.com/doc/en/downloads/index.html), open the
-disk image, and drag the game onto the Applications shortcut next to it: the
-game's folder for Loony Labyrinth, Crystal Caliburn, Jinni Zeala and Tristan, the app
-itself for MONSTER FAIR, Mad Daedalus, Angel Egg, Golden Logres and FAIRY TOWER. Keep its name. To keep
-the games together, put them in a folder of their own in Applications instead,
+page](http://www.littlewingpinball.com/doc/en/downloads/index.html).
+You can keep the games together in a folder within Applications instead,
 such as `/Applications/LittleWing Games/Loony Labyrinth`; any folder name
-works, one level down. A game directly in Applications is played over a copy
-in a folder. None of these apps runs on Apple Silicon by itself;
+works, one level down. None of these apps runs on Apple Silicon by itself;
 LittleWing.app runs them.
 
 Download `LittleWing-<version>.zip` from
