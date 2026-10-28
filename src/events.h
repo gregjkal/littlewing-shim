@@ -98,11 +98,18 @@ void events_post_key(int scancode, bool down, bool repeat);
    and GetGlobalMouse. The Carbon games use none. */
 void events_post_mouse(int x, int y, bool down);
 
-/* A Command-key down typing chr (in lower case), posted for the game
-   alone: no key is held, and none comes up. How a choice in the host's
-   menu bar reaches a classic game's menus. False if a modal dialog is up
-   or the queue is full. (A quit to a game that takes no Apple Events is
-   such a Cmd-Q too, posted even under a dialog, for once it closes.) */
+/* A Command-key down typing chr (in lower case), for the game alone: no
+   key is held, and none comes up. How a choice in the host's menu bar
+   reaches a classic game's menus. It is posted when the game next takes an
+   event that may be a key down (WaitNextEvent, GetNextEvent), so a
+   FlushEvents before then can't lose it. A game playing in a loop of its
+   own reads no events, so if it hasn't taken one 2 ticks after the choice,
+   Button reads a quick click, which pauses Angel Egg and Golden Logres and
+   brings back their event loop, as a click did on a Mac (not while a modal
+   dialog is up). A choice not taken in 2 seconds is dropped, and a later
+   one replaces it. False if a modal dialog is up. (A quit to a game that
+   takes no Apple Events is a Cmd-Q too, posted at once even under a
+   dialog, for once it closes.) */
 bool events_post_command_key(uint8_t chr);
 
 /* Whether a modal dialog is up and taking the input. */
