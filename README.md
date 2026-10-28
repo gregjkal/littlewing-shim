@@ -117,12 +117,12 @@ Restore Game). The game hides them, so they appear in the Mac's menu bar
 instead, after the app menu; in full screen, move the pointer to the top of
 the screen to show it. Each menu shows what the game has enabled and
 checked when it opens, and its keyboard shortcuts, and choosing an item does
-what it does in the game. Choosing one while a ball is in play pauses the
-game first, as clicking did on a Mac, so Angel Egg's File > Quit ends the
-game and goes back to the game picker. An item the game turns off when it
-pauses (Golden Logres's New Game and practice tables) only pauses it.
-Display Options stays greyed out: it only sets the screen size, which
-LittleWing chooses itself.
+what it does in the game. In Angel Egg and Golden Logres, choosing one
+while a ball is in play pauses the game first, as clicking did on a Mac, so
+Angel Egg's File > Quit ends the game and goes back to the game picker. An
+item the game turns off when it pauses (Golden Logres's New Game and
+practice tables) only pauses it. Display Options stays greyed out: it only
+sets the screen size, which LittleWing chooses itself.
 
 The **Sound** menu in the menu bar has a volume slider, from silent at the left
 to the game's own level at the right. It starts at 80%, 6 dB below the game's

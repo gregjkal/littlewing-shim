@@ -327,8 +327,8 @@ TEST(classic_events_a_menu_choice_not_taken_is_dropped) {
 }
 
 /* A choice held from before a dialog opened clicks nothing under it, where
-   a filter may poll Button, and waits for the game's next event call after
-   it. A later choice replaces a held one. */
+   a filter may poll Button, and waits past it for an event call that can
+   take a key down. A later choice replaces a held one. */
 TEST(classic_events_a_held_menu_choice_waits_out_a_dialog) {
     setup();
     take_launch_events();
@@ -341,6 +341,8 @@ TEST(classic_events_a_held_menu_choice_waits_out_a_dialog) {
     record e;
     CHECK(!wne(EVERY, &e));
     events_set_modal(NULL);
+    CHECK(!wne(1u << 1, &e)); /* mouse downs only: it waits for a call that can take it */
+    call_import("FlushEvents", 2, EVERY, 0u);
     CHECK(wne(EVERY, &e));
     CHECK_EQ(e.what, 3);
     CHECK_EQ(e.message, 0x0C71u);

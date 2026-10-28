@@ -1224,7 +1224,7 @@ static bool classic_activate(uint32_t mask, uint32_t rec, bool take) {
    with take, events that have no EventRecord go too. False if there is
    none: rec then gets a null event. */
 static bool classic_next(uint32_t mask, uint32_t rec, bool take) {
-    if (take)
+    if (take && (mask & 1u << CL_KEY_DOWN)) /* one that can take its key */
         take_menu_choice();
     if (classic_activate(mask, rec, take))
         return true;
