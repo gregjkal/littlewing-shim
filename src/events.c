@@ -378,6 +378,7 @@ static bool menu_choice_waits(void) {
     if (M.pending && misc_ticks() - M.since > MENU_CHOICE_TICKS) {
         log_msg("menu: the game didn't take the choice in %d ticks; dropping it", MENU_CHOICE_TICKS);
         M.pending = false;
+        menumgr_forget_choice();
     }
     return M.pending;
 }
@@ -386,7 +387,10 @@ static bool menu_choice_waits(void) {
 static void take_menu_choice(void) {
     if (!E.modal && menu_choice_waits()) {
         M.pending = false;
-        post_command_key(M.chr);
+        if (!post_command_key(M.chr)) {
+            log_msg("menu: the event queue is full; dropping the choice");
+            menumgr_forget_choice();
+        }
     }
 }
 
@@ -395,7 +399,7 @@ static void take_menu_choice(void) {
    it and brings back its menu bar and event loop, as on a Mac, where the
    player clicked to reach the menus. */
 static bool menu_click(void) {
-    if (!menu_choice_waits())
+    if (!menu_choice_waits() || E.modal) /* a dialog's filter may poll Button */
         return false;
     uint32_t now = misc_ticks();
     if (now - M.since < MENU_CLICK_AFTER_TICKS)

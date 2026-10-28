@@ -69,3 +69,7 @@ bool menumgr_item(int16_t menu_id, int item, menumgr_item_info *out);
    Only a game with menus gets here, which leaves out Loony Labyrinth, the
    one game that records, so the choice isn't recorded. */
 void menumgr_choose(int16_t menu_id, int item);
+
+/* The choice's Command-key will never reach the game (events.c dropped
+   it), so a Command-key typed later stands for its own item again. */
+void menumgr_forget_choice(void);

@@ -326,6 +326,27 @@ TEST(classic_events_a_menu_choice_not_taken_is_dropped) {
     CHECK(!wne(EVERY, &e));
 }
 
+/* A choice held from before a dialog opened clicks nothing under it, where
+   a filter may poll Button, and waits for the game's next event call after
+   it. A later choice replaces a held one. */
+TEST(classic_events_a_held_menu_choice_waits_out_a_dialog) {
+    setup();
+    take_launch_events();
+    CHECK(events_post_command_key('n'));
+    CHECK(events_post_command_key('q')); /* replaces it */
+    static const ev_modal_sink sink = {count_key, count_click, no_text};
+    events_set_modal(&sink);
+    misc_wait(3 / 60.0);
+    CHECK_EQ(call_import("Button", 0), 0);
+    record e;
+    CHECK(!wne(EVERY, &e));
+    events_set_modal(NULL);
+    CHECK(wne(EVERY, &e));
+    CHECK_EQ(e.what, 3);
+    CHECK_EQ(e.message, 0x0C71u);
+    CHECK(!wne(EVERY, &e));
+}
+
 /* The same before the game's first event call: Tristan shows its startup
    alerts before it calls WaitNextEvent, and a quit then must still come as
    Cmd-Q, not as an Apple Event it never reads. */

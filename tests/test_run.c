@@ -2936,6 +2936,26 @@ TEST(run_golden_logres_takes_a_practice_table_from_its_menu) {
     CHECK_EQ(shots[1], 0x619b3f75u); /* Land's End's */
 }
 
+/* Game Controls (item 13) chosen from the host's menu bar during a game,
+   when it reads no events: the shim's click pauses it, and the choice,
+   held past the FlushEvents its pause makes, opens DLOG 600. Its demo
+   alerts are answered with Return, as below. */
+TEST(run_golden_logres_takes_a_menu_choice_during_a_game) {
+    SKIP_UNLESS_GL();
+    real_alerts = true; /* LOONY_AUTO_ALERTS can't answer DLOG 600 */
+    char out[32768];
+    setenv("LOONY_EXIT_AFTER", "1800", 1);
+    int status = run_script_in(test_gl_app(),
+                               "100 down return\n104 up return\n200 down return\n204 up return\n"
+                               "700 down esc\n704 up esc\n820 down esc\n824 up esc\n1000 menu 131 1\n"
+                               "1600 menu 131 13\n",
+                               NULL, NULL, 0, out, sizeof out);
+    real_alerts = false;
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "GetNewDialog 600");
+    CHECK(!strstr(out, "dropping"));
+}
+
 /* Its Game Controls (item 13) asks for a key for each of six buttons in
    turn, in DLOG 600, whose filter waits for one with GetKeys while
    ModalDialog runs it; then the game goes on. Its demo alerts are

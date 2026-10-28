@@ -369,9 +369,13 @@ static uint32_t find_key(uint8_t c) {
     if (N.chosen && toupper(c) == toupper(N.chosen_key)) {
         uint32_t chosen = N.chosen;
         N.chosen = 0;
-        menumgr_item_info info; /* the game may have disabled it since */
-        if (!menumgr_item((int16_t)(chosen >> 16), (int)(chosen & 0xFFFF), &info) || !info.enabled)
+        menumgr_item_info info; /* the game may have disabled it since, as Golden Logres's pause does */
+        if (!menumgr_item((int16_t)(chosen >> 16), (int)(chosen & 0xFFFF), &info))
             return 0;
+        if (!info.enabled) {
+            log_msg("menu: the game disabled %s before it read the choice", info.text);
+            return 0;
+        }
         N.hilited = (int16_t)(chosen >> 16);
         return chosen;
     }
@@ -478,6 +482,8 @@ void menumgr_choose(int16_t menu_id, int item) {
         N.chosen_key = key;
     }
 }
+
+void menumgr_forget_choice(void) { N.chosen = 0; }
 
 void menumgr_register(void) {
     trap_register("GetMenu", h_get_menu);
