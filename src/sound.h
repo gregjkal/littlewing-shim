@@ -33,6 +33,10 @@ void sound_init(void);
    recording. */
 void sound_start_output(void);
 
+/* Practice (practice.h), once a replay has gone live: opens the audio
+   device as sound_start_output does for a run that isn't a replay. */
+void sound_go_live(void);
+
 /* The volume the sound is played at, from 0 (silent) to 100 (as the game
    made it); SOUND_DEFAULT_VOLUME until set. It scales what the audio device
    is given, not what is mixed, so a LOONY_WAV recording doesn't change with

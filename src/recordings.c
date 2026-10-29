@@ -12,6 +12,7 @@
 #include "files.h"
 #include "game.h"
 #include "gamestart.h"
+#include "practice.h"
 #include "replay.h"
 #include "util.h"
 #include "watch.h"
@@ -189,6 +190,12 @@ const char *recordings_mark_label(uint32_t ticks, char *buf, size_t cap) {
     return buf;
 }
 
+const char *recordings_practice_label(uint32_t ticks, char *buf, size_t cap) {
+    char t[32];
+    snprintf(buf, cap, "Practice from %s", clip_format_time(ticks, t, sizeof t));
+    return buf;
+}
+
 bool recordings_mark_shown(const recording *r, size_t m) {
     uint32_t s = r->marks[m] / 60;
     return s > 0 && (m == 0 || s != r->marks[m - 1] / 60);
@@ -199,7 +206,8 @@ bool recordings_mark_shown(const recording *r, size_t m) {
 static void clear_env(void) {
     static const char *const clear[] = {"LOONY_GAME", "LOONY_DATA_DIR", "LOONY_RECORD",
                                         "LOONY_CLIP", "LOONY_REPLAY_LICENSE", "LOONY_WATCH_FROM",
-                                        "LOONY_WATCH_SPEED", "LOONY_WATCH_PAUSED", "LOONY_WATCH_IN"};
+                                        "LOONY_WATCH_SPEED", "LOONY_WATCH_PAUSED", "LOONY_WATCH_IN",
+                                        "LOONY_PRACTICE"};
     for (size_t i = 0; i < sizeof clear / sizeof clear[0]; i++)
         unsetenv(clear[i]);
 }
@@ -213,6 +221,16 @@ void recordings_watch_env(const char *path, uint32_t from_ticks) {
         snprintf(v, sizeof v, "%u", from_ticks);
         setenv("LOONY_WATCH_FROM", v, 1);
     }
+}
+
+void recordings_practice_env(const char *path, uint32_t from_ticks) {
+    setenv("LOONY_REPLAY", path, 1);
+    unsetenv("LOONY_WATCH");
+    clear_env();
+    char v[16];
+    snprintf(v, sizeof v, "%u", from_ticks);
+    setenv("LOONY_PRACTICE", v, 1);
+    setenv("LOONY_REPLAY_LICENSE", "default", 1); /* the same start for everyone (replay_share) */
 }
 
 void recordings_leave_env(void) {
@@ -245,6 +263,8 @@ bool recordings_delete(const char *path, recordings_trash_fn trash, char *err, s
         else /* the recording is gone, and the list is no use without it */
             log_msg("recordings: can't move %s to the Trash: %s", list, why);
     }
+    if (practice_path(path, list, sizeof list)) /* a cache, made again from the recording */
+        unlink(list);
     recordings_forget();
     if (watching)
         display_request_close("The recording was moved to the Trash");

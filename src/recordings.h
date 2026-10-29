@@ -52,6 +52,11 @@ const char *recordings_label(const recording *r, bool with_game, char *buf, size
    Returns buf. */
 const char *recordings_mark_label(uint32_t ticks, char *buf, size_t cap);
 
+/* The item under it to practice from the mark (practice.h): "Practice
+   from 3:12.50", to the hundredth, since practice starts at the mark
+   itself. Returns buf. */
+const char *recordings_practice_label(uint32_t ticks, char *buf, size_t cap);
+
 /* Whether r's mark m gets a menu item of its own: not one in the first
    second, which the recording's own item already plays from, nor one in
    the same second as the mark before it, whose item it would repeat. */
@@ -62,6 +67,11 @@ bool recordings_mark_shown(const recording *r, size_t m);
    LOONY_WATCH, LOONY_WATCH_FROM unless it is 0, and none of what the
    last game or replay set (its game, data folder, speed and the like). */
 void recordings_watch_env(const char *path, uint32_t from_ticks);
+
+/* The same, to practice from from_ticks of play in it (practice.h):
+   LOONY_REPLAY and LOONY_PRACTICE, without LOONY_WATCH, and
+   LOONY_REPLAY_LICENSE=default (replay.h). */
+void recordings_practice_env(const char *path, uint32_t from_ticks);
 
 /* Sets up the environment for this program to leave the recording it is
    watching when it restarts: none of recordings_watch_env's variables, nor

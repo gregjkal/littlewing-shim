@@ -167,6 +167,7 @@ void sound_init(void) {
 }
 
 static void play_clock_driven(void);
+static void open_output(void);
 
 static void shutdown_output(void) {
     SND.source = NULL; /* the game has ended: its code doesn't run again */
@@ -199,6 +200,16 @@ void sound_start_output(void) {
     atexit(shutdown_output);
     if (misc_fixed_clock() || replay_playing())
         return;
+    open_output();
+}
+
+void sound_go_live(void) {
+    if (!misc_fixed_clock())
+        open_output();
+}
+
+/* The device: sound_start_output's, or sound_go_live's. */
+static void open_output(void) {
     if (SND.source) {
         play_clock_driven();
         return;

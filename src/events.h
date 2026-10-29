@@ -165,6 +165,10 @@ void events_host_text(const char *utf8);
 void events_host_activation(bool active);
 void events_host_quit(void);
 
+/* Practice (practice.h), going live: every key the replay left held down
+   comes up, so none stays down that the player isn't holding. */
+void events_release_keys(void);
+
 /* Events waiting in the queue. */
 int events_queued(void);
 

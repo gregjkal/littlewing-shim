@@ -13,6 +13,7 @@
 # Resources/Licenses holds this project's license and the bundled libraries',
 # Resources/hd-art the HD art (src/hd.h), and Resources/picker-art the
 # picker's card for each game (src/picker.h).
+# Resources/practice holds the shipped practices (src/practice.h).
 # With LOONY_SPARKLE (a folder from tools/sparkle.sh), as a release has, the
 # app updates itself: it bundles Sparkle.framework, and its Info.plist names
 # the update feed (the latest release's appcast.xml), the public key that
@@ -43,6 +44,8 @@ cp "$bin" "$app/Contents/MacOS/loony"
 cp -R "$here/../hd-art" "$app/Contents/Resources/hd-art"
 # The picker's cards (picker-art/<game id>.png): the download page's thumbnails.
 cp -R "$here/../picker-art" "$app/Contents/Resources/picker-art"
+# The shipped practices (practice/<name>.lwreplay and .practice, src/practice.h).
+cp -R "$here/../practice" "$app/Contents/Resources/practice"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

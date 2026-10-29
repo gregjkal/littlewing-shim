@@ -14,6 +14,7 @@
 #include "game.h"
 #include "gamestart.h"
 #include "menumgr.h"
+#include "practice.h"
 #include "recordings.h"
 #include "replay.h"
 #include "settings.h"
@@ -520,6 +521,11 @@ static NSMenuItem *open_item(NSString *title, const char *path, uint32_t from, i
             NSMenuItem *at = open_item(title, list[i].path, list[i].marks[m], self);
             at.indentationLevel = 1;
             [menu addItem:at];
+            title = @(recordings_practice_label(list[i].marks[m], label, sizeof label));
+            NSMenuItem *practice = open_item(title, list[i].path, list[i].marks[m], self);
+            practice.action = @selector(practice:);
+            practice.indentationLevel = 1;
+            [menu addItem:practice];
         }
         if (!recordings_deletable(list[i].path))
             continue;
@@ -570,6 +576,20 @@ static NSMenuItem *open_item(NSString *title, const char *path, uint32_t from, i
     display_request_open([info[@"path"] fileSystemRepresentation], [info[@"from"] unsignedIntValue]);
 }
 
+- (void)practice:(NSMenuItem *)item {
+    NSDictionary *info = item.representedObject;
+    display_request_practice([info[@"path"] fileSystemRepresentation], [info[@"from"] unsignedIntValue]);
+}
+
+- (void)practiceBundled:(NSMenuItem *)item {
+    char path[PATH_MAX];
+    uint32_t ticks;
+    if (practice_bundled_open((size_t)item.tag, path, sizeof path, &ticks))
+        display_request_practice(path, ticks);
+    else
+        display_flash("Can't open the practice");
+}
+
 - (void)delete:(NSMenuItem *)item {
     char err[512];
     const char *path = [item.representedObject fileSystemRepresentation];
@@ -593,11 +613,11 @@ static NSMenuItem *open_item(NSString *title, const char *path, uint32_t from, i
 
 static bool replays_wanted;              /* menu_add_replays was called, and not taken back */
 static LoonyRecordings *recordings;      /* the Replays and Open Recent menus' delegate, once added */
-static NSMenuItem *replays_item, *file_item; /* their titles in the bar */
+static NSMenuItem *replays_item, *file_item, *practice_item; /* their titles in the bar */
 static char recent_path[PATH_MAX];       /* menu_note_recent's, until menu_install */
 
 /* The Replays menu, before the Window menu (after Sound, High Scores and
-   Replay), and the File menu, after the app menu. */
+   Replay), Practice after it, and the File menu, after the app menu. */
 static void add_replays_menu(void) {
     NSMenu *bar = NSApp.mainMenu;
     if (recordings || !sound_item || !bar)
@@ -612,6 +632,20 @@ static void add_replays_menu(void) {
     NSInteger at = NSApp.windowsMenu ? [bar indexOfItemWithSubmenu:NSApp.windowsMenu] : -1;
     [bar insertItem:replays_item atIndex:at < 0 ? bar.numberOfItems : at];
 
+    NSMenu *practices = [[NSMenu alloc] initWithTitle:@"Practice"];
+    practices.autoenablesItems = NO;
+    for (size_t i = 0; i < practice_bundled_count(); i++) {
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:@(practice_bundled_title(i))
+                                                      action:@selector(practiceBundled:)
+                                               keyEquivalent:@""];
+        item.target = recordings;
+        item.tag = (NSInteger)i;
+        [practices addItem:item];
+    }
+    practice_item = [[NSMenuItem alloc] initWithTitle:@"Practice" action:nil keyEquivalent:@""];
+    practice_item.submenu = practices;
+    [bar insertItem:practice_item atIndex:[bar indexOfItem:replays_item] + 1];
+
     NSMenu *recent = [[NSMenu alloc] initWithTitle:@"Open Recent"];
     recent.delegate = recordings;
     recordings.recent = recent;
@@ -623,7 +657,7 @@ static void add_replays_menu(void) {
     file_item = [[NSMenuItem alloc] initWithTitle:@"File" action:nil keyEquivalent:@""];
     file_item.submenu = file;
     [bar insertItem:file_item atIndex:bar.numberOfItems ? 1 : 0];
-    log_msg("menu: Replays and File added");
+    log_msg("menu: Replays, Practice and File added");
 }
 
 void menu_add_replays(void) {
@@ -641,9 +675,10 @@ void menu_remove_replays(void) {
             return;
         [bar removeItem:replays_item];
         [bar removeItem:file_item];
-        replays_item = file_item = nil;
+        [bar removeItem:practice_item];
+        replays_item = file_item = practice_item = nil;
         recordings = nil;
-        log_msg("menu: Replays and File taken away");
+        log_msg("menu: Replays, Practice and File taken away");
     }
 }
 
