@@ -14,6 +14,7 @@
 #include "display.h"
 #include "events.h"
 #include "gamestart.h"
+#include "misc.h"
 #include "replay.h"
 #include "sound.h"
 #include "trap.h"
@@ -34,7 +35,7 @@ static struct {
 /* The window's title on the way to the moment says how far along it is,
    so a long first practice doesn't look stuck. */
 static void show_progress(void) {
-    int pct = (int)(replay_now_us() * 100 / P.target_us);
+    int pct = P.target_us ? (int)(replay_now_us() * 100 / P.target_us) : 100;
     if (pct == P.shown)
         return;
     P.shown = pct;
@@ -53,7 +54,8 @@ static void go_live(void) {
     replay_go_live();
     events_release_keys();
     display_set_title(P.title);
-    display_set_vsync(true);
+    display_present(); /* the window has shown the first frame since */
+    display_set_vsync(!misc_fixed_clock());
     sound_go_live();
     log_msg("practice: playing on from %.3f s on the replay's clock", (double)replay_now_us() / 1e6);
 }

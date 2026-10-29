@@ -15,9 +15,9 @@
    the player's preferences.
 
    The first practice from a moment pays the replay there; it keeps a
-   snapshot of the moment in a file beside the recording (practice_path,
-   gamestart_practice), and each one after goes straight to it, a few
-   seconds after launch. One file a recording: a practice from another
+   snapshot of a second before the moment (below) in a file beside the
+   recording (practice_path, gamestart_practice), and each one after goes
+   straight to it, a second or so after launch. One file a recording: a practice from another
    moment replaces it.
 
    The snapshot is of a second before the moment, so a replay put there

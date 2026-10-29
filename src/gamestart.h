@@ -150,9 +150,10 @@ bool gamestart_drop(void);
    form as the recording's snapshot of the game's start and taken against
    the same baseline. Before gamestart_init. At the baseline, a replay with
    a snapshot in that file that fits (the same checks, and taken within a
-   tenth of a second after the moment) goes straight to it; otherwise it
-   keeps the baseline, and gamestart_practice_here, at the moment (once
-   the clock is past it: practice.h), entering trap index, writes the file
+   tenth of a second after clock_us) goes straight to it; otherwise it
+   keeps the baseline, and gamestart_practice_here, once the clock is past
+   clock_us (practice.h passes a second before the moment it goes live
+   at), entering trap index, writes the file
    (replacing it). A practice whose
    snapshot fails (gamestart_drop) has the file removed and replays from
    launch. Nothing at a moment within GAMESTART_BASELINE_US of launch, or
