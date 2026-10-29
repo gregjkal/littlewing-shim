@@ -27,6 +27,8 @@ static struct {
     bool open_pending;
     char open_path[4096];
     uint32_t open_from;
+    bool open_practice;    /* to practice from it (display_request_practice) */
+    bool opening_practice; /* while open runs for such a request */
     void (*close)(const char *why);
     /* The replay to close once display_poll's events are handled, saying why. */
     bool close_pending;
@@ -392,7 +394,17 @@ void display_request_open(const char *path, uint32_t from_ticks) {
     }
     D.open_from = from_ticks;
     D.open_pending = true;
+    D.open_practice = false;
 }
+
+void display_request_practice(const char *path, uint32_t from_ticks) {
+    if (D.open_pending && is_replay_path(D.open_path))
+        return;
+    display_request_open(path, from_ticks);
+    D.open_practice = D.open_pending;
+}
+
+bool display_opening_practice(void) { return D.opening_practice; }
 
 void display_set_close(void (*fn)(const char *why)) { D.close = fn; }
 
@@ -418,8 +430,10 @@ static void open_pending(void) {
     char path[sizeof D.open_path];
     snprintf(path, sizeof path, "%s", D.open_path);
     D.open_pending = false;
+    D.opening_practice = D.open_practice;
     if (D.open)
         D.open(path, D.open_from); /* restarts the program, if it opens */
+    D.opening_practice = false;
 }
 
 void display_take_launch_events(uint32_t wait_ms) {

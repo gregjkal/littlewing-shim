@@ -683,7 +683,8 @@ left out, as the viewer counts), and how many marks it has and whether it
 has clips, as in "Oct 15, 8:15 PM, 14:32, 2 marks, clips". Choosing one
 watches it from 0:00, as opening the file does (below). Under a recording
 with marks, an indented **Play from 3:12** for each mark watches it from that
-mark, and J goes back from there. **Delete**, last under each recording,
+mark, and J goes back from there, and under it **Practice from 3:12.50**
+practices from the mark (below). **Delete**, last under each recording,
 moves it and its list of clips to the Trash, so Put Back in Finder undoes
 it; the clips exported from it stay where they are. The game being recorded
 has no Delete. Deleting the recording being watched closes the viewer, as
@@ -692,6 +693,38 @@ Recordings in Finder**, at the bottom, opens the folder. The menu, like File > O
 there in the picker, while Loony Labyrinth plays and while watching; not in
 the other games, which aren't recorded yet. A file in the folder that isn't a replay this version plays
 is left out.
+
+#### Practice
+
+Practice plays on from a moment of a recorded game, as many times as you
+like, with nothing kept. Choose **Practice from 3:12.50** under a mark in the
+Replays menu, or a moment the app ships in the **Practice** menu (next to
+Replays): **2000 BC** starts as the score panel first shows LANDED AT 2000
+BC. The replay runs out of sight to that moment, with the window's title
+counting up ("Getting to 32:16.05 of play: 40%"), and then the game is
+yours: the flippers, the sound, the rest of the ball. Nothing of it is kept:
+it isn't recorded, and its high scores and settings go to a folder of its
+own that is thrown away, never your own preferences. The title says
+"(practice from 32:16.05)". Choose the item again to start over.
+
+The first practice from a moment of a long game takes a while (about 50
+seconds for one half an hour in), so it keeps a snapshot of the moment in a
+`.practice` file beside the recording, and each practice after starts at
+once. One file a recording: practicing from another of its moments
+replaces it, and deleting the recording deletes it. The Practice menu's
+moments come with their snapshots, and are copied to
+`littlewing-shim/practice` when chosen. From a terminal, `LOONY_PRACTICE`
+with `LOONY_REPLAY` practices from a time of play, in ticks or `[h:]m:ss`
+with hundredths, as the viewer counts:
+
+```bash
+LOONY_REPLAY=game.lwreplay LOONY_PRACTICE=31:47.98 ./build-release/loony
+```
+
+Not with `LOONY_WATCH` or `LOONY_CLIP`. A shared recording practices with
+the registration every game starts with (`LOONY_REPLAY_LICENSE=default`):
+the game keeps its high scores only under the registration they were saved
+with, so yours would start it differently, and the snapshot wouldn't fit.
 
 #### Sharing a high score
 
@@ -738,11 +771,15 @@ were opened, and **Clear Menu** forgets them.
 To watch a shared replay you need Loony Labyrinth installed: the replay
 uses your registration in place of the one left out, or, if you have none
 saved yet, the one every game starts with (see [Play](#play)). The game
-only checks the registration and never draws it, so the frames still match
-the recording. The replay also needs the same version of LittleWing, or it
+only checks the registration and never draws it, so the frames match the
+recording, but for one thing: the game keeps its high scores only under the
+registration they were saved with, so when yours isn't the recorder's it
+starts with its first high-score table, and a replay that shows the table
+desyncs there. The replay also needs the same version of LittleWing, or it
 may desync. From a terminal, `LOONY_REPLAY_LICENSE` names the preferences to
 take the registration from; by default they're your own copy's, in
-`littlewing-shim/loony-labyrinth/prefs.plist`. Shared files are format 6,
+`littlewing-shim/loony-labyrinth/prefs.plist`, and `default` takes the one
+every game starts with. Shared files are format 6,
 like recordings, with a flag that says the registration is out. One that
 came without a snapshot, or with one that doesn't fit, keeps a snapshot of
 the game's start in it the first time you watch it, as for your own.

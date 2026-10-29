@@ -138,11 +138,26 @@ void gamestart_limit(uint64_t clock_us);
 bool gamestart_taking(void);
 
 /* At a desync, or a module state that can't be put back: if this replay
-   went to the game's start from the
+   went to the practice moment from its file, removes the file (above);
+   if it went to the game's start from the
    recording's snapshot, removes the snapshot from the recording and
    returns whether that worked, for the replay to start again from launch
    (A forgotten bump, above). False, at once, if it didn't. */
 bool gamestart_drop(void);
+
+/* Practice (practice.h): the moment, on the replay's clock, and the file
+   (path, beside the recording) that keeps a snapshot of it, in the same
+   form as the recording's snapshot of the game's start and taken against
+   the same baseline. Before gamestart_init. At the baseline, a replay with
+   a snapshot in that file that fits (the same checks, and taken within a
+   tenth of a second after the moment) goes straight to it; otherwise it
+   keeps the baseline, and gamestart_practice_here, at the moment,
+   entering trap index, writes the file (replacing it). A practice whose
+   snapshot fails (gamestart_drop) has the file removed and replays from
+   launch. Nothing at a moment within GAMESTART_BASELINE_US of launch, or
+   with LOONY_GAMESTART=0. */
+void gamestart_practice(uint64_t clock_us, const char *path);
+void gamestart_practice_here(uint32_t index);
 
 /* For tests: the hash a baseline would have now, the license blanked. */
 void gamestart_memory_hash(uint8_t out[32]);

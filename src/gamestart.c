@@ -19,6 +19,7 @@
 #include <sys/qos.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <zlib.h>
 
 #include "cf.h"
 #include "events.h"
@@ -73,7 +74,12 @@ static struct {
     snapshot *loaded;   /* verifying: the snapshot decoded */
     uint64_t start_entries;
     bool used;          /* the replay went to the game's start from the recording's snapshot */
-} G = {.limit_us = UINT64_MAX};
+    /* practice (gamestart_practice) */
+    uint64_t practice_us;            /* its moment, or UINT64_MAX */
+    char practice_path[PATH_MAX];    /* the file that keeps its snapshot */
+    snapshot *practice_base;         /* the baseline, kept until the moment */
+    bool practice_used;              /* the replay went to the moment from that file */
+} G = {.limit_us = UINT64_MAX, .practice_us = UINT64_MAX};
 
 static double secs(uint64_t us) { return (double)us / 1e6; }
 
@@ -338,12 +344,74 @@ static snapshot *load(const section *s, char *why, size_t cap) {
     return snap;
 }
 
+/* Practice, at the baseline: the snapshot of the moment in the practice
+   file, decoded; NULL, logged, if there is none that fits. A snapshot is
+   taken at the first trap entry it can be at or after the moment, a frame
+   or so later, so one taken within PRACTICE_SLACK_US of it is the one. */
+#define PRACTICE_SLACK_US 100000ull
+
+/* The practice file, decompressed (malloc'd), or NULL. */
+static uint8_t *read_practice(size_t *len) {
+    gzFile f = gzopen(G.practice_path, "rb");
+    if (!f)
+        return NULL;
+    size_t cap = 1 << 20;
+    uint8_t *p = malloc(cap);
+    *len = 0;
+    int n;
+    while (p && (n = gzread(f, p + *len, (unsigned)(cap - *len))) > 0) {
+        *len += (size_t)n;
+        if (*len == cap && !(p = realloc(p, cap *= 2)))
+            fatal("out of memory");
+    }
+    if (!p)
+        fatal("out of memory");
+    bool ok = n == 0;
+    gzclose(f);
+    if (!ok)
+        log_msg("gamestart: can't read %s", G.practice_path);
+    return ok ? p : (free(p), NULL);
+}
+
+static snapshot *practice_snapshot(void) {
+    size_t len;
+    uint8_t *p = read_practice(&len);
+    if (!p)
+        return NULL;
+    section s;
+    char why[512] = "";
+    snapshot *snap = NULL;
+    if (parse(p, len, &s, why, sizeof why)) {
+        if (s.start_clock < G.practice_us || s.start_clock - G.practice_us > PRACTICE_SLACK_US)
+            snprintf(why, sizeof why, "it is of another moment, %.3f s", secs(s.start_clock));
+        else
+            snap = load(&s, why, sizeof why);
+    }
+    free(p);
+    if (!snap)
+        log_msg("gamestart: the practice snapshot in %s can't be used: %s", G.practice_path, why);
+    return snap;
+}
+
 /* At the baseline, entering trap index. */
 static void at_baseline(uint32_t index) {
     double t0 = wall_seconds();
     memory_hash(G.base_hash);
     G.base_clock = replay_now_us();
     G.base_entries = trap_entries();
+    if (G.practice_us != UINT64_MAX && !seek_verifying()) {
+        snapshot *snap = practice_snapshot();
+        if (snap) {
+            log_msg("gamestart: going to the practice moment at %.3f s from the baseline, %.3f s "
+                    "after the process started (decoded in %.1f ms)",
+                    secs(snapshot_clock_us(snap)), wall_seconds() - process_start,
+                    (wall_seconds() - t0) * 1000);
+            G.practice_used = true;
+            done();
+            seek_enter(snap);
+        }
+        G.practice_base = snapshot_take(index); /* kept for gamestart_practice_here */
+    }
     size_t len;
     const uint8_t *p = replay_snapshot(&len);
     char why[512] = "";
@@ -410,28 +478,25 @@ static refill *unchanged_resources(snapshot_range **ranges, size_t *n) {
     return out;
 }
 
-/* At the game's start, entering trap index: takes the snapshot and keeps
-   it in the recording. */
-static void at_start(uint32_t index) {
-    double t0 = wall_seconds();
-    snapshot *s = snapshot_take(index);
-    if (!s)
-        return; /* the next entry, then */
+/* Whether the game wrote the license into guest memory between base and s:
+   then s isn't kept. */
+static bool holds_license(const snapshot *s, const snapshot *base) {
     for (size_t i = 0; i < cf_kept_out_count(); i++)
-        if (cf_kept_out(i) && snapshot_changed_holds(s, G.base, cf_kept_out(i))) {
-            log_msg("gamestart: the game wrote the license after the baseline, so no snapshot "
-                    "is kept");
-            snapshot_free(s);
-            snapshot_free(G.base);
-            G.base = NULL;
-            done();
-            return;
-        }
+        if (cf_kept_out(i) && snapshot_changed_holds(s, base, cf_kept_out(i)))
+            return true;
+    return false;
+}
+
+/* The section for s, taken at trap entry entries, encoded against base,
+   the baseline: malloc'd, *len bytes. *nleft_out resources, *left_out
+   bytes, are left out of it. */
+static uint8_t *encode_section(const snapshot *s, const snapshot *base, uint64_t entries,
+                               size_t *len, size_t *nleft_out, uint64_t *left_out) {
     snapshot_range *ranges;
     size_t nrefills;
     refill *refills = unchanged_resources(&ranges, &nrefills);
     size_t body_len;
-    uint8_t *body = snapshot_encode(s, G.base, ranges, nrefills, &body_len);
+    uint8_t *body = snapshot_encode(s, base, ranges, nrefills, &body_len);
     buf b = {0};
     add_le(&b, SECTION_MAGIC, 4);
     add_le(&b, SECTION_VERSION, 4);
@@ -444,7 +509,7 @@ static void at_start(uint32_t index) {
     add_le(&b, G.base_entries, 8);
     add(&b, G.base_hash, HASH_LEN);
     add_le(&b, snapshot_clock_us(s), 8);
-    add_le(&b, trap_entries(), 8);
+    add_le(&b, entries, 8);
     add_le(&b, nrefills, 4);
     for (size_t i = 0; i < nrefills; i++) {
         add_le(&b, refills[i].entry, 4);
@@ -453,19 +518,42 @@ static void at_start(uint32_t index) {
     }
     add_le(&b, body_len, 8);
     add(&b, body, body_len);
-    uint64_t left_out = 0;
+    *left_out = 0;
     for (size_t i = 0; i < nrefills; i++)
-        left_out += refills[i].len;
-    bool kept = replay_set_snapshot(b.p, b.len);
-    if (kept)
-        log_msg("gamestart: kept a snapshot of the game's start at %.3f s in the recording: %zu "
-                "bytes before compression, %zu resources (%llu bytes) left out, in %.1f ms",
-                secs(snapshot_clock_us(s)), b.len, nrefills, (unsigned long long)left_out,
-                (wall_seconds() - t0) * 1000);
-    free(b.p);
+        *left_out += refills[i].len;
+    *nleft_out = nrefills;
     free(body);
     free(refills);
     free(ranges);
+    *len = b.len;
+    return b.p;
+}
+
+/* At the game's start, entering trap index: takes the snapshot and keeps
+   it in the recording. */
+static void at_start(uint32_t index) {
+    double t0 = wall_seconds();
+    snapshot *s = snapshot_take(index);
+    if (!s)
+        return; /* the next entry, then */
+    if (holds_license(s, G.base)) {
+        log_msg("gamestart: the game wrote the license after the baseline, so no snapshot "
+                "is kept");
+        snapshot_free(s);
+        snapshot_free(G.base);
+        G.base = NULL;
+        done();
+        return;
+    }
+    size_t len, nrefills;
+    uint64_t left_out;
+    uint8_t *section = encode_section(s, G.base, trap_entries(), &len, &nrefills, &left_out);
+    if (replay_set_snapshot(section, len))
+        log_msg("gamestart: kept a snapshot of the game's start at %.3f s in the recording: %zu "
+                "bytes before compression, %zu resources (%llu bytes) left out, in %.1f ms",
+                secs(snapshot_clock_us(s)), len, nrefills, (unsigned long long)left_out,
+                (wall_seconds() - t0) * 1000);
+    free(section);
     snapshot_free(s);
     snapshot_free(G.base);
     G.base = NULL;
@@ -580,6 +668,12 @@ void gamestart_limit(uint64_t clock_us) {
 void gamestart_memory_hash(uint8_t out[HASH_LEN]) { memory_hash(out); }
 
 bool gamestart_drop(void) {
+    if (G.practice_used) {
+        G.practice_used = false;
+        log_msg("gamestart: the practice snapshot in %s failed, so it is removed, and the "
+                "practice replays from launch", G.practice_path);
+        return unlink(G.practice_path) == 0 || errno == ENOENT;
+    }
     if (!G.used)
         return false;
     G.used = false;
@@ -587,6 +681,51 @@ bool gamestart_drop(void) {
             "recording's snapshot, so the snapshot is dropped, for a replay from launch to take "
             "it again (a change to what a snapshot holds needs GAMESTART_SNAPSHOT_VERSION bumped)");
     return replay_set_snapshot(NULL, 0);
+}
+
+void gamestart_practice(uint64_t clock_us, const char *path) {
+    if (clock_us <= GAMESTART_BASELINE_US)
+        return;
+    G.practice_us = clock_us;
+    snprintf(G.practice_path, sizeof G.practice_path, "%s", path);
+}
+
+void gamestart_practice_here(uint32_t index) {
+    snapshot *base = G.practice_base;
+    G.practice_base = NULL;
+    if (!base)
+        return;
+    double t0 = wall_seconds();
+    snapshot *s = snapshot_take(index);
+    if (!s || holds_license(s, base)) {
+        log_msg("gamestart: no snapshot of the practice moment is kept: %s",
+                s ? "the game wrote the license after the baseline" : "none can be taken here");
+        snapshot_free(s);
+        snapshot_free(base);
+        return;
+    }
+    size_t len, nrefills;
+    uint64_t left_out;
+    uint8_t *section = encode_section(s, base, trap_entries(), &len, &nrefills, &left_out);
+    char tmp[PATH_MAX + 16];
+    snprintf(tmp, sizeof tmp, "%s.XXXXXX", G.practice_path);
+    int fd = mkstemp(tmp);
+    gzFile f = fd >= 0 ? gzdopen(fd, "wb6") : NULL;
+    bool ok = f && gzwrite(f, section, (unsigned)len) == (int)len;
+    if (f ? gzclose(f) != Z_OK : fd >= 0 && close(fd) != 0)
+        ok = false;
+    if (ok && rename(tmp, G.practice_path) == 0)
+        log_msg("gamestart: kept a snapshot of the practice moment at %.3f s in %s: %zu bytes "
+                "before compression, in %.1f ms", secs(snapshot_clock_us(s)), G.practice_path, len,
+                (wall_seconds() - t0) * 1000);
+    else {
+        log_msg("gamestart: can't write %s: %s", G.practice_path, strerror(errno));
+        if (fd >= 0)
+            unlink(tmp);
+    }
+    free(section);
+    snapshot_free(s);
+    snapshot_free(base);
 }
 
 bool gamestart_in_file(const char *path) {

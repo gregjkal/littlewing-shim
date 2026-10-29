@@ -115,6 +115,8 @@ static bool parse_time(const char *p, const char *end, uint32_t *ticks) {
     return true;
 }
 
+bool clip_parse_time(const char *s, uint32_t *ticks) { return parse_time(s, s + strlen(s), ticks); }
+
 bool clip_parse_span(const char *s, uint32_t *start, uint32_t *end) {
     const char *dash = strchr(s, '-');
     if (!dash || !parse_time(s, dash, start) || !parse_time(dash + 1, dash + 1 + strlen(dash + 1), end))

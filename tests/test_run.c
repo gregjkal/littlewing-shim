@@ -4338,3 +4338,73 @@ SLOW_TEST(run_a_shared_game_starts_at_the_game_on_another_install) {
     CHECK(!strstr(out[1], email));
     CHECK(!strstr(out[1], key));
 }
+
+/* Practice (practice.h): LOONY_PRACTICE's time, and the script for after
+   it goes live. */
+static const char *practice_from;
+static char practice_script[1024];
+
+static void run_loony_practicing(void *unused) {
+    (void)unused;
+    unsetenv("LOONY_AUTO_ALERTS"); /* the replay sets it as the recording had it */
+    setenv("LOONY_REPLAY", replay_file, 1);
+    setenv("LOONY_DATA_DIR", run_data, 1);
+    setenv("LOONY_PRACTICE", practice_from, 1);
+    setenv("LOONY_SCRIPT", practice_script, 1);
+    execl(LOONY_BIN, "loony", (char *)NULL);
+    _exit(127);
+}
+
+/* Practice from 3 s into a recorded game: the replay goes there unseen and
+   goes live, the game takes the flippers past the recording's end and
+   quits when asked, and nothing is kept: no recording is written, the
+   recording and the preferences it was made with are as they were, and
+   the game saves into the practice's own folder. */
+SLOW_TEST(run_practice_plays_on_live_from_a_moment_of_a_recording) {
+    SKIP_UNLESS_GAME();
+    char rec_dir[1024], play_dir[1024], out[65536];
+    test_tmp_dir(rec_dir, sizeof rec_dir);
+    test_tmp_dir(play_dir, sizeof play_dir);
+    int status = record_for_clips(rec_dir,
+                                  "1720 down esc\n1724 up esc\n1800 down esc\n1804 up esc\n"
+                                  "1900 down return\n1906 up return\n2100 down return\n"
+                                  "2190 up return\n2300 down z\n2310 up z\n2600 quit\n",
+                                  out, sizeof out);
+    CHECK_EQ(status, 0);
+    char prefs[1100];
+    snprintf(prefs, sizeof prefs, "%s/prefs.plist", rec_dir);
+    struct stat rec_before, prefs_before;
+    CHECK(stat(replay_file, &rec_before) == 0);
+    CHECK(stat(prefs, &prefs_before) == 0);
+
+    tmp_name(practice_script, sizeof practice_script, "script");
+    FILE *f = fopen(practice_script, "w");
+    fputs("2900 down z\n2910 up z\n2950 down slash\n2960 up slash\n3100 quit\n", f);
+    fclose(f);
+    practice_from = "0:03";
+    snprintf(run_data, sizeof run_data, "%s/data", play_dir);
+    status = test_run_child(run_loony_practicing, NULL, out, sizeof out);
+    run_data[0] = '\0';
+    unlink(practice_script);
+    char saved[1100];
+    snprintf(saved, sizeof saved, "%s/data/prefs.plist", play_dir);
+    struct stat rec_after, prefs_after, st;
+    bool saved_there = stat(saved, &st) == 0;
+    CHECK(stat(replay_file, &rec_after) == 0);
+    CHECK(stat(prefs, &prefs_after) == 0);
+    int recordings = files_in(rec_dir, ".lwreplay", false) + files_in(play_dir, ".lwreplay", false);
+    test_remove_tree(rec_dir);
+    test_remove_tree(play_dir);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "practice: replaying unseen to 0:03 of play");
+    CHECK_CONTAINS(out, "replay: going live at step");
+    CHECK_CONTAINS(out, "practice: playing on from");
+    CHECK(!strstr(out, "desync"));
+    CHECK(!strstr(out, "replay: stopped by the host")); /* the quit came live */
+    CHECK(!strstr(out, "recording the game"));
+    CHECK_EQ(recordings, 1);
+    CHECK_EQ(rec_after.st_size, rec_before.st_size);
+    CHECK_EQ(rec_after.st_mtime, rec_before.st_mtime);
+    CHECK_EQ(prefs_after.st_mtime, prefs_before.st_mtime);
+    CHECK(saved_there);
+}

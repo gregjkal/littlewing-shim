@@ -23,6 +23,7 @@
 #include "license.h"
 #include "snapshot.h"
 #include "plist.h"
+#include "practice.h"
 #include "util.h"
 
 #define MAGIC "LWREPLAY"
@@ -192,6 +193,14 @@ static void snap_walk(snapshot_walker *w) {
 }
 SNAPSHOT_STATE_WALK(R, snap_walk)
 
+/* replay_go_live's: what the host's clock is moved on by, once the first
+   clock read after it has set it. Kept out of R, whose size is in every
+   snapshot's layout, and out of snapshots: nothing seeks once live. */
+static struct {
+    bool on, offset_set;
+    uint64_t offset_us;
+} live;
+
 bool replay_recording(void) { return R.mode == RECORDING; }
 
 const char *replay_recording_path(void) { return R.mode == RECORDING && R.out ? R.path : NULL; }
@@ -215,6 +224,7 @@ void replay_reset(void) {
     free(R.header.p);
     free(R.session.p);
     memset(&R, 0, sizeof R);
+    memset(&live, 0, sizeof live);
 }
 
 static uint32_t tick(void) { return (uint32_t)(R.clock_ms * 60 / 1000); }
@@ -242,6 +252,17 @@ void replay_set_end(void (*fn)(void)) { R.end = fn; }
 void replay_set_desync(void (*fn)(const char *msg)) { R.desync = fn; }
 void replay_set_retry(void (*fn)(void)) { retry = fn; }
 void replay_abandon(void) { R.mode = OFF; }
+
+void replay_go_live(void) {
+    if (R.mode != PLAYING)
+        return;
+    log_msg("replay: going live at step %llu (tick %u)", (unsigned long long)R.step, tick());
+    R.mode = RECORDING; /* with no file: replay_log and the rest write nothing */
+    R.out = NULL;
+    R.auto_dir[0] = '\0';
+    live.on = true;
+    live.offset_set = false;
+}
 
 bool replay_desynced(void) { return R.desynced; }
 bool replay_reached_end(void) { return R.reached_end; }
@@ -738,14 +759,16 @@ static uint8_t *with_license(const uint8_t *prefs, size_t len, plist_entry *from
 }
 
 /* A shared replay's preferences with the viewer's license in them (from
-   LOONY_REPLAY_LICENSE), or, when the viewer has none, the one every game
-   starts with (license.h), malloc'd; NULL, with err, if they can't be
+   LOONY_REPLAY_LICENSE), or, when the viewer has none or it is "default",
+   the one every game starts with (license.h), malloc'd; NULL, with err, if they can't be
    written. */
 static uint8_t *licensed_prefs(size_t *len, char *err, size_t errlen) {
     const char *from = getenv("LOONY_REPLAY_LICENSE");
     plist_entry *e = NULL;
     uint32_t n = 0;
     char perr[256];
+    if (from && strcmp(from, "default") == 0)
+        from = NULL;
     plist_status st = from && *from ? plist_read(from, &e, &n, perr, sizeof perr) : PLIST_MISSING;
     uint8_t *out;
     if (st == PLIST_OK && has_license(e, n)) {
@@ -969,6 +992,9 @@ static void prune(const char *dir, const char *game_id, size_t keep, const time_
                 log_msg("replay: deleted the old recording %s", path);
             else
                 log_msg("replay: can't delete the old recording %s", path);
+            char practice[PATH_MAX + 16];
+            if (practice_path(path, practice, sizeof practice))
+                unlink(practice);
         }
         free(names[i]);
     }
@@ -1427,6 +1453,13 @@ void replay_step(void) {
 uint64_t replay_clock(uint64_t host_us) {
     replay_step();
     if (R.mode == RECORDING) {
+        if (live.on) {
+            if (!live.offset_set) {
+                live.offset_us = R.clock_ms * 1000 > host_us ? R.clock_ms * 1000 - host_us : 0;
+                live.offset_set = true;
+            }
+            host_us += live.offset_us;
+        }
         uint64_t ms = host_us / 1000;
         if (ms > R.clock_ms) {
             uint32_t d = (uint32_t)(ms - R.clock_ms);

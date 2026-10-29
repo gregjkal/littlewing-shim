@@ -42,14 +42,17 @@ void menu_add_replay(void);
    recordings folder (recordings_dir, recordings_list), read each time it
    opens, newest first: "Oct 15, 8:15 PM, 14:32, 2 marks, clips". Each
    opens the viewer at its start, and under one with marks an indented
-   "Play from 3:12" for each opens it at that mark. Show Recordings in
+   "Play from 3:12" for each opens it at that mark, and "Practice from
+   3:12.50" practices from it (practice.h). Show Recordings in
    Finder, at the bottom, makes the folder if it is missing and opens it.
    Open Recent lists the recordings watched lately (menu_note_recent), and
    Clear Menu forgets them. Every recording opens through
-   display_request_open. */
+   display_request_open. After Replays, Practice lists the practices the
+   app ships (practice_bundled_count), each practiced through
+   display_request_practice. */
 void menu_add_replays(void);
 
-/* Takes the Replays and File menus away again (the picker chose a game
+/* Takes the Replays, Practice and File menus away again (the picker chose a game
    without replays). */
 void menu_remove_replays(void);
 
