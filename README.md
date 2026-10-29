@@ -36,7 +36,12 @@ all nine games installed, it opens on a picker showing each game's thumbnail
 from LittleWing's download page (`./build-release/loony`, outside the app,
 shows each game's title picture or icon instead): the arrow keys (or
 the mouse) choose, and Return (or a click) plays. It starts on the last game
-played. With one game installed, it plays that game. Choosing QUIT in a game's
+played. The selected game's opening music plays, at the Sound menu's volume:
+heard from your own copy, the first time the picker shows a game, by playing
+it out of sight for a moment (a few seconds each; Golden Logres takes about a
+minute), so a card is silent until then. Jinni Zeala's and FAIRY TOWER's tables
+are silent until a game starts, so theirs is the music of a game's first ball.
+`LOONY_PICKER_MUSIC=0` turns it off. With one game installed, it plays that game. Choosing QUIT in a game's
 own menu goes back to the picker; Cmd-Q or closing the window quits. The app
 carries its own copies of Unicorn and SDL3, so Homebrew upgrades don't affect
 it. A release is notarized and opens without a warning, and updates itself: it
@@ -138,7 +143,8 @@ file a game writes goes to its own folder there, never into the game's folder
 or app. Tristan saves its settings and high scores into its own program
 file, so those saves go to a copy of that file there, which it plays from
 after that.
-Delete a game's folder to start it over. The picker's last game and the volume
+Delete a game's folder to start it over. Its picker music is kept there as
+`picker-music.wav`; delete that to hear it again from the game. The picker's last game and the volume
 are kept in `littlewing-shim/picker.plist`. Saves from before the project was
 renamed (`loony-shim/`) move to `littlewing-shim/` on the next launch, and
 saves from before there were two games (`prefs.plist` at the top) move into

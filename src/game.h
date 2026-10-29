@@ -35,6 +35,10 @@ typedef struct {
        license_key_at, each ended by a zero byte. */
     const char *license_file;
     int license_size, license_key_at;
+    /* Its picker music (theme.h): what to press before it plays (a
+       LOONY_SCRIPT, or NULL), and the tick from which to listen. */
+    const char *theme_script;
+    int theme_from;
 } game_info;
 
 size_t game_count(void);
