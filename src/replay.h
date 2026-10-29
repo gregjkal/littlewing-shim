@@ -126,7 +126,10 @@ bool replay_find_recording(const char *dir, const char *game_id, time_t when, ch
    shared copy puts in the license from LOONY_REPLAY_LICENSE's preferences:
    by default, where the viewer's own copy of the game saves them (set by
    replay_open, so a restart keeps it), or, without a license there, the
-   one every game starts with (license.h).
+   one every game starts with (license.h), which LOONY_REPLAY_LICENSE=default
+   asks for (a practice does: the game's high-score table counts as kept
+   only under the license it was saved with, so the viewer's own changes
+   how the game starts, and the practice's snapshot fits only one).
    The game only checks the license, and never shows it, so the frames are
    the same. Everything else is shared as recorded: the high-score names,
    and anything typed while playing. A recording still being written copies
@@ -304,6 +307,14 @@ void replay_set_desync(void (*fn)(const char *msg));
    which does when the replay started from the recording's snapshot of
    the game's start (gamestart_drop). */
 void replay_set_retry(void (*fn)(void));
+/* Practice (practice.h): the replay stops here and the game is played on
+   from where it is, live. From now on the host's input reaches the game,
+   the clock is the host's, moved on so that it carries on from the
+   replay's without a jump, and nothing is recorded: replay_recording is
+   true, as in a normal run, but no file is open and Cmd-S marks nothing.
+   No-op unless playing. */
+void replay_go_live(void);
+
 /* Replay: ends it with nothing more logged (replay_finish says nothing),
    before the program starts over. */
 void replay_abandon(void);

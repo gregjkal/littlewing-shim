@@ -36,6 +36,7 @@
 #include "patch.h"
 #include "picker.h"
 #include "play.h"
+#include "practice.h"
 #include "qd.h"
 #include "recordings.h"
 #include "pen.h"
@@ -134,7 +135,12 @@ static void present_frame(void) {
         clip_present(dirty);
     else if (watch_on())
         watch_present(dirty);
-    else if (!gamestart_taking()) {
+    else if (practice_unseen()) {
+        static bool opened; /* the window, for the progress in its title and a quit */
+        if (!opened)
+            display_present();
+        opened = true;
+    } else if (!gamestart_taking()) {
         unshown |= dirty && !qd_flush_only();
         if (unshown && (!throttled || display_due())) {
             display_present();
@@ -242,6 +248,7 @@ static void back_to_picker(void) {
     unsetenv("LOONY_RECORD"); /* the next game doesn't record over this one */
     unsetenv("LOONY_REPLAY");
     unsetenv("LOONY_WATCH");
+    unsetenv("LOONY_PRACTICE");
     restart_self("back to the picker", false);
 }
 
@@ -275,8 +282,13 @@ static void open_replay_at(const char *path, uint32_t from_ticks) {
     if (!replay_playing())
         cf_save_prefs();
     watch_stop_export(); /* it would go on unseen */
-    recordings_watch_env(full, from_ticks);
-    restart_self("watch: opening a replay", false);
+    if (display_opening_practice()) {
+        recordings_practice_env(full, from_ticks);
+        restart_self("practice: opening a replay", false);
+    } else {
+        recordings_watch_env(full, from_ticks);
+        restart_self("watch: opening a replay", false);
+    }
 }
 
 /* The recording being watched was deleted (recordings_delete): the
@@ -535,7 +547,9 @@ int main(int argc, char **argv) {
     } else if (replay_playing() && seek_verifying()) {
         seek_start(NULL); /* snapshots to verify, and no seeks */
     }
-    gamestart_init(); /* after seek_start: its hook runs seek's */
+    if (!practice_init(game->title, err, sizeof err))
+        return startup_error("%s", err);
+    gamestart_init(); /* after seek_start and practice_init: its hook runs theirs */
     replay_set_retry(retry_from_launch);
     snapshot_set_load_failed(retry_from_launch);
     const char *script = getenv("LOONY_SCRIPT");

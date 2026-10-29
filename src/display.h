@@ -129,6 +129,12 @@ void display_set_open(void (*fn)(const char *path, uint32_t from_ticks));
    files dropped at once, the first replay opens. Drops come here too. */
 void display_request_open(const char *path, uint32_t from_ticks);
 
+/* The same, to practice from from_ticks (practice.h) rather than watch:
+   display_opening_practice is true while display_set_open's fn runs for
+   it. */
+void display_request_practice(const char *path, uint32_t from_ticks);
+bool display_opening_practice(void);
+
 /* Where display_poll sends a request to close the replay being watched
    (recordings_delete): fn gets why, to say once the program has restarted
    (display_flash's LOONY_FLASH). */

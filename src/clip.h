@@ -86,6 +86,9 @@ typedef struct {
     int first_mark, last_mark;
 } clip_span;
 
+/* Parses one time, ticks or [h:]m:ss[.fraction], into ticks. */
+bool clip_parse_time(const char *s, uint32_t *ticks);
+
 /* Parses a span "<start>-<end>" into ticks. False unless start < end. */
 bool clip_parse_span(const char *s, uint32_t *start, uint32_t *end);
 

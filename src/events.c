@@ -497,6 +497,18 @@ void events_host_quit(void) {
     events_request_quit();
 }
 
+void events_release_keys(void) {
+    int down[3 * MAX_HELD], n = 0;
+    for (int i = 0; i < E.nheld; i++)
+        down[n++] = E.held[i].scancode;
+    for (int i = 0; i < E.ngame_down; i++)
+        down[n++] = E.game_down[i];
+    for (int i = 0; i < E.ndialog_down; i++)
+        down[n++] = E.dialog_down[i];
+    for (int i = 0; i < n; i++)
+        events_post_key(down[i], false, false);
+}
+
 /* A replay's input, where the recording polled the host for it. */
 static void replay_input(void) {
     uint32_t v[3];

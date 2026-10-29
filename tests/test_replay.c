@@ -2,6 +2,7 @@
 
 #include <CommonCrypto/CommonDigest.h>
 #include <dirent.h>
+#include <limits.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <SDL3/SDL_scancode.h>
@@ -18,6 +19,7 @@
 #include "memmgr.h"
 #include "misc.h"
 #include "plist.h"
+#include "practice.h"
 #include "qd.h"
 #include "gamestart.h"
 #include "license.h"
@@ -1535,6 +1537,50 @@ TEST(replay_input_is_posted_where_it_was_polled) {
     }
 }
 
+static void press_z(void) { events_host_key(SDL_SCANCODE_Z, true, false); }
+
+/* Going live (practice.h): the clock carries on from the replay's without
+   going back and moves with the host's, a key held in the recording comes
+   up, the host's input reaches the game, and nothing is written: the file
+   stays as it was and a mark is refused. */
+TEST(replay_going_live_carries_the_clock_on_and_takes_the_hosts_input) {
+    BEGIN_TEST();
+    setup();
+    CHECK(record(NULL));
+    sleep_s(0.3);
+    uint32_t recorded = call_import("TickCount", 0);
+    events_set_poll(press_z);
+    events_pump();
+    events_set_poll(NULL);
+    replay_finish();
+    CHECK(recorded >= 18);
+    struct stat before;
+    CHECK(stat(file, &before) == 0);
+
+    setup(); /* the host's clock starts again at 0, behind the recording's */
+    CHECK(play_back());
+    CHECK_EQ(call_import("TickCount", 0), recorded);
+    events_pump();
+    int queued = events_queued(); /* Z down, from the file */
+    replay_go_live();
+    CHECK(!replay_playing());
+    CHECK(replay_recording());
+    events_release_keys();
+    CHECK_EQ(events_queued(), queued + 1); /* Z up */
+    uint32_t live = call_import("TickCount", 0);
+    CHECK(live >= recorded && live <= recorded + 1);
+    sleep_s(0.1);
+    CHECK(call_import("TickCount", 0) >= live + 5);
+    events_host_key(SDL_SCANCODE_X, true, false);
+    CHECK_EQ(events_queued(), queued + 2);
+    CHECK_EQ(replay_mark(), 0);
+    replay_finish();
+    struct stat after;
+    CHECK(stat(file, &after) == 0);
+    CHECK_EQ(after.st_size, before.st_size);
+    CHECK_EQ(after.st_mtime, before.st_mtime);
+}
+
 static uint32_t cmd(uint16_t c, uint16_t p1, uint32_t p2) {
     uint32_t a = scratch(8);
     gm_w16(a, c);
@@ -2103,4 +2149,48 @@ TEST(replay_reads_format_5) {
     CHECK(replay_set_snapshot((const uint8_t *)"snap", 4));
     n = gunzip_into(file, buf, sizeof buf);
     CHECK_EQ((uint8_t)buf[8], 6);
+}
+
+static off_t file_size(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0 ? st.st_size : -1;
+}
+
+TEST(practice_copies_the_shipped_practices_where_they_can_be_written) {
+    CHECK(practice_bundled_count() >= 1);
+    CHECK_STR(practice_bundled_title(0), "2000 BC");
+    setenv("HOME", getenv("LOONY_DATA_DIR"), 1);
+    char path[PATH_MAX], snap[PATH_MAX + 16], want[PATH_MAX];
+    uint32_t ticks, at;
+    CHECK(practice_bundled_open(0, path, sizeof path, &ticks));
+    snprintf(want, sizeof want, "%s/Library/Application Support/littlewing-shim/practice/2000-bc.lwreplay",
+             getenv("HOME"));
+    CHECK_STR(path, want);
+    CHECK(clip_parse_time("32:16.05", &at));
+    CHECK_EQ(ticks, at);
+    CHECK(practice_path(path, snap, sizeof snap));
+    CHECK_EQ(file_size(path), file_size(LOONY_SRC_DIR "/practice/2000-bc.lwreplay"));
+    CHECK_EQ(file_size(snap), file_size(LOONY_SRC_DIR "/practice/2000-bc.practice"));
+
+    /* A snapshot the practice made since is kept... */
+    FILE *f = fopen(snap, "w");
+    CHECK(f);
+    fputs("made here", f);
+    fclose(f);
+    CHECK(practice_bundled_open(0, path, sizeof path, &ticks));
+    CHECK_EQ(file_size(snap), (off_t)strlen("made here"));
+    /* ...and one older than the app's is replaced. */
+    struct timeval old[2] = {{1000000000, 0}, {1000000000, 0}};
+    CHECK_EQ(utimes(snap, old), 0);
+    CHECK(practice_bundled_open(0, path, sizeof path, &ticks));
+    CHECK_EQ(file_size(snap), file_size(LOONY_SRC_DIR "/practice/2000-bc.practice"));
+}
+
+/* The snapshot the app ships with each practice fits this build, so its
+   practice starts at once: a change to what snapshots hold needs the
+   shipped ones taken again (practice.h has how). */
+TEST(practice_the_shipped_snapshots_fit_this_build) {
+    char err[512];
+    CHECK(gamestart_practice_check(LOONY_SRC_DIR "/practice/2000-bc.practice",
+                                   LOONY_SRC_DIR "/practice/2000-bc.lwreplay", err, sizeof err));
 }
