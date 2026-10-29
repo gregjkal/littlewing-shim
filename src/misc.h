@@ -48,6 +48,10 @@ void misc_sleep_us(uint64_t us);
 /* True if the virtual clock is in use. */
 bool misc_fixed_clock(void);
 
+/* True if LOONY_FIXED_CLOCK=1 asks for it: what misc_init reads, for code
+   that runs before it (the picker). */
+bool misc_fixed_clock_asked(void);
+
 /* Waits: sleeps on the real clock, or advances the virtual one. Returns at
    once on a replay. */
 void misc_wait(double seconds);

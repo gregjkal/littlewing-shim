@@ -18,6 +18,7 @@
 #include "png.h"
 #include "rsrc.h"
 #include "settings.h"
+#include "theme.h"
 #include "util.h"
 
 #define ART_SRC_W 512
@@ -493,6 +494,12 @@ const game_info *picker_run(const game_info *const *games, int n) {
     P.n = n;
     P.selected = picker_initial(e, n, last);
     P.dirty = true;
+    const game_info *shown[PICKER_MAX];
+    for (int i = 0; i < n; i++)
+        shown[i] = e[i].game;
+    theme_start(shown, n, P.selected, have_self ? self : NULL);
+    theme_select(P.selected);
+    int playing = P.selected;
     static const display_input input = {on_key, NULL, on_quit, on_mouse, NULL, NULL};
     display_set_input(&input);
     display_set_title("LittleWing");
@@ -522,8 +529,14 @@ const game_info *picker_run(const game_info *const *games, int n) {
                 }
         }
         display_poll();
+        if (P.choose || P.quit)
+            continue; /* no render to start for a picker that is going */
+        if (P.selected != playing)
+            theme_select(playing = P.selected);
+        theme_tend();
         SDL_Delay(1); /* without vsync (the dummy driver), don't spin */
     }
+    theme_stop();
     for (int i = 0; i < n; i++)
         free(e[i].art);
     if (P.quit) {

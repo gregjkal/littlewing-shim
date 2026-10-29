@@ -10,31 +10,38 @@
 #include <unistd.h>
 
 #include "plist.h"
+#include "theme.h"
 #include "util.h"
+
+/* Their tables play nothing until a game starts, so the picker's music is
+   the game's own: Esc opens the menu, Return picks New Game, and Return
+   picks one player, whose ball is served to music from tick 420. */
+#define MENU_NEW_GAME                                                                              \
+    "300 down esc\n306 up esc\n360 down return\n366 up return\n420 down return\n426 up return\n", 420
 
 static const game_info games[] = {
     {"loony-labyrinth", "Loony Labyrinth", "Loony Labyrinth", "LOONY LABYRINTH 3.0.1",
-     GAME_PEF_FOLDER, 800, 600, NULL, 0, 0},
+     GAME_PEF_FOLDER, 800, 600, NULL, 0, 0, NULL, 0},
     {"crystal-caliburn", "Crystal Caliburn", "Crystal Caliburn", "CRYSTAL CALIBURN 3.0.1",
-     GAME_PEF_FOLDER, 800, 600, NULL, 0, 0},
+     GAME_PEF_FOLDER, 800, 600, NULL, 0, 0, NULL, 0},
     {"monster-fair", "MONSTER FAIR", "MONSTER FAIR.app", "Contents/MacOS/MONSTER FAIR",
-     GAME_MACHO_BUNDLE, 800, 600, NULL, 0, 0},
+     GAME_MACHO_BUNDLE, 800, 600, NULL, 0, 0, NULL, 0},
     {"jinni-zeala", "Jinni Zeala", "Jinni Zeala", "JINNI ZEALA 1.2.2", GAME_PEF_FOLDER, 800, 600,
-     NULL, 0, 0},
+     NULL, 0, 0, MENU_NEW_GAME},
     /* Its table is drawn for 768 lines, and it plays at the display's size. */
     {"mad-daedalus", "Mad Daedalus", "Mad Daedalus.app", "Contents/MacOS/Mad Daedalus",
-     GAME_MACHO_BUNDLE, 1024, 768, NULL, 0, 0},
+     GAME_MACHO_BUNDLE, 1024, 768, NULL, 0, 0, NULL, 0},
     {"angel-egg", "Angel Egg", "Angel Egg.app", "Contents/MacOS/Angel Egg", GAME_MACHO_BUNDLE, 1024,
-     768, "Angel Egg IE Registration", 320, 0x100},
+     768, "Angel Egg IE Registration", 320, 0x100, NULL, 0},
     /* It takes the screen at 1024x768 itself (BeginFullScreen). */
     {"golden-logres", "Golden Logres", "Golden Logres.app", "Contents/MacOS/Golden Logres",
-     GAME_MACHO_BUNDLE, 1024, 768, "Golden Logres 3.0 Registration", 320, 0x100},
+     GAME_MACHO_BUNDLE, 1024, 768, "Golden Logres 3.0 Registration", 320, 0x100, NULL, 0},
     {"fairy-tower", "FAIRY TOWER", "FAIRY TOWER.app", "Contents/MacOS/FAIRY TOWER",
-     GAME_MACHO_BUNDLE, 1024, 768, NULL, 0, 0},
+     GAME_MACHO_BUNDLE, 1024, 768, NULL, 0, 0, MENU_NEW_GAME},
     /* A 13-inch Mac's screen: it centers its 580x443 window there, and its
        alerts are laid out for it (ALRT 900 reaches x 611). */
     {"tristan", "Tristan", "TRISTAN IE", "TRISTAN IE 2.5.1", GAME_PEF_FOLDER, 640, 480,
-     "TRISTAN IE Registration", 256, 0x80},
+     "TRISTAN IE Registration", 256, 0x80, NULL, 0},
 };
 #define NGAMES (sizeof games / sizeof games[0])
 
@@ -169,7 +176,7 @@ int game_move_legacy_data(const char *root) {
     while ((ent = readdir(d))) {
         const char *name = ent->d_name;
         if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0 || strcmp(name, GAME_PICKER_FILE) == 0 ||
-            game_by_id(name))
+            game_by_id(name) || strncmp(name, THEME_TEMP_PREFIX, strlen(THEME_TEMP_PREFIX)) == 0)
             continue;
         if (!dest_ok && !(dest_ok = make_dirs(dest))) {
             log_msg("can't create %s: %s", dest, strerror(errno));

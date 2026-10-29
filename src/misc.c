@@ -84,11 +84,15 @@ void misc_init(void) {
     M.idle = idle;
     M.open_url = open_url ? open_url : open_with_open;
     clock_gettime(CLOCK_MONOTONIC, &M.start);
-    const char *f = getenv("LOONY_FIXED_CLOCK");
-    M.fixed = f && strcmp(f, "1") == 0;
+    M.fixed = misc_fixed_clock_asked();
 }
 
 bool misc_fixed_clock(void) { return M.fixed; }
+
+bool misc_fixed_clock_asked(void) {
+    const char *f = getenv("LOONY_FIXED_CLOCK");
+    return f && strcmp(f, "1") == 0;
+}
 
 static uint64_t elapsed_us(void) {
     if (M.fixed)
