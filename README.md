@@ -703,12 +703,13 @@ Replays): **2000 BC** starts as the score panel first shows LANDED AT 2000
 BC. The replay runs out of sight to that moment, with the window's title
 counting up ("Getting to 32:16.05 of play: 40%"), and then the game is
 yours: the flippers, the sound, the rest of the ball. Nothing of it is kept:
-it isn't recorded, and its high scores and settings go to a folder of its
-own that is thrown away, never your own preferences. The title says
+it isn't recorded, and its high scores and settings go to a temporary
+folder of its own, never your own preferences. The title says
 "(practice from 32:16.05)". Choose the item again to start over.
 
 The first practice from a moment of a long game takes a while (about 50
-seconds for one half an hour in), so it keeps a snapshot of the moment in a
+seconds for one half an hour in), so it keeps a snapshot of a second before
+the moment (the replay checks that second against the recording) in a
 `.practice` file beside the recording, and each practice after starts at
 once. One file a recording: practicing from another of its moments
 replaces it, and deleting the recording deletes it. The Practice menu's
@@ -721,8 +722,9 @@ with hundredths, as the viewer counts:
 LOONY_REPLAY=game.lwreplay LOONY_PRACTICE=31:47.98 ./build-release/loony
 ```
 
-Not with `LOONY_WATCH` or `LOONY_CLIP`. A shared recording practices with
-the registration every game starts with (`LOONY_REPLAY_LICENSE=default`):
+Not with `LOONY_WATCH` or `LOONY_CLIP`. From the menus, a shared recording
+practices with the registration every game starts with (from a terminal,
+add `LOONY_REPLAY_LICENSE=default` for the same):
 the game keeps its high scores only under the registration they were saved
 with, so yours would start it differently, and the snapshot wouldn't fit.
 

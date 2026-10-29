@@ -4358,8 +4358,10 @@ static void run_loony_practicing(void *unused) {
 /* Practice from 3 s into a recorded game: the replay goes there unseen and
    goes live, the game takes the flippers past the recording's end and
    quits when asked, and nothing is kept: no recording is written, the
-   recording and the preferences it was made with are as they were, and
-   the game saves into the practice's own folder. */
+   recording (but for the snapshot of the game's start, which its first
+   replay keeps in it) and the preferences it was made with are as they
+   were, and the game saves into the practice's own folder. A second
+   practice goes to the moment from the snapshot the first kept. */
 SLOW_TEST(run_practice_plays_on_live_from_a_moment_of_a_recording) {
     SKIP_UNLESS_GAME();
     char rec_dir[1024], play_dir[1024], out[65536];
@@ -4373,8 +4375,12 @@ SLOW_TEST(run_practice_plays_on_live_from_a_moment_of_a_recording) {
     CHECK_EQ(status, 0);
     char prefs[1100];
     snprintf(prefs, sizeof prefs, "%s/prefs.plist", rec_dir);
-    struct stat rec_before, prefs_before;
-    CHECK(stat(replay_file, &rec_before) == 0);
+    struct stat prefs_before;
+    uint8_t id_before[32], id_after[32], *section = NULL;
+    size_t section_len;
+    char err[256];
+    CHECK(replay_file_snapshot(replay_file, &section, &section_len, id_before, err, sizeof err));
+    free(section);
     CHECK(stat(prefs, &prefs_before) == 0);
 
     tmp_name(practice_script, sizeof practice_script, "script");
@@ -4384,13 +4390,19 @@ SLOW_TEST(run_practice_plays_on_live_from_a_moment_of_a_recording) {
     practice_from = "0:03";
     snprintf(run_data, sizeof run_data, "%s/data", play_dir);
     status = test_run_child(run_loony_practicing, NULL, out, sizeof out);
+    /* Again, from the snapshot the first kept beside the recording. */
+    static char again[65536];
+    snprintf(run_data, sizeof run_data, "%s/again", play_dir);
+    int status_again = test_run_child(run_loony_practicing, NULL, again, sizeof again);
     run_data[0] = '\0';
     unlink(practice_script);
     char saved[1100];
     snprintf(saved, sizeof saved, "%s/data/prefs.plist", play_dir);
-    struct stat rec_after, prefs_after, st;
+    struct stat prefs_after, st;
     bool saved_there = stat(saved, &st) == 0;
-    CHECK(stat(replay_file, &rec_after) == 0);
+    section = NULL;
+    bool read_after = replay_file_snapshot(replay_file, &section, &section_len, id_after, err, sizeof err);
+    free(section);
     CHECK(stat(prefs, &prefs_after) == 0);
     int recordings = files_in(rec_dir, ".lwreplay", false) + files_in(play_dir, ".lwreplay", false);
     test_remove_tree(rec_dir);
@@ -4403,8 +4415,12 @@ SLOW_TEST(run_practice_plays_on_live_from_a_moment_of_a_recording) {
     CHECK(!strstr(out, "replay: stopped by the host")); /* the quit came live */
     CHECK(!strstr(out, "recording the game"));
     CHECK_EQ(recordings, 1);
-    CHECK_EQ(rec_after.st_size, rec_before.st_size);
-    CHECK_EQ(rec_after.st_mtime, rec_before.st_mtime);
+    CHECK(read_after);
+    CHECK(memcmp(id_after, id_before, sizeof id_before) == 0);
     CHECK_EQ(prefs_after.st_mtime, prefs_before.st_mtime);
     CHECK(saved_there);
+    CHECK_EQ(status_again, 0);
+    CHECK_CONTAINS(again, "gamestart: going to the practice moment");
+    CHECK_CONTAINS(again, "practice: playing on from");
+    CHECK(!strstr(again, "desync"));
 }

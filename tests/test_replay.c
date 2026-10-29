@@ -2185,3 +2185,12 @@ TEST(practice_copies_the_shipped_practices_where_they_can_be_written) {
     CHECK(practice_bundled_open(0, path, sizeof path, &ticks));
     CHECK_EQ(file_size(snap), file_size(LOONY_SRC_DIR "/practice/2000-bc.practice"));
 }
+
+/* The snapshot the app ships with each practice fits this build, so its
+   practice starts at once: a change to what snapshots hold needs the
+   shipped ones taken again (practice.h has how). */
+TEST(practice_the_shipped_snapshots_fit_this_build) {
+    char err[512];
+    CHECK(gamestart_practice_check(LOONY_SRC_DIR "/practice/2000-bc.practice",
+                                   LOONY_SRC_DIR "/practice/2000-bc.lwreplay", err, sizeof err));
+}

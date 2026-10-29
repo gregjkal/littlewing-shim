@@ -350,9 +350,12 @@ static snapshot *load(const section *s, char *why, size_t cap) {
    or so later, so one taken within PRACTICE_SLACK_US of it is the one. */
 #define PRACTICE_SLACK_US 100000ull
 
-/* The practice file, decompressed (malloc'd), or NULL. */
-static uint8_t *read_practice(size_t *len) {
-    gzFile f = gzopen(G.practice_path, "rb");
+/* The most a practice file decompresses to: a snapshot is a few MB. */
+#define PRACTICE_MAX (256u << 20)
+
+/* The practice file at path, decompressed (malloc'd), or NULL. */
+static uint8_t *read_practice(const char *path, size_t *len) {
+    gzFile f = gzopen(path, "rb");
     if (!f)
         return NULL;
     size_t cap = 1 << 20;
@@ -361,21 +364,22 @@ static uint8_t *read_practice(size_t *len) {
     int n;
     while (p && (n = gzread(f, p + *len, (unsigned)(cap - *len))) > 0) {
         *len += (size_t)n;
-        if (*len == cap && !(p = realloc(p, cap *= 2)))
-            fatal("out of memory");
+        if (*len == cap && (cap >= PRACTICE_MAX || !(p = realloc(p, cap *= 2))))
+            break;
     }
     if (!p)
         fatal("out of memory");
-    bool ok = n == 0;
+    bool ok = n == 0 && *len < PRACTICE_MAX;
     gzclose(f);
     if (!ok)
-        log_msg("gamestart: can't read %s", G.practice_path);
+        log_msg("gamestart: can't read %s%s", path,
+                *len >= PRACTICE_MAX ? ": it is too big for a snapshot" : "");
     return ok ? p : (free(p), NULL);
 }
 
 static snapshot *practice_snapshot(void) {
     size_t len;
-    uint8_t *p = read_practice(&len);
+    uint8_t *p = read_practice(G.practice_path, &len);
     if (!p)
         return NULL;
     section s;
@@ -391,6 +395,23 @@ static snapshot *practice_snapshot(void) {
     if (!snap)
         log_msg("gamestart: the practice snapshot in %s can't be used: %s", G.practice_path, why);
     return snap;
+}
+
+bool gamestart_practice_check(const char *path, const char *recording, char *why, size_t cap) {
+    uint8_t identity[HASH_LEN], *own = NULL;
+    size_t len;
+    if (!replay_file_snapshot(recording, &own, &len, identity, why, cap))
+        return false;
+    free(own);
+    uint8_t *p = read_practice(path, &len);
+    if (!p) {
+        snprintf(why, cap, "can't read %s", path);
+        return false;
+    }
+    section s;
+    bool ok = parse(p, len, &s, why, cap) && same_recording(&s, identity, why, cap);
+    free(p);
+    return ok;
 }
 
 /* At the baseline, entering trap index. */
@@ -710,6 +731,8 @@ void gamestart_practice_here(uint32_t index) {
     char tmp[PATH_MAX + 16];
     snprintf(tmp, sizeof tmp, "%s.XXXXXX", G.practice_path);
     int fd = mkstemp(tmp);
+    if (fd >= 0)
+        fchmod(fd, 0644); /* as the recording beside it */
     gzFile f = fd >= 0 ? gzdopen(fd, "wb6") : NULL;
     bool ok = f && gzwrite(f, section, (unsigned)len) == (int)len;
     if (f ? gzclose(f) != Z_OK : fd >= 0 && close(fd) != 0)

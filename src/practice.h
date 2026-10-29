@@ -20,10 +20,16 @@
    seconds after launch. One file a recording: a practice from another
    moment replaces it.
 
-   It goes live at the first trap entry at depth 2 inside a handler the run
-   loop dispatched to once the replay's clock reaches the moment, where a
-   snapshot can be taken (snapshot.h) and the game is between frames. A
-   replay that desyncs on the way there fails as any replay does. Not with
+   The snapshot is of a second before the moment, so a replay put there
+   from it is checked against the recording's frames before it goes live,
+   and one that no longer fits desyncs and is dropped (gamestart_drop)
+   rather than played on wrong. Both are at the first trap entry at depth
+   2 inside a handler the run loop dispatched to once the replay's clock
+   reaches them, where a snapshot can be taken (snapshot.h) and the game
+   is between frames. The window opens at the first frame and shows how
+   far along the replay is in its title, and takes a quit; nothing else
+   is drawn until the moment. A replay that desyncs on the way there fails
+   as any replay does. Not with
    LOONY_WATCH or LOONY_CLIP. */
 
 /* After seek_start and before gamestart_init (its hook runs this one's,
@@ -38,15 +44,20 @@ bool practice_init(const char *title, char *err, size_t errlen);
 bool practice_path(const char *replay, char *out, size_t cap);
 
 /* Whether this run is a practice still on its way to the moment: nothing
-   is drawn then. */
+   is drawn then but the first frame, which opens the window. */
 bool practice_unseen(void);
 
 /* The practices the app ships: a recording and the snapshot of its moment
    each, in practice/ (Contents/Resources/practice in the app, the repo's
    practice/ beside a build's folder otherwise), named in this module's
    table, for the Practice menu. Their recordings are shared copies
-   (replay_share), so the player's own license goes in. How many, and the
-   menu's name for i. */
+   (replay_share), with no license in them, and a practice puts in the one
+   every game starts with (recordings_practice_env), so the snapshot fits
+   every player. A change to what snapshots hold (gamestart.h) needs each
+   shipped snapshot taken again, which a test checks: a headless practice
+   of practice/<name>.lwreplay from its moment, with
+   LOONY_REPLAY_LICENSE=default and an empty LOONY_DATA_DIR, writes
+   practice/<name>.practice. How many, and the menu's name for i. */
 size_t practice_bundled_count(void);
 const char *practice_bundled_title(size_t i);
 

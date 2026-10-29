@@ -22,6 +22,8 @@
 static struct {
     bool unseen;        /* on the way to the moment */
     uint64_t target_us; /* the moment, on the replay's clock */
+    uint64_t keep_us;   /* where its snapshot is taken, PRACTICE_CHECK_US before */
+    bool kept;          /* past there */
     trap_entry_fn next; /* the hook this one runs after it (seek's) */
     char title[128];
     char at[32];        /* the moment, as the title shows it */
@@ -40,9 +42,14 @@ static void show_progress(void) {
     display_set_title(P.progress);
 }
 
-static void go_live(uint32_t index) {
+/* How far before the moment its snapshot is taken: a replay put there
+   from the snapshot replays this much, with a frame check or two, before
+   it goes live, so a snapshot that no longer fits desyncs (and is dropped,
+   gamestart_drop) rather than plays on wrong. */
+#define PRACTICE_CHECK_US 1000000ull
+
+static void go_live(void) {
     P.unseen = false; /* the hook stays, as gamestart's may run it */
-    gamestart_practice_here(index);
     replay_go_live();
     events_release_keys();
     display_set_title(P.title);
@@ -54,13 +61,21 @@ static void go_live(uint32_t index) {
 static uint32_t on_entry(uint32_t index) {
     ev_frame f;
     uint32_t loop_index, loop_resume;
-    if (P.unseen)
-        show_progress();
-    if (P.unseen && replay_now_us() >= P.target_us && trap_depth() == 2 &&
+    if (!P.unseen)
+        return P.next ? P.next(index) : index;
+    show_progress();
+    uint64_t now = replay_now_us();
+    if ((now >= P.target_us || (!P.kept && now >= P.keep_us)) && trap_depth() == 2 &&
         trap_level(1, &loop_index, &loop_resume) &&
         strcmp(trap_import_name(loop_index), "RunApplicationEventLoop") == 0 &&
-        events_loop_frame(&f) && f.timer < 0)
-        go_live(index);
+        events_loop_frame(&f) && f.timer < 0) {
+        if (!P.kept) {
+            P.kept = true;
+            gamestart_practice_here(index);
+        }
+        if (now >= P.target_us)
+            go_live();
+    }
     return P.next ? P.next(index) : index;
 }
 
@@ -106,8 +121,9 @@ bool practice_init(const char *title, char *err, size_t errlen) {
     P.unseen = true;
     P.shown = -1;
     char path[PATH_MAX];
+    P.keep_us = P.target_us > PRACTICE_CHECK_US ? P.target_us - PRACTICE_CHECK_US : 0;
     if (practice_path(getenv("LOONY_REPLAY"), path, sizeof path))
-        gamestart_practice(P.target_us, path);
+        gamestart_practice(P.keep_us, path);
     snprintf(P.title, sizeof P.title, "%s (practice from %s)", title,
              clip_format_time(ticks, P.at, sizeof P.at));
     P.next = trap_entry_hook();

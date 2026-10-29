@@ -135,7 +135,12 @@ static void present_frame(void) {
         clip_present(dirty);
     else if (watch_on())
         watch_present(dirty);
-    else if (!gamestart_taking() && !practice_unseen()) {
+    else if (practice_unseen()) {
+        static bool opened; /* the window, for the progress in its title and a quit */
+        if (!opened)
+            display_present();
+        opened = true;
+    } else if (!gamestart_taking()) {
         unshown |= dirty && !qd_flush_only();
         if (unshown && (!throttled || display_due())) {
             display_present();

@@ -151,13 +151,19 @@ bool gamestart_drop(void);
    the same baseline. Before gamestart_init. At the baseline, a replay with
    a snapshot in that file that fits (the same checks, and taken within a
    tenth of a second after the moment) goes straight to it; otherwise it
-   keeps the baseline, and gamestart_practice_here, at the moment,
-   entering trap index, writes the file (replacing it). A practice whose
+   keeps the baseline, and gamestart_practice_here, at the moment (once
+   the clock is past it: practice.h), entering trap index, writes the file
+   (replacing it). A practice whose
    snapshot fails (gamestart_drop) has the file removed and replays from
    launch. Nothing at a moment within GAMESTART_BASELINE_US of launch, or
    with LOONY_GAMESTART=0. */
 void gamestart_practice(uint64_t clock_us, const char *path);
 void gamestart_practice_here(uint32_t index);
+
+/* Whether the practice file at path was taken by a build whose snapshots
+   this one reads, of the recording at recording; if not, why. The
+   baseline is checked only when a replay goes to it. */
+bool gamestart_practice_check(const char *path, const char *recording, char *why, size_t cap);
 
 /* For tests: the hash a baseline would have now, the license blanked. */
 void gamestart_memory_hash(uint8_t out[32]);
