@@ -35,6 +35,10 @@ typedef struct {
        license_key_at, each ended by a zero byte. */
     const char *license_file;
     int license_size, license_key_at;
+    /* Its picker music (theme.h): what to press before it plays (a
+       LOONY_SCRIPT, or NULL), and the tick from which to listen. */
+    const char *theme_script;
+    int theme_from;
 } game_info;
 
 size_t game_count(void);
@@ -95,7 +99,8 @@ int game_high_scores(const char *(*get_str)(const char *key),
 
 /* Before Plan 8 there was one game, and its files (prefs.plist) were saved
    directly in the save root. Moves every entry of root that is neither a
-   known game's folder nor GAME_PICKER_FILE into root/loony-labyrinth. An
-   entry already there is left in place and logged, never overwritten.
+   known game's folder, GAME_PICKER_FILE nor a picker music render's folder
+   (theme.h) into root/loony-labyrinth. An entry already there is left in
+   place and logged, never overwritten.
    Returns the number moved; a missing root moves nothing. */
 int game_move_legacy_data(const char *root);
