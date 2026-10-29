@@ -41,8 +41,9 @@ heard from your own copy, the first time the picker shows a game, by playing
 it out of sight for a moment (a few seconds each; Golden Logres takes about a
 minute), so a card is silent until then. Jinni Zeala's and FAIRY TOWER's tables
 are silent until a game starts, so theirs is the music of a game's first ball.
-`LOONY_PICKER_MUSIC=0` turns it off. With one game installed, it plays that game. Choosing QUIT in a game's
-own menu goes back to the picker; Cmd-Q or closing the window quits. The app
+`LOONY_PICKER_MUSIC=0` turns it off. With one game installed, it plays that
+game. Choosing QUIT in a game's own menu goes back to the picker; Cmd-Q or
+closing the window quits. The app
 carries its own copies of Unicorn and SDL3, so Homebrew upgrades don't affect
 it. A release is notarized and opens without a warning, and updates itself: it
 checks for a new release once a day, and LittleWing → Check for Updates…

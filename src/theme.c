@@ -15,6 +15,7 @@
 #include <sys/qos.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "export.h"
@@ -99,7 +100,9 @@ static void remove_tree(const char *path) { nftw(path, remove_one, 16, FTW_DEPTH
 
 /* Removes the folders of renders whose program has ended without
    removing them (a crash): THEME_TEMP_PREFIX<pid>-XXXXXX, where pid is the
-   program that made it. Another copy's, still running, is left alone. */
+   program that made it. Another copy's, still running, is left alone,
+   unless the folder is older than any render (its pid since reused). */
+#define LEFTOVER_AGE (60 * 60) /* seconds */
 static void remove_leftovers(void) {
     DIR *d = opendir(T.root);
     struct dirent *de;
@@ -107,11 +110,13 @@ static void remove_leftovers(void) {
     while (d && (de = readdir(d))) {
         if (strncmp(de->d_name, THEME_TEMP_PREFIX, n) != 0)
             continue;
-        pid_t owner = (pid_t)strtol(de->d_name + n, NULL, 10);
-        if (owner > 0 && owner != getpid() && (kill(owner, 0) == 0 || errno == EPERM))
-            continue;
         char path[PATH_MAX * 2];
         snprintf(path, sizeof path, "%s/%s", T.root, de->d_name);
+        pid_t owner = (pid_t)strtol(de->d_name + n, NULL, 10);
+        struct stat st;
+        bool recent = stat(path, &st) == 0 && time(NULL) - st.st_mtime < LEFTOVER_AGE;
+        if (recent && owner > 0 && owner != getpid() && (kill(owner, 0) == 0 || errno == EPERM))
+            continue;
         remove_tree(path);
     }
     if (d)
@@ -175,7 +180,8 @@ static bool spawn(int i) {
     snprintf(set_data, sizeof set_data, "LOONY_DATA_DIR=%s", data);
     snprintf(set_wav, sizeof set_wav, "LOONY_WAV=%s/out.wav", T.temp);
     snprintf(set_script, sizeof set_script, "LOONY_SCRIPT=%s", script);
-    snprintf(set_exit, sizeof set_exit, "LOONY_EXIT_AFTER=%d", g->theme_from + (THEME_MAX_SECONDS + 2) * 60);
+    snprintf(set_exit, sizeof set_exit, "LOONY_EXIT_AFTER=%d",
+             g->theme_from + (THEME_MAX_SECONDS + 2) * 60);
     if (mkdir(data, 0755) != 0 || (g->theme_script && !write_text(script, g->theme_script))) {
         log_msg("picker music: can't write in %s: %s", T.temp, strerror(errno));
         remove_tree(T.temp);
@@ -186,8 +192,8 @@ static bool spawn(int i) {
        one, its NULL ends the list there. */
     const char *set[] = {set_data, set_wav, set_exit, "LOONY_FIXED_CLOCK=1", "LOONY_AUTO_ALERTS=1",
                          "LOONY_UNREGISTERED=0", "LOONY_TRACE=", "LOONY_STUB=", "LOONY_HD=off",
-                         "SDL_VIDEO_DRIVER=dummy", "SDL_AUDIO_DRIVER=dummy", "LOONY_LOG_INHERITED=1",
-                         g->theme_script ? set_script : NULL, NULL};
+                         "SDL_VIDEO_DRIVER=dummy", "SDL_AUDIO_DRIVER=dummy",
+                         "LOONY_LOG_INHERITED=1", g->theme_script ? set_script : NULL, NULL};
     char **env = export_env_with(environ, set);
     posix_spawn_file_actions_t actions;
     posix_spawnattr_t attr;
@@ -206,8 +212,8 @@ static bool spawn(int i) {
                                         POSIX_SPAWN_SETSIGDEF);
     posix_spawnattr_set_qos_class_np(&attr, QOS_CLASS_UTILITY); /* below the picker */
     pid_t pid = 0;
-    int rc = env ? posix_spawn(&pid, T.self, &actions, &attr, (char *const[]){T.self, dir, NULL}, env)
-                 : ENOMEM;
+    char *const argv[] = {T.self, dir, NULL};
+    int rc = env ? posix_spawn(&pid, T.self, &actions, &attr, argv, env) : ENOMEM;
     posix_spawn_file_actions_destroy(&actions);
     posix_spawnattr_destroy(&attr);
     export_free_env(env);

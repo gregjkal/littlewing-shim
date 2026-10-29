@@ -13,11 +13,13 @@
    LOONY_TRACE or LOONY_STUB, in a save folder of its own (in
    THEME_TEMP_PREFIX<pid>-XXXXXX in the save root, pid this program's) that
    is then removed, so the user's preferences and high scores are never
-   touched; a restart (main.c) stops it. The game's row says what to press first (theme_script,
-   a LOONY_SCRIPT) and from when to listen (theme_from). theme_clip trims
-   the recording to the music, and the clip is kept as THEME_FILE in the
-   game's save folder: an empty one for a game that played nothing, so
-   it isn't rendered again. Delete it to render it again.
+   touched; a restart (main.c) stops it. The game's row says what to press
+   first (theme_script, a LOONY_SCRIPT) and from when to listen
+   (theme_from). theme_clip trims the recording to the music, and the clip
+   is kept as THEME_FILE in the game's save folder: an empty one for a game
+   that played nothing, so it isn't rendered again. Delete it to render it
+   again. A render that fails, or that a pick cuts short, is tried again
+   the next time the picker shows.
 
    No music without a save root (LOONY_DATA_DIR set, as in the tests), on
    the fixed clock, or with LOONY_PICKER_MUSIC=0. Its loudness follows the

@@ -100,7 +100,7 @@ int game_high_scores(const char *(*get_str)(const char *key),
 /* Before Plan 8 there was one game, and its files (prefs.plist) were saved
    directly in the save root. Moves every entry of root that is neither a
    known game's folder, GAME_PICKER_FILE nor a picker music render's folder
-   (theme.h) into root/loony-labyrinth. An
-   entry already there is left in place and logged, never overwritten.
+   (theme.h) into root/loony-labyrinth. An entry already there is left in
+   place and logged, never overwritten.
    Returns the number moved; a missing root moves nothing. */
 int game_move_legacy_data(const char *root);
