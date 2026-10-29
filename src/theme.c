@@ -24,8 +24,6 @@
 #include "util.h"
 #include "wav.h"
 
-#define TEMP_PREFIX ".picker-music-" /* a render's folder in the save root */
-
 static bool loud(const int16_t *s, uint32_t i) {
     return abs(s[2 * i]) > THEME_QUIET || abs(s[2 * i + 1]) > THEME_QUIET;
 }
@@ -60,7 +58,7 @@ uint32_t theme_clip(const int16_t *samples, uint32_t frames, uint32_t from, int1
         fade = len;
     for (uint32_t i = ended ? len : len - fade; i < len; i++)
         for (int c = 0; c < 2; c++)
-            clip[2 * i + c] = (int16_t)((int32_t)clip[2 * i + c] * (int32_t)(len - i) / (int32_t)fade);
+            clip[2 * i + c] = (int16_t)((int64_t)clip[2 * i + c] * (len - i) / fade);
     *out = clip;
     return len;
 }
@@ -99,12 +97,18 @@ static int remove_one(const char *path, const struct stat *st, int flag, struct 
 
 static void remove_tree(const char *path) { nftw(path, remove_one, 16, FTW_DEPTH | FTW_PHYS); }
 
-/* Removes the folders of renders this program didn't see end. */
+/* Removes the folders of renders whose program has ended without
+   removing them (a crash): THEME_TEMP_PREFIX<pid>-XXXXXX, where pid is the
+   program that made it. Another copy's, still running, is left alone. */
 static void remove_leftovers(void) {
     DIR *d = opendir(T.root);
     struct dirent *de;
+    const size_t n = strlen(THEME_TEMP_PREFIX);
     while (d && (de = readdir(d))) {
-        if (strncmp(de->d_name, TEMP_PREFIX, strlen(TEMP_PREFIX)) != 0)
+        if (strncmp(de->d_name, THEME_TEMP_PREFIX, n) != 0)
+            continue;
+        pid_t owner = (pid_t)strtol(de->d_name + n, NULL, 10);
+        if (owner > 0 && owner != getpid() && (kill(owner, 0) == 0 || errno == EPERM))
             continue;
         char path[PATH_MAX * 2];
         snprintf(path, sizeof path, "%s/%s", T.root, de->d_name);
@@ -158,7 +162,7 @@ static bool write_text(const char *path, const char *text) {
 static bool spawn(int i) {
     entry *e = &T.e[i];
     const game_info *g = e->game;
-    snprintf(T.temp, sizeof T.temp, "%s/" TEMP_PREFIX "XXXXXX", T.root);
+    snprintf(T.temp, sizeof T.temp, "%s/" THEME_TEMP_PREFIX "%d-XXXXXX", T.root, (int)getpid());
     if (!make_dirs(T.root) || !mkdtemp(T.temp)) {
         log_msg("picker music: can't make a folder in %s: %s", T.root, strerror(errno));
         return false;
@@ -177,10 +181,13 @@ static bool spawn(int i) {
         remove_tree(T.temp);
         return false;
     }
-    /* The script last: without one, its NULL ends the list there. */
+    /* Registered, as the app's games are, and none of the debugging that
+       would change what it plays or fill the log. The script last: without
+       one, its NULL ends the list there. */
     const char *set[] = {set_data, set_wav, set_exit, "LOONY_FIXED_CLOCK=1", "LOONY_AUTO_ALERTS=1",
-                         "LOONY_HD=off", "SDL_VIDEO_DRIVER=dummy", "SDL_AUDIO_DRIVER=dummy",
-                         "LOONY_LOG_INHERITED=1", g->theme_script ? set_script : NULL, NULL};
+                         "LOONY_UNREGISTERED=0", "LOONY_TRACE=", "LOONY_STUB=", "LOONY_HD=off",
+                         "SDL_VIDEO_DRIVER=dummy", "SDL_AUDIO_DRIVER=dummy", "LOONY_LOG_INHERITED=1",
+                         g->theme_script ? set_script : NULL, NULL};
     char **env = export_env_with(environ, set);
     posix_spawn_file_actions_t actions;
     posix_spawnattr_t attr;
@@ -237,13 +244,17 @@ static void keep(int i) {
     wav_file w;
     bool ok = files_data_dir(e->game->id, dir, sizeof dir) && make_dirs(dir) &&
               wav_open(&w, tmp, THEME_RATE);
+    const char *why = ok ? NULL : "can't create it";
     if (ok) {
         wav_write(&w, clip, frames);
-        ok = wav_close(&w) && rename(tmp, e->path) == 0;
+        if (!(ok = wav_close(&w)))
+            why = "a write failed";
+        else if (!(ok = rename(tmp, e->path) == 0))
+            why = strerror(errno);
     }
     free(clip);
     if (!ok) {
-        log_msg("picker music: can't write %s: %s", e->path, strerror(errno));
+        log_msg("picker music: can't write %s: %s", e->path, why);
         e->failed = true;
         return;
     }
@@ -271,7 +282,7 @@ static int next_render(void) {
 void theme_start(const game_info *const *games, int n, int selected, const char *self) {
     memset(&T, 0, sizeof T);
     const char *off = getenv("LOONY_PICKER_MUSIC");
-    if ((off && strcmp(off, "0") == 0) || misc_fixed_clock() || !self ||
+    if ((off && strcmp(off, "0") == 0) || misc_fixed_clock_asked() || !self ||
         !files_data_root(T.root, sizeof T.root))
         return;
     T.n = n < THEME_GAMES ? n : THEME_GAMES;

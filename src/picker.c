@@ -529,7 +529,9 @@ const game_info *picker_run(const game_info *const *games, int n) {
                 }
         }
         display_poll();
-        if (P.selected != playing && !P.choose)
+        if (P.choose || P.quit)
+            continue; /* no render to start for a picker that is going */
+        if (P.selected != playing)
             theme_select(playing = P.selected);
         theme_tend();
         SDL_Delay(1); /* without vsync (the dummy driver), don't spin */

@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "plist.h"
+#include "theme.h"
 #include "util.h"
 
 /* Their tables play nothing until a game starts, so the picker's music is
@@ -175,7 +176,7 @@ int game_move_legacy_data(const char *root) {
     while ((ent = readdir(d))) {
         const char *name = ent->d_name;
         if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0 || strcmp(name, GAME_PICKER_FILE) == 0 ||
-            game_by_id(name))
+            game_by_id(name) || strncmp(name, THEME_TEMP_PREFIX, strlen(THEME_TEMP_PREFIX)) == 0)
             continue;
         if (!dest_ok && !(dest_ok = make_dirs(dest))) {
             log_msg("can't create %s: %s", dest, strerror(errno));

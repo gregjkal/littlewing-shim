@@ -48,6 +48,7 @@
 #include "settings.h"
 #include "sound.h"
 #include "text.h"
+#include "theme.h"
 #include "trap.h"
 #include "util.h"
 #include "watch.h"
@@ -228,6 +229,7 @@ static void restart_self(const char *why, bool same_args) {
     display_log_stats(); /* exec skips the atexit handlers */
     replay_finish();
     gamestart_take_end();
+    theme_stop(); /* the picker's render, when a replay is opened from it */
     log_msg("%s", why);
     fflush(stderr);
     execv(self, same_args ? *_NSGetArgv() : (char *const[]){self, NULL});

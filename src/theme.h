@@ -9,9 +9,11 @@
    shipped, so each clip is rendered once, the first time the picker shows
    that game: a second copy of this program plays the game headless on the
    fixed clock, at utility priority, one game at a time, the selected game
-   first, with LOONY_WAV recording what it plays, in a save folder of its
-   own that is then removed (so the user's preferences and high scores are
-   never touched). The game's row says what to press first (theme_script,
+   first, with LOONY_WAV recording what it plays, registered and without
+   LOONY_TRACE or LOONY_STUB, in a save folder of its own (in
+   THEME_TEMP_PREFIX<pid>-XXXXXX in the save root, pid this program's) that
+   is then removed, so the user's preferences and high scores are never
+   touched; a restart (main.c) stops it. The game's row says what to press first (theme_script,
    a LOONY_SCRIPT) and from when to listen (theme_from). theme_clip trims
    the recording to the music, and the clip is kept as THEME_FILE in the
    game's save folder: an empty one for a game that played nothing, so
@@ -22,6 +24,7 @@
    Sound menu (sound_volume). Problems are logged, never fatal. */
 
 #define THEME_FILE "picker-music.wav"
+#define THEME_TEMP_PREFIX ".picker-music-" /* a render's folder in the save root */
 #define THEME_RATE 44100
 #define THEME_MAX_SECONDS 20 /* a clip is at most this long */
 #define THEME_GAP_MS 2000    /* this much silence ends the music */
