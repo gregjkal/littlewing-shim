@@ -183,6 +183,21 @@ bool test_tr_present(void) {
     return access(test_tr_exe_path(), R_OK) == 0;
 }
 
+const char *test_po_dir(void) {
+    static char dir[1024];
+    return game_dir("LOONY_PO_DIR", "psychedelic-o", dir, sizeof dir);
+}
+
+const char *test_po_exe_path(void) {
+    static char path[1100];
+    snprintf(path, sizeof path, "%s/Psychedelic''O''", test_po_dir());
+    return path;
+}
+
+bool test_po_present(void) {
+    return access(test_po_exe_path(), R_OK) == 0;
+}
+
 bool test_slow_enabled(void) {
     const char *s = getenv("LOONY_SLOW_TESTS");
     return s && *s && strcmp(s, "0") != 0;

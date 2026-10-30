@@ -1,18 +1,21 @@
 # littlewing-shim
 
-Runs all nine of LittleWing's PowerPC Mac pinball games natively on Apple Silicon:
+Runs all ten of LittleWing's PowerPC Mac pinball games natively on Apple Silicon:
 *Loony Labyrinth 3.0.1* and *Crystal Caliburn 3.0.1* (2003, Carbon programs for
 Mac OS 9 and X), *Jinni Zeala 1.2.2* (2004, an older build of the same engine),
 *MONSTER FAIR 1.2.5* and *Mad Daedalus 1.1.9* (2010, Mac OS X applications),
 *Angel Egg 3.0.1* (the 1996 table, as a 2005 Mac OS X application),
 *Golden Logres 3.0.4* (2005, a Mac OS X application), *FAIRY TOWER 1.1.7*
-(2008, a Mac OS X application) and *Tristan 2.5.1* (the Internet Edition of
-the 1992 table, a classic Mac OS program from before Carbon). It
+(2008, a Mac OS X application), *Tristan 2.5.1* (the Internet Edition of
+the 1992 table, a classic Mac OS program from before Carbon) and
+*Psychedelic "O" 1.2.3* (2006, a table for the band LOVE PSYCHEDELICO on
+Jinni Zeala's engine, from a bonus disc by Victor Entertainment). It
 emulates their CPU (Unicorn) and reimplements the Mac OS calls they make in C.
 
 This repo contains no game files: you need your own copies of the games.
 You can find them on Littlewing's [download
-page](http://www.littlewingpinball.com/doc/en/downloads/index.html).
+page](http://www.littlewingpinball.com/doc/en/downloads/index.html), except
+Psychedelic "O", which came only on its disc.
 
 This is an unofficial project, not made or endorsed by LittleWing.
 
@@ -26,21 +29,25 @@ page](http://www.littlewingpinball.com/doc/en/downloads/index.html).
 You can keep the games together in a folder within Applications instead,
 such as `/Applications/LittleWing Games/Loony Labyrinth`; any folder name
 works, one level down. None of these apps runs on Apple Silicon by itself;
-LittleWing.app runs them.
+LittleWing.app runs them. Psychedelic "O"'s disc installs it with an
+installer package (`MAC/SETUP.DMG`) that puts a `Psychedelic"O"` folder in
+`/Applications`; the installer only copies that folder, so copying it from
+the package's payload works as well.
 
 Download `LittleWing-<version>.zip` from
 [Releases](https://github.com/gregjkal/littlewing-shim/releases), unzip it,
 and move `LittleWing.app` to `/Applications` (or anywhere); or build it as
 above and copy `build-release/LittleWing.app`. Double-click it. With two to
-all nine games installed, it opens on a picker showing each game's thumbnail
+all ten games installed, it opens on a picker showing each game's thumbnail
 from LittleWing's download page (`./build-release/loony`, outside the app,
 shows each game's title picture or icon instead): the arrow keys (or
 the mouse) choose, and Return (or a click) plays. It starts on the last game
 played. The selected game's opening music plays, at the Sound menu's volume:
 heard from your own copy, the first time the picker shows a game, by playing
 it out of sight for a moment (a few seconds each; Golden Logres takes about a
-minute), so a card is silent until then. Jinni Zeala's and FAIRY TOWER's tables
-are silent until a game starts, so theirs is the music of a game's first ball.
+minute), so a card is silent until then. Jinni Zeala's, FAIRY TOWER's and
+Psychedelic "O"'s tables are silent until a game starts, so theirs is the
+music of a game's first ball.
 `LOONY_PICKER_MUSIC=0` turns it off. With one game installed, it plays that
 game. Choosing QUIT in a game's own menu goes back to the picker; Cmd-Q or
 closing the window quits. The app
@@ -70,13 +77,16 @@ LOONY_GAME=crystal-caliburn ./build-release/loony   # that game, from its usual 
 ```
 
 `LOONY_GAME` takes `loony-labyrinth`, `crystal-caliburn`, `monster-fair`,
-`jinni-zeala`, `mad-daedalus`, `angel-egg`, `golden-logres`, `fairy-tower` or `tristan`.
+`jinni-zeala`, `mad-daedalus`, `angel-egg`, `golden-logres`, `fairy-tower`,
+`tristan` or `psychedelic-o`.
 
 Every game starts registered. LittleWing's store is gone, so no key can be
 bought, and every build drops each game's verdict on the key (`src/unlock.c`,
 with the patches in `src/games.inc`): any e-mail address and a made-up key
 code of 24 or more digits register (24 or more letters and digits for MONSTER
-FAIR). So before a game first looks, the app saves `tester@example.com` and
+FAIR; Psychedelic "O"'s key is its disc's 12-digit serial, and almost any
+such number passes, such as 1234-5678-9012). So before a game first looks,
+the app saves `tester@example.com` and
 `123456789012345678901234` where the game keeps its license (`src/license.h`),
 and the game goes straight to its opening, as if you had typed them into its
 Register window. A license already saved, such as one you typed yourself, is
@@ -93,11 +103,16 @@ Click a button, or press Return for the outlined one. To register, click
 using Tab to move between the fields, and click **Register** (or press
 Return). The license is saved with the preferences, so later launches go
 straight to the game. Unregistered, games are time-limited.
+Psychedelic "O" has no demo: unregistered, it asks for its disc's serial
+number in a window of its own, until one is accepted (Cancel quits). The
+window's prompt is in Japanese, which the shim draws as unreadable
+characters; type the serial in the box and click OK.
 
 The game then plays its opening and a self-playing demo. All the games use
 the same keys by default (MONSTER FAIR and Jinni Zeala add X and . to nudge
-the table's left and right sides, and in Jinni Zeala, which has no demo to
-stop, and in Mad Daedalus and FAIRY TOWER, the first Esc opens the menu). Angel Egg keeps
+the table's left and right sides, and in Jinni Zeala and Psychedelic "O",
+which have no demo to stop, and in Mad Daedalus and FAIRY TOWER, the first
+Esc opens the menu). Angel Egg keeps
 its menus in a menu bar it hides, so Cmd-N (its New Game) starts a game, and
 Esc pauses it. So does Golden Logres, whose Esc first skips its opening story,
 then the title; its Cmd-P pauses and Cmd-R resumes too. Tristan starts a game
@@ -139,7 +154,8 @@ Each game's preferences (options, keys, the high-score table and the license)
 are saved when it quits (and at any exit but a crash), in
 `~/Library/Application Support/littlewing-shim/<game>/prefs.plist`, where `<game>`
 is `loony-labyrinth`, `crystal-caliburn`, `monster-fair`, `jinni-zeala`,
-`mad-daedalus`, `angel-egg`, `golden-logres`, `fairy-tower` or `tristan`. Any
+`mad-daedalus`, `angel-egg`, `golden-logres`, `fairy-tower`, `tristan` or
+`psychedelic-o`. Any
 file a game writes goes to its own folder there, never into the game's folder
 or app. Tristan saves its settings and high scores into its own program
 file, so those saves go to a copy of that file there, which it plays from
@@ -189,7 +205,7 @@ upscaler, or redrawn by hand, can replace the generated file. `LOONY_HD_SCALE`
   score display keeps the original font.
 - **Other games:** art for another game goes in `hd-art/<game id>`
   (`crystal-caliburn`, `monster-fair`, `jinni-zeala`, `mad-daedalus`, `angel-egg`,
-  `golden-logres`, `fairy-tower`, `tristan`), and the app uses it
+  `golden-logres`, `fairy-tower`, `tristan`, `psychedelic-o`), and the app uses it
   from then on.
 
 ## Giving it to someone
@@ -357,12 +373,14 @@ window keeps its size and scales it to fit.
 
 Tests that need a game's files skip when it isn't installed (`SKIP_UNLESS_GAME`,
 `SKIP_UNLESS_CC`, `SKIP_UNLESS_MF`, `SKIP_UNLESS_JZ`, `SKIP_UNLESS_MD`,
-`SKIP_UNLESS_AE`, `SKIP_UNLESS_GL`, `SKIP_UNLESS_FT` and `SKIP_UNLESS_TR` in
-`tests/test.h`). `LOONY_GAME_DIR`, `LOONY_CC_DIR`, `LOONY_MF_APP`,
-`LOONY_JZ_DIR`, `LOONY_MD_APP`, `LOONY_AE_APP`, `LOONY_GL_APP`,
-`LOONY_FT_APP` and `LOONY_TR_DIR` point them at copies elsewhere. The tests
-run with `LOONY_UNREGISTERED=1`, so the games start unregistered, as in the
-frames they check; the tests of the license saved by default unset it. The
+`SKIP_UNLESS_AE`, `SKIP_UNLESS_GL`, `SKIP_UNLESS_FT`, `SKIP_UNLESS_TR` and
+`SKIP_UNLESS_PO` in `tests/test.h`). `LOONY_GAME_DIR`, `LOONY_CC_DIR`,
+`LOONY_MF_APP`, `LOONY_JZ_DIR`, `LOONY_MD_APP`, `LOONY_AE_APP`,
+`LOONY_GL_APP`, `LOONY_FT_APP`, `LOONY_TR_DIR` and `LOONY_PO_DIR` point
+them at copies elsewhere. The tests run with `LOONY_UNREGISTERED=1`, so the
+games start unregistered, as in the frames they check; the tests of the
+license saved by default unset it, as do Psychedelic "O"'s, since it has no
+demo to play. The
 tests that register type a made-up address and a 24-digit key code
 (`TEST_EMAIL` and `TEST_KEY` in `tests/test_run.c`), which the unlock accepts,
 so they need no secrets.

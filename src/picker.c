@@ -69,6 +69,16 @@
 #define HEADING9_TOP 32
 #define HINT9_TOP 566
 #define NAME9_BELOW 10 /* from a card's art bottom to its name */
+/* Ten cards: rows of four, four and two, smaller than nine's so that three
+   rows of names on two lines fit between nine's heading and hint. The
+   columns are 200 pixels apart, and a name breaks when it would come within
+   24 pixels of its neighbour's. */
+#define ART10_W 144
+#define ART10_H 108
+#define CARD10_GAP 56
+#define CARD10_TOP0 66
+#define CARD10_ROW 162
+#define NAME10_APART 24
 #define NAME_LEADING 4 /* between a two-line name's lines */
 #define ICON_SIZE 128 /* icns 128's largest image, it32 */
 
@@ -77,24 +87,26 @@ static const qd_rgb BLACK = {0, 0, 0}, GOLD = {0xFFFF, 0xCCCC, 0x3333}, DARK = {
                     GRAY = {0x8888, 0x8888, 0x8888};
 
 /* Cards in a row: all of them, except four, which take two rows of two,
-   five and six, two rows of three, seven and eight, rows of four, and
+   five and six, two rows of three, seven, eight and ten, rows of four, and
    nine, three rows of three. */
 static int columns(int n) { return n == 4 ? 2 : n == 5 || n == 6 || n == 9 ? 3 : n >= 7 ? 4 : n; }
 
 /* Whether n cards take rows of four, where a name may need two lines. */
-static bool four_across(int n) { return n == 7 || n == 8; }
+static bool four_across(int n) { return n == 7 || n == 8 || n == 10; }
 
 /* The room card i takes, 4:3: two side by side, three smaller ones, or
-   four to eight in two rows and nine in three, each row centered. */
+   four to eight in two rows and nine and ten in three, each row centered. */
 static qd_rect slot(int n, int i) {
     if (n >= 4) {
         int cols = columns(n), row = i / cols;
-        int w = n == 9 ? ART9_W : n >= 7 ? ART7_W : ART4_W, h = n == 9 ? ART9_H : n >= 7 ? ART7_H : ART4_H;
-        int gap = n == 4 ? CARD4_GAP : n == 9 ? CARD9_GAP : n >= 7 ? CARD7_GAP : CARD5_GAP;
+        int w = n == 10 ? ART10_W : n == 9 ? ART9_W : n >= 7 ? ART7_W : ART4_W;
+        int h = n == 10 ? ART10_H : n == 9 ? ART9_H : n >= 7 ? ART7_H : ART4_H;
+        int gap = n == 4 ? CARD4_GAP : n == 10 ? CARD10_GAP : n == 9 ? CARD9_GAP : n >= 7 ? CARD7_GAP : CARD5_GAP;
         int in_row = n - row * cols < cols ? n - row * cols : cols;
         int left = (PICKER_W - in_row * w - (in_row - 1) * gap) / 2 + i % cols * (w + gap);
-        int top = n == 9 ? CARD9_TOP0 + row * CARD9_ROW
-                         : CARD4_TOP0 + row * (n >= 7 ? CARD7_ROW : CARD4_ROW);
+        int top = n == 10  ? CARD10_TOP0 + row * CARD10_ROW
+                  : n == 9 ? CARD9_TOP0 + row * CARD9_ROW
+                           : CARD4_TOP0 + row * (n >= 7 ? CARD7_ROW : CARD4_ROW);
         return (qd_rect){(int16_t)top, (int16_t)left, (int16_t)(top + h), (int16_t)(left + w)};
     }
     if (n == 3) {
@@ -113,7 +125,7 @@ static qd_rect card(int n, int i) {
 }
 
 static int name_top(int n, int i) {
-    if (n == 9)
+    if (n >= 9)
         return card(n, i).bottom + NAME9_BELOW;
     if (n >= 7)
         return NAME7_TOP0 + i / columns(n) * CARD7_ROW;
@@ -121,11 +133,12 @@ static int name_top(int n, int i) {
 }
 
 /* The widest a name may be before it takes two lines: a column, one slot
-   and the gap beside it, or with four across, where a name that wide
-   would touch its neighbour's, the slot alone. */
+   and the gap beside it, or with seven or eight, where a name that wide
+   would touch its neighbour's, the slot alone; with ten, the column less
+   the room kept between names. */
 static int name_room(int n) {
     qd_rect a = slot(n, 0), b = slot(n, 1);
-    return four_across(n) ? rect_w(a) : b.left - a.left;
+    return n == 10 ? b.left - a.left - NAME10_APART : four_across(n) ? rect_w(a) : b.left - a.left;
 }
 
 /* Where name (scale 2) breaks into two lines under a column room pixels
@@ -187,7 +200,7 @@ void picker_draw(const picker_entry *e, int n, int selected, uint8_t *screen) {
     font_init();
     qd_pixels s = pixels(screen, PICKER_W, PICKER_H);
     qd_fill(&s, s.bounds, s.bounds, BLACK);
-    draw_text(&s, PICKER_W / 2, n == 9 ? HEADING9_TOP : HEADING_TOP, "LITTLEWING PINBALL", 3, GOLD);
+    draw_text(&s, PICKER_W / 2, n >= 9 ? HEADING9_TOP : HEADING_TOP, "LITTLEWING PINBALL", 3, GOLD);
     for (int i = 0; i < n && i < PICKER_MAX; i++) {
         qd_rect c = card(n, i);
         int left = c.left, w = rect_w(c), h = rect_h(c);
@@ -214,7 +227,7 @@ void picker_draw(const picker_entry *e, int n, int selected, uint8_t *screen) {
         }
         draw_text(&s, left + w / 2, name_top(n, i), name, 2, i == selected ? WHITE : GRAY);
     }
-    draw_text(&s, PICKER_W / 2, n == 9 ? HINT9_TOP : HINT_TOP, "RETURN TO PLAY - CMD-Q TO QUIT", 2, GRAY);
+    draw_text(&s, PICKER_W / 2, n >= 9 ? HINT9_TOP : HINT_TOP, "RETURN TO PLAY - CMD-Q TO QUIT", 2, GRAY);
 }
 
 int picker_hit(int n, int x, int y) {

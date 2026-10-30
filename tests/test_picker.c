@@ -353,6 +353,57 @@ TEST(picker_draws_nine_cards_in_three_rows_of_three) {
     CHECK_EQ(picker_hit(9, 260, 150), -1);         /* between the columns */
 }
 
+TEST(picker_draws_ten_cards_in_rows_of_four_four_and_two) {
+    static const game_info psychedelic = {.title = "Psychedelic \"O\""};
+    picker_entry e[10];
+    for (int i = 0; i < 9; i++)
+        e[i] = (picker_entry){&nine[i], NULL};
+    e[9] = (picker_entry){&psychedelic, NULL};
+    e[0].art = solid_art(0xFF, 0, 0);
+    e[9].art = solid_art(0, 0, 0xFF);
+    picker_draw(e, 10, 9, screen);
+    free(e[0].art);
+    free(e[9].art);
+    CHECK_EQ(px(46, 66)[1], 0xFF);              /* the first card's art, reduced */
+    CHECK_EQ(px(46 + 107, 66 + 107)[1], 0xFF);
+    CHECK_EQ(px(646 + 54, 228 + 54)[1], 0x22);  /* the eighth ends the second row */
+    CHECK_EQ(px(246 + 54, 390 + 54)[1], 0x22);  /* the ninth, the short row centered */
+    CHECK_EQ(px(446 + 54, 390 + 54)[3], 0xFF);  /* the tenth card's art */
+    CHECK_EQ(px(446 - 2, 440)[1], 0xFF);        /* gold border: the tenth is selected */
+    CHECK_EQ(px(100, 440)[1], 0);               /* black beside the short row */
+    CHECK_EQ(px(200, 120)[1], 0);               /* and between the columns */
+    /* LOONY LABYRINTH (240 pixels) would come within 24 of its neighbour's
+       name, so it takes two lines; PSYCHEDELIC "O" breaks after its first
+       word (176 pixels), the room a column leaves. */
+    bool second_line[2] = {false, false};
+    for (int y = 204; y < 220; y++)
+        for (int x = 28; x < 28 + 144; x++)
+            second_line[0] |= px(x, y)[1] != 0;
+    for (int y = 528; y < 544; y++)
+        for (int x = 476; x < 524; x++)
+            second_line[1] |= px(x, y)[1] != 0;
+    CHECK(second_line[0]);
+    CHECK(second_line[1]);
+    /* Black below the heading (32 to 56) and above the hint (from 566). */
+    bool clear = true;
+    for (int x = 0; x < 800; x++) {
+        for (int y = 57; y < 62; y++)
+            clear &= px(x, y)[1] == 0;
+        for (int y = 546; y < 566; y++)
+            clear &= px(x, y)[1] == 0;
+    }
+    CHECK(clear);
+    bool choose = false;
+    CHECK_EQ(picker_key(10, 5, SDL_SCANCODE_DOWN, &choose), 9);
+    CHECK_EQ(picker_key(10, 6, SDL_SCANCODE_DOWN, &choose), 9); /* nothing below: the last card */
+    CHECK_EQ(picker_key(10, 9, SDL_SCANCODE_UP, &choose), 5);
+    CHECK_EQ(picker_key(10, 3, SDL_SCANCODE_RIGHT, &choose), 4);
+    CHECK(!choose);
+    CHECK_EQ(picker_hit(10, 446 + 5, 390 + 5), 9);
+    CHECK_EQ(picker_hit(10, 500, 536), 9); /* a name's second line counts */
+    CHECK_EQ(picker_hit(10, 100, 440), -1); /* beside the short row */
+}
+
 /* A 128x128 icon, its left half opaque red and its right half clear. */
 static void write_icon(const char *path, int size) {
     uint8_t *rgba = calloc((size_t)size * (size_t)size, 4);
@@ -533,6 +584,24 @@ TEST(picker_art_for_jinni_zeala_is_its_icon) {
     CHECK(around_is_card);
     CHECK(clear_is_card);
     CHECK_STR(got, "462c5e6f"); /* the icon shown in the four-game picker */
+}
+
+/* Psychedelic "O" has no PICT 800 either: outside the app its card is its
+   icns 128 icon (the app has a crop of its table in picker-art). */
+TEST(picker_art_for_psychedelic_o_is_its_icon) {
+    SKIP_UNLESS_PO();
+    uint8_t *art = malloc(PICKER_ART_W * PICKER_ART_H * 4);
+    char err[256] = "";
+    bool ok = picker_load_art(test_po_exe_path(), art, err, sizeof err);
+    const uint8_t *corner = art + ((size_t)5 * PICKER_ART_W + 5) * 4;
+    bool around_is_card = corner[1] == 0x22 && corner[2] == 0x22 && corner[3] == 0x22;
+    char got[16];
+    snprintf(got, sizeof got, "%08x", fnv1a32(art, PICKER_ART_W * PICKER_ART_H * 4));
+    free(art);
+    CHECK(ok);
+    CHECK_STR(err, "");
+    CHECK(around_is_card);
+    CHECK_STR(got, "18e13cd7"); /* the icon shown in the ten-game picker */
 }
 
 /* Mad Daedalus is a bundle: its card is appl.png, its 128x128 icon. */
