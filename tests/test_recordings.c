@@ -36,6 +36,9 @@ static int begin_test(void) {
 static void end_test(int *unused) {
     (void)unused;
     recordings_forget();
+    char received[1100];
+    snprintf(received, sizeof received, "%s/received", dir);
+    chmod(received, 0755); /* made read-only by receive */
     for (size_t i = 0; i < sizeof env_names / sizeof env_names[0]; i++) {
         if (env_saved[i])
             setenv(env_names[i], env_saved[i], 1);
@@ -478,4 +481,88 @@ TEST(recordings_leave_env_starts_the_program_as_if_launched) {
     CHECK(!getenv("LOONY_WATCH_FROM"));
     CHECK(!getenv("LOONY_GAME"));
     CHECK(!getenv("LOONY_DATA_DIR"));
+}
+
+/* A recording named name in dir/received, then made read-only, as
+   Messages' attachments are to this program. */
+static void receive(const char *name, uint32_t ms, char *path, size_t cap) {
+    char from[1200], received[1100];
+    bytes b;
+    header(&b, "loony-labyrinth");
+    clock_ms(&b, ms);
+    end(&b);
+    write_file(".staged", &b, true);
+    snprintf(received, sizeof received, "%s/received", dir);
+    chmod(received, 0755);
+    mkdir(received, 0755);
+    snprintf(from, sizeof from, "%s/.staged", recs);
+    snprintf(path, cap, "%s/%s", received, name);
+    rename(from, path);
+    chmod(received, 0555);
+}
+
+TEST(recordings_bring_in_copies_a_recording_its_folder_wont_take_files_beside) {
+    BEGIN_TEST();
+    char path[1200], out[1200], err[256], mine[1200], received[1100];
+    snprintf(received, sizeof received, "%s/received", dir);
+    receive("Loony 1,531,255,830 GREG.lwreplay", 1000, path, sizeof path);
+    struct stat a, b;
+    struct timespec old[2] = {{.tv_sec = 1760000000}, {.tv_sec = 1760000000}};
+    chmod(received, 0755);
+    utimensat(AT_FDCWD, path, old, 0);
+    chmod(received, 0555);
+    CHECK(recordings_bring_in(path, recs, out, sizeof out, err, sizeof err));
+    snprintf(mine, sizeof mine, "%s/Loony 1,531,255,830 GREG.lwreplay", recs);
+    CHECK_STR(out, mine);
+    CHECK(stat(path, &a) == 0 && stat(out, &b) == 0);
+    CHECK_EQ(a.st_size, b.st_size);
+    CHECK_EQ(b.st_mtimespec.tv_sec, 1760000000); /* which high score it holds */
+    CHECK_EQ(b.st_mode & 0777, 0644);
+    /* Opened again, the copy is opened, even once it holds more (a snapshot). */
+    FILE *f = fopen(out, "ab");
+    CHECK(f != NULL);
+    fclose(f);
+    CHECK(recordings_bring_in(path, recs, out, sizeof out, err, sizeof err));
+    CHECK_STR(out, mine);
+    /* Another recording of that name gets a name of its own. */
+    chmod(received, 0755);
+    unlink(path);
+    receive("Loony 1,531,255,830 GREG.lwreplay", 2000, path, sizeof path);
+    CHECK(recordings_bring_in(path, recs, out, sizeof out, err, sizeof err));
+    snprintf(mine, sizeof mine, "%s/Loony 1,531,255,830 GREG 2.lwreplay", recs);
+    CHECK_STR(out, mine);
+    const recording *r;
+    CHECK_EQ(recordings_list(recs, &r), 2);
+}
+
+TEST(recordings_bring_in_leaves_a_recording_its_folder_takes_files_beside) {
+    BEGIN_TEST();
+    char path[1200], out[1200], err[256], other[1100];
+    receive("game.lwreplay", 1000, path, sizeof path);
+    snprintf(other, sizeof other, "%s/received", dir);
+    chmod(other, 0755);
+    CHECK(recordings_bring_in(path, recs, out, sizeof out, err, sizeof err));
+    CHECK_STR(out, path);
+    const recording *r;
+    CHECK_EQ(recordings_list(recs, &r), 0);
+    /* Nor is anything left behind by the try. */
+    char cmd[1300];
+    snprintf(cmd, sizeof cmd, "test \"$(ls -A '%s')\" = game.lwreplay", other);
+    CHECK_EQ(system(cmd), 0);
+}
+
+TEST(recordings_bring_in_refuses_a_file_that_isnt_a_recording) {
+    BEGIN_TEST();
+    char path[1200], out[1200], err[256], received[1100];
+    snprintf(received, sizeof received, "%s/received", dir);
+    mkdir(received, 0755);
+    snprintf(path, sizeof path, "%s/junk.lwreplay", received);
+    FILE *f = fopen(path, "w");
+    CHECK(f != NULL);
+    fputs("not a replay", f);
+    fclose(f);
+    chmod(received, 0555);
+    CHECK(!recordings_bring_in(path, recs, out, sizeof out, err, sizeof err));
+    const recording *r;
+    CHECK_EQ(recordings_list(recs, &r), 0);
 }

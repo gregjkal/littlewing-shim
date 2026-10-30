@@ -50,7 +50,9 @@
 
    Clips go into the list next to the replay (clip_list_path: game.clips
    beside game.lwreplay), one "<start>-<end>" a line as LOONY_CLIP takes
-   them, and LOONY_CLIP=clips renders them (clip.h).
+   them, and LOONY_CLIP=clips renders them (clip.h). A recording opened
+   from a folder that takes no new file is watched from a copy in the
+   recordings folder (recordings_bring_in), so the list has somewhere to go.
 
    Fixing a clip: the selected clip is the one under the time shown
    (watch_state's now, the time being gone to while going), its start and
