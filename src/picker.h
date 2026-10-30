@@ -25,10 +25,13 @@
    rows of three, seven a row of four over three and eight two rows of four
    (176x132), and nine three rows of three (160x120, the columns 272 pixels
    apart, the heading and the hint nearer the screen's top and bottom),
-   each row centered, the art reduced to fit. A name wider than its column
-   (slot and gap), or with four across wider than its slot, breaks onto two
-   lines at a space; with nine, every name fits its column on one line, 24
-   pixels or more from its neighbour's. This file draws and reads input;
+   and ten rows of four, four and two (144x108, the columns 200 pixels
+   apart, the heading and the hint as nine's), each row centered, the art
+   reduced to fit. A name wider than its column
+   (slot and gap), with seven or eight wider than its slot, or with ten
+   closer than 24 pixels to its neighbour's, breaks onto two lines at a
+   space; with nine, every name fits its column on one line, 24 pixels or
+   more from its neighbour's. This file draws and reads input;
    picker_run (Task 5) shows it.
    Pixels here are QuickDraw 32-bit: big-endian xRGB. */
 
@@ -36,7 +39,7 @@
 #define PICKER_H 600
 #define PICKER_ART_W 288 /* square, as the download page's thumbnails are */
 #define PICKER_ART_H 288
-#define PICKER_MAX 9     /* the layouts fit two to nine games */
+#define PICKER_MAX 10    /* the layouts fit two to ten games */
 
 typedef struct {
     const game_info *game;

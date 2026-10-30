@@ -33,8 +33,8 @@ static void restore_apps_dir(void) {
         unsetenv("LOONY_APPS_DIR");
 }
 
-TEST(game_table_knows_nine_games) {
-    CHECK_EQ(game_count(), 9);
+TEST(game_table_knows_ten_games) {
+    CHECK_EQ(game_count(), 10);
     CHECK_STR(game_at(0)->id, "loony-labyrinth");
     CHECK_STR(game_at(1)->id, "crystal-caliburn");
     CHECK_STR(game_at(2)->id, "monster-fair");
@@ -44,7 +44,8 @@ TEST(game_table_knows_nine_games) {
     CHECK_STR(game_at(6)->id, "golden-logres");
     CHECK_STR(game_at(7)->id, "fairy-tower");
     CHECK_STR(game_at(8)->id, "tristan");
-    CHECK(game_at(9) == NULL);
+    CHECK_STR(game_at(9)->id, "psychedelic-o");
+    CHECK(game_at(10) == NULL);
     CHECK_EQ(game_at(0)->kind, GAME_PEF_FOLDER);
     CHECK_EQ(game_at(1)->kind, GAME_PEF_FOLDER);
     const game_info *jz = game_by_id("jinni-zeala");
@@ -92,6 +93,14 @@ TEST(game_table_knows_nine_games) {
     CHECK_STR(tr->exe, "TRISTAN IE 2.5.1");
     CHECK_EQ(tr->screen_width, 640);
     CHECK_EQ(tr->screen_height, 480);
+    const game_info *po = game_by_id("psychedelic-o");
+    CHECK_EQ(po->kind, GAME_PEF_FOLDER);
+    CHECK_STR(po->title, "Psychedelic \"O\"");
+    CHECK_STR(po->folder_name, "Psychedelic\"O\"");
+    CHECK_STR(po->exe, "Psychedelic''O''");
+    CHECK_EQ(po->screen_width, 800);
+    CHECK_EQ(po->screen_height, 600);
+    CHECK(po->license_file == NULL); /* "user id" in its preferences */
     CHECK_EQ(mf->screen_width, 800);
     CHECK_EQ(mf->screen_height, 600);
     const game_info *cc = game_by_id("crystal-caliburn");
