@@ -42,6 +42,8 @@ static const game_info games[] = {
        alerts are laid out for it (ALRT 900 reaches x 611). */
     {"tristan", "Tristan", "TRISTAN IE", "TRISTAN IE 2.5.1", GAME_PEF_FOLDER, 640, 480,
      "TRISTAN IE Registration", 256, 0x80, NULL, 0},
+    {"psychedelic-o", "Psychedelic \"O\"", "Psychedelic\"O\"", "Psychedelic''O''", GAME_PEF_FOLDER,
+     800, 600, NULL, 0, 0, MENU_NEW_GAME},
 };
 #define NGAMES (sizeof games / sizeof games[0])
 

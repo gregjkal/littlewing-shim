@@ -2675,6 +2675,109 @@ TEST(run_tristan_quits_on_cmd_q_from_the_host) {
     CHECK(!strstr(out, "didn't quit"));
 }
 
+/* Psychedelic "O" (1.2.3, the 2006 bonus disc) has no demo: at launch it
+   checks its serial ("user id" in its preferences) and asks for one until
+   it passes, so its runs save the license (license.h) and it plays the
+   opening, the 119 calls it makes all answered. */
+TEST(run_psychedelic_o_plays_its_opening_headless) {
+    SKIP_UNLESS_PO();
+    const char *t = getenv("TMPDIR");
+    snprintf(shot, sizeof shot, "%s/loony-run-XXXXXX", t && *t ? t : "/tmp");
+    int fd = mkstemp(shot);
+    CHECK(fd >= 0);
+    close(fd);
+    char out[32768];
+    test_tmp_dir(run_data, sizeof run_data);
+    unsetenv("LOONY_UNREGISTERED");
+    int status = test_run_child(run_loony_headless, (void *)test_po_dir(), out, sizeof out);
+    setenv("LOONY_UNREGISTERED", "1", 1);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    size_t len = 0;
+    uint8_t *png = read_file(shot, &len);
+    unlink(shot);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "playing Psychedelic \"O\" from");
+    CHECK_CONTAINS(out, "Psychedelic''O'': 119 imports");
+    CHECK_CONTAINS(out, "loony: license: registered in");
+    CHECK_CONTAINS(out, "loony: exiting after 240 ticks (LOONY_EXIT_AFTER)");
+    CHECK(!strstr(out, "GetNewDialog"));
+    CHECK(!strstr(out, "unknown selector"));
+    CHECK(!strstr(out, "not supported"));
+    CHECK(png != NULL);
+    CHECK(len > 33);
+    CHECK_EQ(rd_be32(png + 16), 800);
+    CHECK_EQ(rd_be32(png + 20), 600);
+    free(png);
+}
+
+/* Unregistered, it asks for its serial (DLOG 129, its prompt in Japanese).
+   A serial of zeros is refused with Alert 130; a made-up one is taken (the
+   unlock drops the verdict on its second half), saved as "user id", and
+   the next launch asks for none. Cancel quits. */
+TEST(run_psychedelic_o_asks_for_its_serial_unregistered) {
+    SKIP_UNLESS_PO();
+    real_alerts = true;
+    setenv("LOONY_EXIT_AFTER", "400", 1);
+    char zeros[32768], taken[32768], again[32768], cancel[32768];
+    int s_zeros = run_script_in(test_po_dir(), "100 type 0000-0000-0000\n130 click 557 278\n", NULL, NULL, 0,
+                                zeros, sizeof zeros);
+    test_tmp_dir(run_data, sizeof run_data);
+    int s_taken = run_script_in(test_po_dir(), "100 type 1234-5678-9012\n130 click 557 278\n", NULL, NULL, 0,
+                                taken, sizeof taken);
+    char prefs[1100];
+    snprintf(prefs, sizeof prefs, "%s/prefs.plist", run_data);
+    size_t len = 0;
+    char *xml = (char *)read_file(prefs, &len);
+    int s_again = run_script_in(test_po_dir(), "", NULL, NULL, 0, again, sizeof again);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    int s_cancel = run_script_in(test_po_dir(), "100 click 444 278\n", NULL, NULL, 0, cancel, sizeof cancel);
+    unsetenv("LOONY_EXIT_AFTER");
+    real_alerts = false;
+    CHECK_EQ(s_zeros, 0);
+    CHECK_CONTAINS(zeros, "loony: GetNewDialog 129");
+    CHECK_CONTAINS(zeros, "loony: Alert 130: OK");
+    CHECK_EQ(s_taken, 0);
+    CHECK_CONTAINS(taken, "loony: GetNewDialog 129");
+    CHECK(!strstr(taken, "Alert 130"));
+    CHECK(xml != NULL);
+    CHECK_CONTAINS(xml, "<key>user id</key>");
+    free(xml);
+    CHECK_EQ(s_again, 0);
+    CHECK(!strstr(again, "GetNewDialog"));
+    CHECK_EQ(s_cancel, 0);
+    CHECK_CONTAINS(cancel, "loony: ExitToShell");
+}
+
+/* Its menu is Jinni Zeala's: one Esc opens it, Up wraps to QUIT, and
+   Return ends the game with ExitToShell. The late quit ends a run whose
+   menu missed QUIT. */
+TEST(run_psychedelic_o_quits_from_its_own_menu) {
+    SKIP_UNLESS_PO();
+    unsetenv("LOONY_UNREGISTERED");
+    char out[32768];
+    int status = run_script_in(test_po_dir(), "1720 down esc\n1724 up esc\n1800 down up\n1804 up up\n"
+                                              "1900 down return\n1906 up return\n2400 quit\n",
+                               NULL, NULL, 0, out, sizeof out);
+    setenv("LOONY_UNREGISTERED", "1", 1);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: ExitToShell");
+    CHECK(!strstr(out, "quit Apple Event"));
+}
+
+/* The host's quit (Cmd-Q in the app) reaches it as the quit Apple Event. */
+TEST(run_psychedelic_o_quits_on_the_quit_apple_event) {
+    SKIP_UNLESS_PO();
+    unsetenv("LOONY_UNREGISTERED");
+    char out[32768];
+    int status = run_script_in(test_po_dir(), "700 quit\n", NULL, NULL, 0, out, sizeof out);
+    setenv("LOONY_UNREGISTERED", "1", 1);
+    CHECK_EQ(status, 0);
+    CHECK_CONTAINS(out, "loony: sending the quit Apple Event");
+    CHECK_CONTAINS(out, "loony: ExitToShell");
+}
+
 static void run_mad_daedalus_headless(void *unused) {
     (void)unused;
     setenv("LOONY_FIXED_CLOCK", "1", 1);
@@ -3375,6 +3478,53 @@ TEST(run_the_picker_shows_seven_games_and_starts_golden_logres) {
     CHECK_STR(got, "39e1784d");
 }
 
+/* Ten games: rows of four, four and two, Psychedelic "O"'s card, the
+   last, a crop of its table (picker-art). Picked, it plays registered, and
+   the host's quit (Cmd-Q) quits the app. */
+TEST(run_the_picker_shows_ten_games_and_starts_psychedelic_o) {
+    SKIP_UNLESS_GAME();
+    SKIP_UNLESS_CC();
+    SKIP_UNLESS_MF();
+    SKIP_UNLESS_JZ();
+    SKIP_UNLESS_MD();
+    SKIP_UNLESS_AE();
+    SKIP_UNLESS_GL();
+    SKIP_UNLESS_FT();
+    SKIP_UNLESS_TR();
+    SKIP_UNLESS_PO();
+    test_tmp_dir(apps_dir, sizeof apps_dir);
+    CHECK(both_games() && link_game("MONSTER FAIR.app", test_mf_app()) && link_game("Jinni Zeala", test_jz_dir()) &&
+          link_game("Mad Daedalus.app", test_md_app()) && link_game("Angel Egg.app", test_ae_app()) &&
+          link_game("Golden Logres.app", test_gl_app()) && link_game("FAIRY TOWER.app", test_ft_app()) &&
+          link_game("TRISTAN IE", test_tr_dir()) && link_game("Psychedelic\"O\"", test_po_dir()));
+    test_tmp_dir(run_data, sizeof run_data);
+    tmp_name(pick_shot, sizeof pick_shot, "picker");
+    unsetenv("LOONY_UNREGISTERED");
+    char out[32768];
+    int status = run_picker_with("psychedelic-o", "700 quit\n", out, sizeof out);
+    setenv("LOONY_UNREGISTERED", "1", 1);
+    size_t len = 0;
+    uint8_t *png = read_file(pick_shot, &len);
+    char got[16];
+    snprintf(got, sizeof got, "%08x", png ? fnv1a32(png, len) : 0);
+    free(png);
+    unlink(pick_shot);
+    pick_shot[0] = '\0';
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    test_remove_tree(apps_dir);
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "picker: can't")); /* every card's art loaded */
+    CHECK(!strstr(out, "picker: /"));
+    CHECK_CONTAINS(out, "loony: picker: psychedelic-o");
+    CHECK_CONTAINS(out, "loony: playing Psychedelic \"O\" from ");
+    CHECK_CONTAINS(out, "loony: sending the quit Apple Event");
+    CHECK_CONTAINS(out, "loony: ExitToShell");
+    CHECK(!strstr(out, "GetNewDialog"));
+    CHECK(!strstr(out, "back to the picker"));
+    CHECK_STR(got, "a019fec0"); /* the frame with Loony Labyrinth selected */
+}
+
 /* Nine games, every one: three rows of three, Tristan's card, the last,
    its title, PICT 900. Picked, it starts from its folder, and Cmd-Q ends
    it before a game. */
@@ -3925,6 +4075,27 @@ SLOW_TEST(run_three_minutes_of_tristan_match_the_recording) {
        second game, ball 3, 28 seconds left. Minute 3: the time ran out,
        TIME UP, BY LITTLEWING. */
     CHECK_STR(got, "536e1797 3dae4ac8 aadf91c8 54a37ce6");
+}
+
+/* The same three minutes in Psychedelic "O", started from its menu with
+   Jinni Zeala's keys, registered, since it has no demo. */
+SLOW_TEST(run_three_minutes_of_psychedelic_o_match_the_recording) {
+    SKIP_UNLESS_PO();
+    uint32_t h[3], wh;
+    size_t len;
+    char out[32768];
+    unsetenv("LOONY_UNREGISTERED");
+    int status = play_regression(test_po_dir(), &jz_start, h, &wh, &len, out, sizeof out);
+    setenv("LOONY_UNREGISTERED", "1", 1);
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "runtime error"));
+    CHECK_EQ(len, 44 + (size_t)REGRESSION_TICKS * 44100 / 60 * 4);
+    char got[64];
+    snprintf(got, sizeof got, "%08x %08x %08x %08x", h[0], h[1], h[2], wh);
+    /* Frames at minutes 1, 2 and 3, then the recording. Minute 1: ball 1,
+       20,700 points, its Out Hole Bonus. Minute 2: ball 3, 167,200 points.
+       Minute 3: the last ball lost, GAME OVER. */
+    CHECK_STR(got, "8456cbb9 73258c7f 0fb25f7d a763fab6");
 }
 
 /* Three minutes of MONSTER FAIR, started from its menu, with the same
