@@ -3478,9 +3478,10 @@ TEST(run_the_picker_shows_seven_games_and_starts_golden_logres) {
     CHECK_STR(got, "39e1784d");
 }
 
-/* Ten games: rows of four, four and two, Psychedelic "O"'s card, the
-   last, a crop of its table (picker-art). Picked, it plays registered, and
-   the host's quit (Cmd-Q) quits the app. */
+/* Ten games: rows of four, four and two, Psychedelic "O"'s card the last.
+   Outside the app its card is its icns 128 icon (the app shows the crop of
+   its table in picker-art). Picked, it plays registered, and the host's
+   quit (Cmd-Q) quits the app. */
 TEST(run_the_picker_shows_ten_games_and_starts_psychedelic_o) {
     SKIP_UNLESS_GAME();
     SKIP_UNLESS_CC();

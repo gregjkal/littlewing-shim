@@ -46,7 +46,8 @@ played. The selected game's opening music plays, at the Sound menu's volume:
 heard from your own copy, the first time the picker shows a game, by playing
 it out of sight for a moment (a few seconds each; Golden Logres takes about a
 minute), so a card is silent until then. Jinni Zeala's, FAIRY TOWER's and
-Psychedelic "O"'s tables are silent until a game starts, so theirs is the music of a game's first ball.
+Psychedelic "O"'s tables are silent until a game starts, so theirs is the
+music of a game's first ball.
 `LOONY_PICKER_MUSIC=0` turns it off. With one game installed, it plays that
 game. Choosing QUIT in a game's own menu goes back to the picker; Cmd-Q or
 closing the window quits. The app
@@ -83,8 +84,9 @@ Every game starts registered. LittleWing's store is gone, so no key can be
 bought, and every build drops each game's verdict on the key (`src/unlock.c`,
 with the patches in `src/games.inc`): any e-mail address and a made-up key
 code of 24 or more digits register (24 or more letters and digits for MONSTER
-FAIR, and for Psychedelic "O", whose key is its disc's 12-digit serial, any
-number that doesn't start with six zeros). So before a game first looks, the app saves `tester@example.com` and
+FAIR; Psychedelic "O"'s key is its disc's 12-digit serial, and almost any
+such number passes, such as 1234-5678-9012). So before a game first looks,
+the app saves `tester@example.com` and
 `123456789012345678901234` where the game keeps its license (`src/license.h`),
 and the game goes straight to its opening, as if you had typed them into its
 Register window. A license already saved, such as one you typed yourself, is

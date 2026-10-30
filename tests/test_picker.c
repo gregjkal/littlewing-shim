@@ -376,7 +376,7 @@ TEST(picker_draws_ten_cards_in_rows_of_four_four_and_two) {
        name, so it takes two lines; PSYCHEDELIC "O" breaks after its first
        word (176 pixels), the room a column leaves. */
     bool second_line[2] = {false, false};
-    for (int y = 194; y < 210; y++)
+    for (int y = 204; y < 220; y++)
         for (int x = 28; x < 28 + 144; x++)
             second_line[0] |= px(x, y)[1] != 0;
     for (int y = 528; y < 544; y++)
@@ -584,6 +584,24 @@ TEST(picker_art_for_jinni_zeala_is_its_icon) {
     CHECK(around_is_card);
     CHECK(clear_is_card);
     CHECK_STR(got, "462c5e6f"); /* the icon shown in the four-game picker */
+}
+
+/* Psychedelic "O" has no PICT 800 either: outside the app its card is its
+   icns 128 icon (the app has a crop of its table in picker-art). */
+TEST(picker_art_for_psychedelic_o_is_its_icon) {
+    SKIP_UNLESS_PO();
+    uint8_t *art = malloc(PICKER_ART_W * PICKER_ART_H * 4);
+    char err[256] = "";
+    bool ok = picker_load_art(test_po_exe_path(), art, err, sizeof err);
+    const uint8_t *corner = art + ((size_t)5 * PICKER_ART_W + 5) * 4;
+    bool around_is_card = corner[1] == 0x22 && corner[2] == 0x22 && corner[3] == 0x22;
+    char got[16];
+    snprintf(got, sizeof got, "%08x", fnv1a32(art, PICKER_ART_W * PICKER_ART_H * 4));
+    free(art);
+    CHECK(ok);
+    CHECK_STR(err, "");
+    CHECK(around_is_card);
+    CHECK_STR(got, "18e13cd7"); /* the icon shown in the ten-game picker */
 }
 
 /* Mad Daedalus is a bundle: its card is appl.png, its 128x128 icon. */

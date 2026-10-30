@@ -102,9 +102,10 @@ static const code_patch crystal_caliburn[] = {
 
 /* Psychedelic"O" 1.2.3 (PEF, the 2006 bonus disc, no shareware demo). Not
    MONSTER FAIR's shape: at launch code+0x1ad10 checks "user id" as a disc
-   serial, its first 12 letters and digits read as two six-digit numbers, and
-   asks for one (DLOG 129) until it passes; Cancel quits. A serial whose
-   first number isn't 0 passes, so a key of 12 or more digits. */
+   serial, its first 12 letters and digits split into two six-digit numbers
+   (characters 0, 1, 6, 7, 9, 11 and the rest), and asks for one (DLOG 129)
+   until it passes; Cancel quits. A serial whose first number isn't 0
+   passes, so a key of 12 or more digits. */
 static const code_patch psychedelic_o[] = {
     {0x11ACE4, {0x7C001A78, 0x7C800379, 0x40820008}, PPC_NOP}, /* second number differs: refused */
 };
