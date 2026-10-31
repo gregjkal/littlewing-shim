@@ -11,9 +11,11 @@ contains no game files: you need your own copies of the games.
 
 ## Quick start
 
-1. **Get the app.** Download `LittleWing-<version>.zip` from
-   [Releases](https://github.com/gregjkal/littlewing-shim/releases), unzip
-   it, and move `LittleWing.app` to your Applications folder.
+1. **Get the app.** Download
+   [LittleWing.zip](https://github.com/gregjkal/littlewing-shim/releases/latest/download/LittleWing.zip),
+   the latest release, unzip it, and move `LittleWing.app` to your
+   Applications folder. Earlier versions are on the
+   [Releases](https://github.com/gregjkal/littlewing-shim/releases) page.
 2. **Get a game.** Download one from LittleWing's [download
    page](http://www.littlewingpinball.com/doc/en/downloads/index.html),
    Loony Labyrinth for example, and put it in your Applications folder.
