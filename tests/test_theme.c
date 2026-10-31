@@ -192,6 +192,13 @@ TEST(theme_jinni_zeala_plays_music_once_a_game_starts) {
     CHECK(secs >= 10);
 }
 
+TEST(theme_psychedelic_o_plays_music_once_a_game_starts) {
+    SKIP_UNLESS_PO();
+    double secs = theme_seconds("psychedelic-o");
+    test_remove_tree(theme_home);
+    CHECK(secs >= 10);
+}
+
 TEST(theme_fairy_tower_plays_music_once_a_game_starts) {
     SKIP_UNLESS_FT();
     double secs = theme_seconds("fairy-tower");
