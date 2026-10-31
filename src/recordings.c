@@ -104,10 +104,14 @@ bool recordings_bring_in(const char *path, const char *dir, char *out, size_t ca
         int made;
         if (n == 1) {
             made = snprintf(to, sizeof to, "%s/%s", dir, name);
-        } else { /* " 99.lwreplay" more, cutting the name to fit a file name */
-            size_t room = NAME_MAX - strlen(" 99.lwreplay");
-            made = snprintf(to, sizeof to, "%s/%.*s %d.lwreplay", dir,
-                            (int)(base < room ? base : room), name, n);
+        } else { /* " 99.lwreplay" more, cutting the name to fit a file name,
+                    but not inside a UTF-8 character, which APFS refuses */
+            size_t cut = NAME_MAX - strlen(" 99.lwreplay");
+            if (base < cut)
+                cut = base;
+            while (cut > 0 && ((unsigned char)name[cut] & 0xC0) == 0x80)
+                cut--;
+            made = snprintf(to, sizeof to, "%s/%.*s %d.lwreplay", dir, (int)cut, name, n);
         }
         if (made < 0 || (size_t)made >= sizeof to || (size_t)made >= cap) {
             snprintf(err, errlen, "%s/%s is too long a name", dir, name);

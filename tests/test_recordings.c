@@ -483,8 +483,6 @@ TEST(recordings_leave_env_starts_the_program_as_if_launched) {
     CHECK(!getenv("LOONY_DATA_DIR"));
 }
 
-/* A recording named name in dir/received, then made read-only, as
-   Messages' attachments are to this program. */
 /* A recording of ms on the clock, in format 6 with section as its
    snapshot of the game's start when there is one. */
 static void short_recording(bytes *b, uint32_t ms, const char *section) {
@@ -503,6 +501,8 @@ static void short_recording(bytes *b, uint32_t ms, const char *section) {
     b->n += 8;
 }
 
+/* A recording named name in dir/received, then made read-only, as
+   Messages' attachments are to this program. */
 static void receive(const char *name, uint32_t ms, char *path, size_t cap) {
     char from[1200], received[1100];
     bytes b;
@@ -610,6 +610,7 @@ TEST(recordings_bring_in_cuts_a_long_name_short_to_number_it) {
     BEGIN_TEST();
     char name[256], path[1200], out[1200], err[256], received[1100];
     memset(name, 'x', 246);
+    memcpy(name + 242, "\xc3\xa9", 2); /* an e-acute across where the name is cut */
     snprintf(name + 246, sizeof name - 246, ".lwreplay"); /* 255 bytes, as long as a name gets */
     snprintf(received, sizeof received, "%s/received", dir);
     receive(name, 1000, path, sizeof path);
@@ -618,7 +619,7 @@ TEST(recordings_bring_in_cuts_a_long_name_short_to_number_it) {
     unlink(path);
     receive(name, 2000, path, sizeof path); /* another recording of that name */
     CHECK(recordings_bring_in(path, recs, out, sizeof out, err, sizeof err));
-    CHECK_CONTAINS(out, "xxx 2.lwreplay");
+    CHECK_CONTAINS(out, "xx 2.lwreplay"); /* cut before the e-acute */
     CHECK(strlen(strrchr(out, '/') + 1) <= NAME_MAX);
     const recording *r;
     CHECK_EQ(recordings_list(recs, &r), 2);
