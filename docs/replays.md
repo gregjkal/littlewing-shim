@@ -403,6 +403,14 @@ last frame stays up until you close the window, which quits the app.
 **File > Open Recent** lists the recordings watched lately, however they
 were opened, and **Clear Menu** forgets them.
 
+A replay opened from a folder the app can't write in, such as one opened
+straight from a Messages conversation, is copied into the `recordings`
+folder first and the copy is watched, since its clips, exported videos and
+snapshot of the game's start are all saved beside it. The copy keeps the
+file's name (with ` 2` added if another recording has it) and is listed in
+the Replays menu with the others. Opening the same file again opens the
+copy.
+
 To watch a shared replay you need Loony Labyrinth installed: the replay
 uses your registration in place of the one left out, or, if you have none
 saved yet, the one every game starts with (see [Registration](development.md#registration)). The game
