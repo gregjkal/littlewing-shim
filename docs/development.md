@@ -315,7 +315,9 @@ against Homebrew's Unicorn plays the same, only slower there. It then builds
 the app as version 0.1.0, checks that it runs on macOS 14, and notarizes it.
 It tags the commit `v0.1.0`, pushes the tag, and makes a draft release with
 `LittleWing-0.1.0.zip` and `appcast.xml`, the feed that released apps read to
-find updates. `LOONY_RELEASE_SUMMARY` goes under "What's Changed", above the
+find updates. The same zip is attached again as `LittleWing.zip`, a name
+that never changes, so the README's download link
+(`releases/latest/download/LittleWing.zip`) always gets the latest release. `LOONY_RELEASE_SUMMARY` goes under "What's Changed", above the
 list of pull requests, in both the release's notes and the feed's, which are
 what the app's update dialog shows. Check the draft on GitHub, then publish
 it: apps see the update once it's the latest release. Other builds of the app

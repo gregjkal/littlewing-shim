@@ -6,7 +6,9 @@
 # notarizes it, and makes appcast.xml, the update feed, which offers the zip,
 # signed with the Sparkle key in the keychain. Only then does it tag the
 # commit vx.y.z, push the tag and make a draft GitHub release with the zip and
-# the feed. The notes are tools/release_notes.md with its @VERSION@, @MACOS@,
+# the feed. The zip goes up twice: as LittleWing-x.y.z.zip, which the feed
+# offers, and as LittleWing.zip, whose name never changes, so the README can
+# link to releases/latest/download/LittleWing.zip. The notes are tools/release_notes.md with its @VERSION@, @MACOS@,
 # @UNICORN@, @SDL@ and @SPARKLE@ filled in, followed by GitHub's list of the
 # pull requests since the last release with LOONY_RELEASE_SUMMARY, one
 # sentence about the release, under its "## What's Changed" heading. That
@@ -64,7 +66,7 @@ min=$(plutil -extract LSMinimumSystemVersion raw "$build/LittleWing.app/Contents
 [ "$min" = "$macos" ] || die "the app needs macOS $min, not $macos"
 tools/notarize.sh "$build/LittleWing.app" "$profile"
 zip="$build/LittleWing-$version.zip"
-mv "$build/LittleWing.zip" "$zip"
+cp "$build/LittleWing.zip" "$zip"
 
 unicorn=$(pkg-config --modversion unicorn)
 sdl=$(pkg-config --modversion sdl3)
@@ -101,7 +103,7 @@ printf '\n%s\n' "$generated" >>"$notes"
 git tag -a "$tag" -m "LittleWing $version"
 git push origin "$tag"
 # The tag is pushed, so a rerun would stop at it: say how to finish instead.
-gh release create "$tag" "$zip" "$updates/appcast.xml" --verify-tag --draft --title "LittleWing $version" \
-    --notes-file "$notes" ||
-    die "$tag is pushed but its release wasn't made; finish with: gh release create $tag $zip $updates/appcast.xml --verify-tag --draft --title 'LittleWing $version' --notes-file $notes"
+gh release create "$tag" "$zip" "$build/LittleWing.zip" "$updates/appcast.xml" --verify-tag --draft \
+    --title "LittleWing $version" --notes-file "$notes" ||
+    die "$tag is pushed but its release wasn't made; finish with: gh release create $tag $zip $build/LittleWing.zip $updates/appcast.xml --verify-tag --draft --title 'LittleWing $version' --notes-file $notes"
 echo "made a draft release of $tag: check it on GitHub, then publish it with: gh release edit $tag --draft=false --latest"
