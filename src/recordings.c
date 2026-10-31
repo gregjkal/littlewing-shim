@@ -3,6 +3,7 @@
 #include <copyfile.h>
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,20 +52,30 @@ static bool takes_a_file(const char *dir) {
     return true;
 }
 
-/* Copies from to a hidden file in to's folder, with its times, and renames
-   it to to, so a copy cut short is never taken for a recording. */
+/* Copies from's bytes to a hidden file in to's folder, gives it from's
+   times, and renames it to to, so a copy cut short is never taken for a
+   recording. Only the bytes: from's flags would come too with
+   COPYFILE_STAT, and a locked file's copy could be neither renamed nor
+   removed. errno says why when it fails. */
 static bool copy_in(const char *from, const char *to) {
-    char tmp[PATH_MAX + 16];
+    char tmp[PATH_MAX];
     const char *slash = strrchr(to, '/');
-    snprintf(tmp, sizeof tmp, "%.*s/.%s.XXXXXX", (int)(slash - to), to, slash + 1);
+    struct stat st;
+    snprintf(tmp, sizeof tmp, "%.*s/.lw-XXXXXX", (int)(slash - to), to);
+    if (stat(from, &st) != 0)
+        return false;
     int fd = mkstemp(tmp);
     if (fd < 0)
         return false;
     close(fd);
-    bool ok = copyfile(from, tmp, NULL, COPYFILE_DATA | COPYFILE_STAT) == 0 &&
-              chmod(tmp, 0644) == 0 && rename(tmp, to) == 0;
-    if (!ok)
+    struct timespec times[2] = {st.st_atimespec, st.st_mtimespec};
+    bool ok = copyfile(from, tmp, NULL, COPYFILE_DATA) == 0 && chmod(tmp, 0644) == 0 &&
+              utimensat(AT_FDCWD, tmp, times, 0) == 0 && rename(tmp, to) == 0;
+    if (!ok) {
+        int e = errno;
         unlink(tmp);
+        errno = e;
+    }
     return ok;
 }
 
@@ -90,10 +101,18 @@ bool recordings_bring_in(const char *path, const char *dir, char *out, size_t ca
     }
     char to[PATH_MAX], why[256];
     for (int n = 1; n < 100; n++) {
-        if (n == 1)
-            snprintf(to, sizeof to, "%s/%s", dir, name);
-        else
-            snprintf(to, sizeof to, "%s/%.*s %d.lwreplay", dir, (int)base, name, n);
+        int made;
+        if (n == 1) {
+            made = snprintf(to, sizeof to, "%s/%s", dir, name);
+        } else { /* " 99.lwreplay" more, cutting the name to fit a file name */
+            size_t room = NAME_MAX - strlen(" 99.lwreplay");
+            made = snprintf(to, sizeof to, "%s/%.*s %d.lwreplay", dir,
+                            (int)(base < room ? base : room), name, n);
+        }
+        if (made < 0 || (size_t)made >= sizeof to || (size_t)made >= cap) {
+            snprintf(err, errlen, "%s/%s is too long a name", dir, name);
+            return false;
+        }
         if (access(to, F_OK) == 0) {
             bool same = replay_file_snapshot(to, &section, &len, have, why, sizeof why) &&
                         memcmp(want, have, sizeof want) == 0;
@@ -107,10 +126,7 @@ bool recordings_bring_in(const char *path, const char *dir, char *out, size_t ca
             snprintf(err, errlen, "it can't be copied to %s (%s)", dir, strerror(errno));
             return false;
         }
-        if ((size_t)snprintf(out, cap, "%s", to) >= cap) {
-            snprintf(err, errlen, "%s is too long a name", to);
-            return false;
-        }
+        snprintf(out, cap, "%s", to);
         return true;
     }
     snprintf(err, errlen, "%s holds 99 other recordings named %s", dir, name);

@@ -275,10 +275,14 @@ static void open_replay_at(const char *path, uint32_t from_ticks) {
         return;
     }
     bool ok = replay_check(found, why, sizeof why);
-    if (ok && recordings_dir(dir, sizeof dir)) /* copied in from a folder like Messages' */
-        ok = recordings_bring_in(found, dir, full, sizeof full, why, sizeof why);
-    else
+    snprintf(full, sizeof full, "%s", found);
+    /* Copied in from a folder like Messages'. One that can't be still plays
+       where it is, without clips. */
+    if (ok && recordings_dir(dir, sizeof dir) &&
+        !recordings_bring_in(found, dir, full, sizeof full, why, sizeof why)) {
+        log_msg("watching %s where it is, which keeps no clips: %s", found, why);
         snprintf(full, sizeof full, "%s", found);
+    }
     if (!ok) { /* said here: the game goes on */
         const char *video = getenv("SDL_VIDEO_DRIVER");
         char msg[PATH_MAX + 600];

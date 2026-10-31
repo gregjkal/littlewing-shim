@@ -36,11 +36,14 @@ bool recordings_dir(char *out, size_t cap);
    snapshot of the game's start all go beside it, so it is copied into dir
    (the recordings folder) and the copy opened instead. out is path itself
    when its folder takes a new file, else the copy: dir/<its name>, or
-   "<its name> 2.lwreplay" and on when another recording has that name. A
+   "<its name> 2.lwreplay" and on when another recording has that name
+   (the name cut short where that would make it too long for a file). A
    file there already that is the same recording (replay_identity) is
    opened again rather than copied, whatever snapshot it has. The copy
    keeps the time of the file's last write, which says which high score it
-   holds. False, with err, if it can't be copied. */
+   holds. False, with err, if path isn't a replay this version reads, if
+   dir can't be made or the copy written there, or if dir holds 99 other
+   recordings of that name. */
 bool recordings_bring_in(const char *path, const char *dir, char *out, size_t cap, char *err,
                          size_t errlen);
 

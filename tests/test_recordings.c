@@ -485,12 +485,28 @@ TEST(recordings_leave_env_starts_the_program_as_if_launched) {
 
 /* A recording named name in dir/received, then made read-only, as
    Messages' attachments are to this program. */
+/* A recording of ms on the clock, in format 6 with section as its
+   snapshot of the game's start when there is one. */
+static void short_recording(bytes *b, uint32_t ms, const char *section) {
+    header(b, "loony-labyrinth");
+    clock_ms(b, ms);
+    end(b);
+    if (!section)
+        return;
+    b->b[8] = 6; /* format 6: the header as format 5's, but for its number */
+    uint64_t n = strlen(section);
+    memcpy(b->b + b->n, section, n);
+    b->n += n;
+    for (int i = 0; i < 8; i++)
+        b->b[b->n++] = (uint8_t)(n >> (8 * i));
+    memcpy(b->b + b->n, "LWSTART6", 8);
+    b->n += 8;
+}
+
 static void receive(const char *name, uint32_t ms, char *path, size_t cap) {
     char from[1200], received[1100];
     bytes b;
-    header(&b, "loony-labyrinth");
-    clock_ms(&b, ms);
-    end(&b);
+    short_recording(&b, ms, NULL);
     write_file(".staged", &b, true);
     snprintf(received, sizeof received, "%s/received", dir);
     chmod(received, 0755);
@@ -518,10 +534,19 @@ TEST(recordings_bring_in_copies_a_recording_its_folder_wont_take_files_beside) {
     CHECK_EQ(a.st_size, b.st_size);
     CHECK_EQ(b.st_mtimespec.tv_sec, 1760000000); /* which high score it holds */
     CHECK_EQ(b.st_mode & 0777, 0644);
-    /* Opened again, the copy is opened, even once it holds more (a snapshot). */
-    FILE *f = fopen(out, "ab");
-    CHECK(f != NULL);
-    fclose(f);
+    char cmd[1300];
+    snprintf(cmd, sizeof cmd, "test -z \"$(ls -A '%s' | grep '^\\.')\"", recs);
+    CHECK_EQ(system(cmd), 0); /* no hidden file left from the copy */
+    /* Opened again, the copy is opened, even once it holds a snapshot. */
+    bytes snap;
+    short_recording(&snap, 1000, "a snapshot");
+    write_file("Loony 1,531,255,830 GREG.lwreplay", &snap, true);
+    uint8_t *section;
+    size_t len;
+    uint8_t id[32];
+    CHECK(replay_file_snapshot(mine, &section, &len, id, err, sizeof err));
+    CHECK_EQ(len, strlen("a snapshot"));
+    free(section);
     CHECK(recordings_bring_in(path, recs, out, sizeof out, err, sizeof err));
     CHECK_STR(out, mine);
     /* Another recording of that name gets a name of its own. */
@@ -565,4 +590,36 @@ TEST(recordings_bring_in_refuses_a_file_that_isnt_a_recording) {
     CHECK(!recordings_bring_in(path, recs, out, sizeof out, err, sizeof err));
     const recording *r;
     CHECK_EQ(recordings_list(recs, &r), 0);
+}
+
+TEST(recordings_bring_in_copies_a_locked_recording_unlocked) {
+    BEGIN_TEST();
+    char path[1200], out[1200], err[256], received[1100];
+    snprintf(received, sizeof received, "%s/received", dir);
+    receive("game.lwreplay", 1000, path, sizeof path);
+    CHECK(chflags(path, UF_IMMUTABLE) == 0); /* locked in Finder */
+    bool ok = recordings_bring_in(path, recs, out, sizeof out, err, sizeof err);
+    struct stat st;
+    bool unlocked = ok && stat(out, &st) == 0 && !(st.st_flags & UF_IMMUTABLE);
+    chflags(path, 0);
+    CHECK(ok);
+    CHECK(unlocked);
+}
+
+TEST(recordings_bring_in_cuts_a_long_name_short_to_number_it) {
+    BEGIN_TEST();
+    char name[256], path[1200], out[1200], err[256], received[1100];
+    memset(name, 'x', 246);
+    snprintf(name + 246, sizeof name - 246, ".lwreplay"); /* 255 bytes, as long as a name gets */
+    snprintf(received, sizeof received, "%s/received", dir);
+    receive(name, 1000, path, sizeof path);
+    CHECK(recordings_bring_in(path, recs, out, sizeof out, err, sizeof err));
+    chmod(received, 0755);
+    unlink(path);
+    receive(name, 2000, path, sizeof path); /* another recording of that name */
+    CHECK(recordings_bring_in(path, recs, out, sizeof out, err, sizeof err));
+    CHECK_CONTAINS(out, "xxx 2.lwreplay");
+    CHECK(strlen(strrchr(out, '/') + 1) <= NAME_MAX);
+    const recording *r;
+    CHECK_EQ(recordings_list(recs, &r), 2);
 }
