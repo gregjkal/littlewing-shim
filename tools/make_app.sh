@@ -29,7 +29,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 app="$out/LittleWing.app"
 if [ -n "$sparkle" ]; then
     [ -d "$sparkle/Sparkle.framework" ] || { echo "make_app.sh: $sparkle has no Sparkle.framework (see tools/sparkle.sh)" >&2; exit 1; }
-    [ -s "$here/sparkle_public_key.txt" ] || { echo "make_app.sh: tools/sparkle_public_key.txt is missing (README: Releases)" >&2; exit 1; }
+    [ -s "$here/sparkle_public_key.txt" ] || { echo "make_app.sh: tools/sparkle_public_key.txt is missing (docs/development.md: Releases)" >&2; exit 1; }
 fi
 # A sanitizer build (Debug) needs the compiler's runtime, which is found
 # through a search path like the other libraries but isn't for bundling.

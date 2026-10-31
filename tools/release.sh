@@ -41,7 +41,7 @@ if git rev-parse -q --verify "refs/tags/$tag" >/dev/null || [ -n "$(git ls-remot
 fi
 unknown=$(grep -o '@[A-Z]*@' tools/release_notes.md | grep -vxE '@(VERSION|MACOS|UNICORN|SDL|SPARKLE)@' || true)
 [ -z "$unknown" ] || die "tools/release_notes.md has placeholders release.sh doesn't fill: $unknown"
-[ -s tools/sparkle_public_key.txt ] || die "tools/sparkle_public_key.txt is missing: make the Sparkle signing key (README: Releases)"
+[ -s tools/sparkle_public_key.txt ] || die "tools/sparkle_public_key.txt is missing: make the Sparkle signing key (docs/development.md: Releases)"
 gh auth status >/dev/null 2>&1 || die "gh isn't logged in to GitHub (gh auth login)"
 
 build=build-dist
@@ -51,7 +51,7 @@ MACOSX_DEPLOYMENT_TARGET=$macos tools/build_deps.sh "$build/deps"
 sparkle=$PWD/$build/deps/sparkle
 key_account=littlewing-shim  # the keychain item holding the Sparkle signing key
 echo "reading the Sparkle key: if macOS asks to allow generate_keys keychain access, click Always Allow"
-key=$("$sparkle/bin/generate_keys" --account "$key_account" -p) || die "the keychain has no Sparkle key for $key_account (README: Releases)"
+key=$("$sparkle/bin/generate_keys" --account "$key_account" -p) || die "the keychain has no Sparkle key for $key_account (docs/development.md: Releases)"
 [ "$key" = "$(tr -d ' \n' <tools/sparkle_public_key.txt)" ] ||
     die "the keychain's Sparkle key isn't the one in tools/sparkle_public_key.txt, so apps would refuse the update"
 PKG_CONFIG_PATH="$PWD/$build/deps/unicorn/lib/pkgconfig:$PWD/$build/deps/sdl3/lib/pkgconfig"
