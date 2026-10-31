@@ -1,6 +1,9 @@
 #include "recordings.h"
 
+#include <copyfile.h>
 #include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,6 +37,104 @@ bool recordings_dir(char *out, size_t cap) {
     else
         return false;
     return true;
+}
+
+/* Whether a new file can be made in dir: tried, since macOS can refuse
+   (EPERM) in a folder whose mode allows it. */
+static bool takes_a_file(const char *dir) {
+    char probe[PATH_MAX];
+    snprintf(probe, sizeof probe, "%s/.littlewing-XXXXXX", dir);
+    int fd = mkstemp(probe);
+    if (fd < 0)
+        return false;
+    close(fd);
+    unlink(probe);
+    return true;
+}
+
+/* Copies from's bytes to a hidden file in to's folder, gives it from's
+   times, and renames it to to, so a copy cut short is never taken for a
+   recording. Only the bytes: from's flags would come too with
+   COPYFILE_STAT, and a locked file's copy could be neither renamed nor
+   removed. errno says why when it fails. */
+static bool copy_in(const char *from, const char *to) {
+    char tmp[PATH_MAX];
+    const char *slash = strrchr(to, '/');
+    struct stat st;
+    snprintf(tmp, sizeof tmp, "%.*s/.lw-XXXXXX", (int)(slash - to), to);
+    if (stat(from, &st) != 0)
+        return false;
+    int fd = mkstemp(tmp);
+    if (fd < 0)
+        return false;
+    close(fd);
+    struct timespec times[2] = {st.st_atimespec, st.st_mtimespec};
+    bool ok = copyfile(from, tmp, NULL, COPYFILE_DATA) == 0 && chmod(tmp, 0644) == 0 &&
+              utimensat(AT_FDCWD, tmp, times, 0) == 0 && rename(tmp, to) == 0;
+    if (!ok) {
+        int e = errno;
+        unlink(tmp);
+        errno = e;
+    }
+    return ok;
+}
+
+bool recordings_bring_in(const char *path, const char *dir, char *out, size_t cap, char *err,
+                         size_t errlen) {
+    const char *slash = strrchr(path, '/');
+    char folder[PATH_MAX];
+    snprintf(folder, sizeof folder, "%.*s", slash ? (int)(slash - path) : 1, slash ? path : ".");
+    if (takes_a_file(slash == path ? "/" : folder)) {
+        snprintf(out, cap, "%s", path);
+        return true;
+    }
+    const char *name = slash ? slash + 1 : path;
+    size_t base = strlen(name) - (ends_with(name, ".lwreplay") ? strlen(".lwreplay") : 0);
+    uint8_t want[32], have[32], *section;
+    size_t len;
+    if (!replay_file_snapshot(path, &section, &len, want, err, errlen))
+        return false;
+    free(section);
+    if (!make_dirs(dir)) {
+        snprintf(err, errlen, "can't create %s (%s)", dir, strerror(errno));
+        return false;
+    }
+    char to[PATH_MAX], why[256];
+    for (int n = 1; n < 100; n++) {
+        int made;
+        if (n == 1) {
+            made = snprintf(to, sizeof to, "%s/%s", dir, name);
+        } else { /* " 99.lwreplay" more, cutting the name to fit a file name,
+                    but not inside a UTF-8 character, which APFS refuses */
+            size_t cut = NAME_MAX - strlen(" 99.lwreplay");
+            if (base < cut)
+                cut = base;
+            while (cut > 0 && ((unsigned char)name[cut] & 0xC0) == 0x80)
+                cut--;
+            made = snprintf(to, sizeof to, "%s/%.*s %d.lwreplay", dir, (int)cut, name, n);
+        }
+        if (made < 0 || (size_t)made >= sizeof to || (size_t)made >= cap) {
+            snprintf(err, errlen, "%s/%s is too long a name", dir, name);
+            return false;
+        }
+        if (access(to, F_OK) == 0) {
+            bool same = replay_file_snapshot(to, &section, &len, have, why, sizeof why) &&
+                        memcmp(want, have, sizeof want) == 0;
+            free(section);
+            if (!same)
+                continue;
+            log_msg("recordings: %s can't be written beside, so opening its copy %s", path, to);
+        } else if (copy_in(path, to)) {
+            log_msg("recordings: %s can't be written beside, so copied it to %s", path, to);
+        } else {
+            snprintf(err, errlen, "it can't be copied to %s (%s)", dir, strerror(errno));
+            return false;
+        }
+        snprintf(out, cap, "%s", to);
+        return true;
+    }
+    snprintf(err, errlen, "%s holds 99 other recordings named %s", dir, name);
+    return false;
 }
 
 /* A file that isn't a replay this version reads, as it was when it was
