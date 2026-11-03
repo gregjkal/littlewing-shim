@@ -60,8 +60,9 @@ char **export_child_env(char *const *env, export_kind kind, const char *replay);
 void export_free_env(char **env);
 
 /* The same for any second copy of this program: env less those settings
-   and the names set sets, then set ("NAME=value" entries, NULL-terminated).
-   Free it with export_free_env. */
+   and the names set sets, then set ("NAME=value" entries, NULL-terminated),
+   then LOONY_SETTINGS empty, so the copy neither reads nor saves the app's
+   settings (settings.h). Free it with export_free_env. */
 char **export_env_with(char *const *env, const char *const *set);
 
 /* Starts an export of kind of the recording at replay (absolute), running

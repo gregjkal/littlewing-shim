@@ -162,7 +162,7 @@ SDL_AUDIO_DRIVER=dummy ./build/loony  # no sound output
 LOONY_FIXED_CLOCK=1 LOONY_SCRIPT=play.txt SDL_VIDEO_DRIVER=dummy ./build/loony
 LOONY_AUTO_ALERTS=1 ./build/loony     # answer alerts with their default button, without showing them
 LOONY_DATA_DIR=/tmp/fresh ./build/loony   # use another folder for preferences and saved files
-LOONY_SETTINGS=/tmp/s.plist ./build/loony  # the app's settings file (volume, last game, window size); set at launch, a replay keeps it
+LOONY_SETTINGS=/tmp/s.plist ./build/loony  # the app's settings file (volume, last game, window size); set at launch, a replay keeps it; empty for none
 LOONY_DATA_DIR=$(mktemp -d) LOONY_UNREGISTERED=1 ./build/loony   # no license: the shareware screens show
 ```
 

@@ -9,7 +9,8 @@
    Without a save root (LOONY_DATA_DIR set, or no HOME) nothing is read or
    saved, unless LOONY_SETTINGS names the file. settings_pin sets it, so a
    replay, which sets LOONY_DATA_DIR to a folder of its own, and every
-   restart after it still keep the app's settings. */
+   restart after it still keep the app's settings. LOONY_SETTINGS set
+   empty means no settings, as for the second copies export.h starts. */
 
 #define SETTINGS_LAST_GAME "last game" /* string: the game the picker last chose */
 #define SETTINGS_VOLUME "volume"       /* integer: sound_volume, 0-100 */
@@ -17,7 +18,7 @@
 #define SETTINGS_WINDOW_HEIGHT "window height" /* integer: the game's part, without the strip */
 
 /* Sets LOONY_SETTINGS to the file in the save root, if there is one and
-   it isn't set already. Called at launch, before anything changes
+   LOONY_SETTINGS isn't set already, even empty. Called at launch, before anything changes
    LOONY_DATA_DIR. */
 void settings_pin(void);
 

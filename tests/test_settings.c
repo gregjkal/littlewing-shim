@@ -71,3 +71,22 @@ TEST(settings_without_a_save_root_do_nothing) {
     restore_env();
     CHECK(!got);
 }
+
+/* LOONY_SETTINGS set empty, as for a second copy (export.h), means none,
+   and settings_pin leaves it so. */
+TEST(settings_set_empty_are_none) {
+    set_env();
+    setenv("LOONY_SETTINGS", "", 1);
+    settings_pin();
+    const char *pinned = getenv("LOONY_SETTINGS");
+    bool still_empty = pinned && !*pinned;
+    settings_set_int(SETTINGS_VOLUME, 30);
+    int64_t n = 0;
+    bool got = settings_get_int(SETTINGS_VOLUME, &n);
+    unsetenv("LOONY_SETTINGS");
+    bool saved = settings_get_int(SETTINGS_VOLUME, &n);
+    restore_env();
+    CHECK(still_empty);
+    CHECK(!got);
+    CHECK(!saved);
+}

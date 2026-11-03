@@ -12,9 +12,9 @@
 
 static bool path(char *out, size_t cap) {
     const char *pinned = getenv("LOONY_SETTINGS");
-    if (pinned && *pinned) {
+    if (pinned) { /* set empty: no settings */
         snprintf(out, cap, "%s", pinned);
-        return true;
+        return *pinned != 0;
     }
     char root[PATH_MAX];
     if (!files_data_root(root, sizeof root))
@@ -25,7 +25,7 @@ static bool path(char *out, size_t cap) {
 
 void settings_pin(void) {
     char p[PATH_MAX];
-    if (path(p, sizeof p))
+    if (!getenv("LOONY_SETTINGS") && path(p, sizeof p))
         setenv("LOONY_SETTINGS", p, 1);
 }
 

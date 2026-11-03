@@ -171,7 +171,7 @@ char **export_env_with(char *const *env, const char *const *set) {
         count++;
     while (set[nset])
         nset++;
-    char **out = calloc(count + nset + 1, sizeof *out);
+    char **out = calloc(count + nset + 2, sizeof *out);
     if (!out)
         return NULL;
     size_t n = 0;
@@ -181,6 +181,8 @@ char **export_env_with(char *const *env, const char *const *set) {
     for (size_t i = 0; i < nset; i++)
         if (!(out[n++] = strdup(set[i])))
             goto fail;
+    if (!(out[n++] = strdup("LOONY_SETTINGS="))) /* no app settings (settings.h) */
+        goto fail;
     return out;
 fail:
     export_free_env(out);
