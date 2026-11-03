@@ -85,7 +85,7 @@ static struct {
     char root[PATH_MAX], self[PATH_MAX];
     bool audio;              /* the audio subsystem is started */
     SDL_AudioStream *stream; /* NULL, with audio, in a silence (sound.h) */
-    uint64_t quiet_since;    /* SDL_GetTicks when the stream last had music */
+    sound_quiet quiet;
     int volume;
     pid_t pid;  /* the render running, 0 for none */
     int render; /* its entry */
@@ -147,15 +147,10 @@ static void load(entry *e) {
 
 /* The device, the audio subsystem started. Logged if it can't be opened. */
 static void open_stream(void) {
-    const SDL_AudioSpec spec = {SDL_AUDIO_S16, 2, THEME_RATE};
-    T.stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
-    if (!T.stream) {
-        log_msg("picker music: no audio output: %s", SDL_GetError());
+    T.stream = sound_open_device(THEME_RATE, NULL, &T.quiet, "picker music");
+    if (!T.stream)
         return;
-    }
     T.volume = sound_volume();
-    SDL_SetAudioStreamGain(T.stream, sound_gain(T.volume));
-    T.quiet_since = SDL_GetTicks();
     SDL_ResumeAudioStreamDevice(T.stream);
 }
 
@@ -353,14 +348,9 @@ void theme_tend(void) {
         T.volume = sound_volume();
         SDL_SetAudioStreamGain(T.stream, sound_gain(T.volume));
     }
-    if (T.stream) { /* closed once the music has stopped long enough (sound.h) */
-        if (SDL_GetAudioStreamQueued(T.stream) > 0) {
-            T.quiet_since = SDL_GetTicks();
-        } else if (SDL_GetTicks() - T.quiet_since >= SOUND_NAP_MS) {
-            SDL_DestroyAudioStream(T.stream);
-            T.stream = NULL;
-        }
-    }
+    if (T.stream && SDL_GetAudioStreamQueued(T.stream) > 0)
+        sound_quiet_heard(&T.quiet);
+    sound_quiet_close(&T.stream, &T.quiet, "picker music");
     if (T.pid) {
         int st = 0;
         pid_t r = waitpid(T.pid, &st, WNOHANG);
