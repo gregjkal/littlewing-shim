@@ -14,6 +14,16 @@ typedef struct {
     uint64_t since; /* SDL_GetTicks when last heard */
 } sound_quiet;
 
+/* Starts SDL's audio, before a device is opened; each start is matched by
+   an SDL_QuitSubSystem(SDL_INIT_AUDIO), or by the program's end. False
+   (logged as who's) if it can't start. */
+bool sound_start_audio(const char *who);
+
+/* Whether to try opening a device again that was closed for a silence, or
+   failed: not more than once a second (*retry_at holds when), so a device
+   that can't be opened isn't tried at every sound. */
+bool sound_may_open(uint64_t *retry_at);
+
 /* Opens the default output for 16-bit stereo at rate Hz, at sound_volume,
    paused for the caller to resume once ready; fn is SDL's callback for the
    stream, or NULL for one the caller puts frames in. Starts q's silence.

@@ -12,7 +12,7 @@
    time, so it never fills.
 
    The clips are written next to the recording, as LOONY_CLIP writes them
-   when run by hand. */
+   when run by hand. While one runs, the Mac doesn't sleep when idle. */
 
 typedef enum { EXPORT_CLIPS, EXPORT_MARKS } export_kind;
 

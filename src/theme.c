@@ -87,6 +87,7 @@ static struct {
     bool audio;              /* the audio subsystem is started */
     SDL_AudioStream *stream; /* NULL, with audio, in a silence (sound.h) */
     sound_quiet quiet;
+    uint64_t retry_at; /* sound_may_open's */
     int volume;
     pid_t pid;  /* the render running, 0 for none */
     int render; /* its entry */
@@ -164,7 +165,7 @@ static void play(int i) {
     load(e);
     if (!e->frames)
         return;
-    if (!T.stream)
+    if (!T.stream && sound_may_open(&T.retry_at))
         open_stream();
     if (T.stream)
         SDL_PutAudioStreamData(T.stream, e->clip, (int)(e->frames * 4));
@@ -323,10 +324,8 @@ void theme_start(const game_info *const *games, int n, int selected, const char 
     }
     remove_leftovers();
     T.on = true;
-    if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
-        log_msg("picker music: no audio output: %s", SDL_GetError());
+    if (!sound_start_audio("picker music"))
         return;
-    }
     open_stream();
     if (!T.stream) {
         SDL_QuitSubSystem(SDL_INIT_AUDIO);

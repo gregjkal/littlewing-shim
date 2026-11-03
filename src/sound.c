@@ -68,17 +68,32 @@ static struct {
     uint32_t after_ms;
     bool stream, monitor; /* closed for the silence: open it at the next sound */
     sound_quiet quiet;
-    uint64_t retry_at; /* SDL_GetTicks before which a failed open isn't tried again */
+    uint64_t retry_at; /* sound_may_open's */
+    bool audio;        /* SDL's audio started, once for good */
 } NAP = {.after_ms = SOUND_NAP_MS};
 
-/* Whether to try opening a device closed for a silence: not more than once
-   a second, so a device that can't be opened isn't tried at every sound. */
-#define NAP_RETRY_MS 1000
-static bool may_reopen(void) {
+#define NAP_CHECK_MS 250 /* how often a silence is looked at */
+
+bool sound_start_audio(const char *who) {
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO))
+        return true;
+    log_msg("%s: no audio output: %s", who, SDL_GetError());
+    return false;
+}
+
+#define RETRY_MS 1000
+bool sound_may_open(uint64_t *retry_at) {
     uint64_t now = SDL_GetTicks();
-    if (now < NAP.retry_at)
+    if (now < *retry_at)
         return false;
-    NAP.retry_at = now + NAP_RETRY_MS;
+    *retry_at = now + RETRY_MS;
+    return true;
+}
+
+static bool may_reopen(void) {
+    if (!sound_may_open(&NAP.retry_at))
+        return false;
     log_msg("sound: opening the audio device again");
     return true;
 }
@@ -131,16 +146,22 @@ static void unlock(void) {
 static void monitor(const int16_t *buf, uint32_t n) {
     static const int16_t silence[2 * MIX_RATE * SOUND_SOURCE_LEAD_MS / 1000];
     _Static_assert(SOUND_SOURCE_LEAD_MS >= SOUND_MONITOR_LEAD_MS, "the silence covers both leads");
-    bool heard = false;
-    for (uint32_t k = 0; k < 2 * n && !heard; k++)
-        heard = abs(buf[k]) > SOUND_NAP_QUIET;
-    if (heard)
-        sound_quiet_heard(&NAP.quiet);
-    if (!SND.monitor) { /* closed for a silence; never opened on the audio thread */
-        if (!heard || !NAP.monitor || SND.stream || !may_reopen() || !open_monitor_stream())
-            return;
-        NAP.monitor = false;
+    if (!SND.stream) { /* the silence is the main thread's, never the audio thread's */
+        /* Heard less than a check ago (sound_nap): no need to look. */
+        bool look = !SND.monitor || SDL_GetTicks() - NAP.quiet.since >= NAP_CHECK_MS;
+        bool heard = false;
+        for (uint32_t k = 0; look && k < 2 * n && !heard; k++)
+            heard = abs(buf[k]) > SOUND_NAP_QUIET;
+        if (heard)
+            sound_quiet_heard(&NAP.quiet);
+        if (!SND.monitor) { /* closed for a silence */
+            if (!heard || !NAP.monitor || !may_reopen() || !open_monitor_stream())
+                return;
+            NAP.monitor = false;
+        }
     }
+    if (!SND.monitor)
+        return;
     int lead = (int)(4 * MIX_RATE * SND.lead_ms / 1000);
     int queued = SDL_GetAudioStreamQueued(SND.monitor);
     if (SND.source && queued > 4 * lead) {
@@ -290,11 +311,9 @@ void sound_go_live(void) {
 
 /* SDL's audio, before a device is opened. False (logged) if it can't start. */
 static bool start_audio(void) {
-    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
-    if (SDL_InitSubSystem(SDL_INIT_AUDIO))
-        return true;
-    log_msg("sound: no audio output: %s (continuing silently)", SDL_GetError());
-    return false;
+    if (!NAP.audio)
+        NAP.audio = sound_start_audio("sound");
+    return NAP.audio;
 }
 
 /* The device: sound_start_output's, or sound_go_live's. */
@@ -320,8 +339,6 @@ static void wake(mix_kind kind) {
     if (NAP.stream && kind == MIX_BUFFER && may_reopen())
         open_output();
 }
-
-#define NAP_CHECK_MS 250
 
 void sound_nap(void) {
     static uint64_t checked;
