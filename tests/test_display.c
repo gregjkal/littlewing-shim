@@ -8,6 +8,7 @@
 #include "guest_mem.h"
 #include "memmgr.h"
 #include "qd.h"
+#include "settings.h"
 #include "util.h"
 
 TEST(display_writes_the_screen_as_png) {
@@ -532,4 +533,91 @@ TEST(display_overlay_leaves_the_game_and_its_hash_alone) {
     free(up);
     free(down);
     display_set_overlay(NULL);
+}
+
+/* Settings go under HOME when LOONY_DATA_DIR isn't set; each test runs in
+   its own child, so these needn't be put back. Returns the fresh HOME. */
+static void own_home(char *home, size_t cap) {
+    test_tmp_dir(home, cap);
+    setenv("HOME", home, 1);
+    unsetenv("LOONY_DATA_DIR");
+}
+
+static void window_size(int *w, int *h) {
+    int n = 0;
+    SDL_Window **all = SDL_GetWindows(&n);
+    *w = *h = 0;
+    if (all && n > 0)
+        SDL_GetWindowSize(all[0], w, h);
+    SDL_free(all);
+}
+
+/* The window opens at the size saved last, and a resize is saved at exit
+   (display_save_size), but not one to full screen. */
+TEST(display_window_opens_at_the_saved_size) {
+    char home[1024];
+    own_home(home, sizeof home);
+    settings_set_int(SETTINGS_WINDOW_WIDTH, 640);
+    settings_set_int(SETTINGS_WINDOW_HEIGHT, 480);
+    gm_init();
+    mm_init();
+    qd_init(64, 48, 16);
+    display_present();
+    int w, h;
+    window_size(&w, &h);
+    CHECK_EQ(w, 640);
+    CHECK_EQ(h, 480);
+
+    int n = 0;
+    SDL_Window **all = SDL_GetWindows(&n);
+    CHECK(all && n > 0);
+    SDL_Window *win = all[0];
+    SDL_free(all);
+    SDL_SetWindowSize(win, 720, 540);
+    display_poll();
+    SDL_SetWindowFullscreen(win, true);
+    SDL_SyncWindow(win);
+    display_poll();
+    display_save_size();
+    int64_t sw = 0, sh = 0;
+    CHECK(settings_get_int(SETTINGS_WINDOW_WIDTH, &sw));
+    CHECK(settings_get_int(SETTINGS_WINDOW_HEIGHT, &sh));
+    CHECK_EQ(sw, 720);
+    CHECK_EQ(sh, 540);
+    test_remove_tree(home);
+}
+
+/* A saved size larger than the display shrinks to fit it, keeping its shape. */
+TEST(display_window_shrinks_a_saved_size_to_fit) {
+    char home[1024];
+    own_home(home, sizeof home);
+    settings_set_int(SETTINGS_WINDOW_WIDTH, 8000);
+    settings_set_int(SETTINGS_WINDOW_HEIGHT, 6000);
+    gm_init();
+    mm_init();
+    qd_init(64, 48, 16);
+    display_present();
+    SDL_Rect usable;
+    CHECK(SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &usable));
+    int w, h;
+    window_size(&w, &h);
+    CHECK(w <= usable.w && h <= usable.h);
+    CHECK(w >= usable.w - 1 || h >= usable.h - 1);
+    CHECK(abs(w * 3 - h * 4) <= 4);
+    test_remove_tree(home);
+}
+
+/* Without a saved size, a screen under 800 wide opens doubled. */
+TEST(display_window_without_a_saved_size_opens_at_the_screen_size) {
+    char home[1024];
+    own_home(home, sizeof home);
+    gm_init();
+    mm_init();
+    qd_init(64, 48, 16);
+    display_present();
+    int w, h;
+    window_size(&w, &h);
+    CHECK_EQ(w, 128);
+    CHECK_EQ(h, 96);
+    test_remove_tree(home);
 }

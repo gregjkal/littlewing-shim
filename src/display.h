@@ -42,6 +42,16 @@ void display_present_rgba(const uint8_t *rgba, int w, int h);
 /* Whether the window is full screen. LOONY_FULLSCREEN=1 opens it full screen. */
 bool display_fullscreen(void);
 
+/* The window opens at the size the last one had when windowed (the game's
+   part of it, without the overlay's strip), for every game and the picker
+   alike, since every screen is 4:3. A full-screen window leaves the saved
+   size alone. The size is saved in the app's settings (settings.h) at exit,
+   and by this call, which a restart makes since exec skips the atexit
+   handlers. Without a save root (LOONY_DATA_DIR, as in the tests) the
+   window opens at the screen's own size, doubled below 800 wide. */
+void display_save_size(void);
+#define DISPLAY_MIN_SAVED 160 /* points: a saved side smaller than this is ignored */
+
 /* Whether presenting waits for the display's refresh (the default). Turned
    off for fixed-clock runs, where waiting would only slow the run down. */
 void display_set_vsync(bool on);

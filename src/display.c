@@ -9,6 +9,7 @@
 #include "menu.h"
 #include "png.h"
 #include "qd.h"
+#include "settings.h"
 #include "util.h"
 
 static struct {
@@ -46,6 +47,7 @@ static struct {
     uint64_t presented;   /* SDL_GetTicksNS at the last present to the window */
     uint64_t began;       /* and when the game's last present began (display_due) */
     bool raise; /* on opening */
+    int saved_w, saved_h; /* the game's part of the window in points, last seen windowed */
     const char *title;
     char flash[256];      /* a message in the title, in place of the title */
     uint64_t flash_until; /* SDL_GetTicks when it goes, or 0 */
@@ -144,6 +146,56 @@ void display_init(void) {
         D.screenshot = NULL;
 }
 
+/* The size the last window had, for the game's part of it, if one was
+   saved, in place of *w x *h. It is made to fit the display it opens on, so
+   a size saved on a larger one still fits. */
+static void saved_size(int *w, int *h) {
+    int64_t sw, sh;
+    if (!settings_get_int(SETTINGS_WINDOW_WIDTH, &sw) || !settings_get_int(SETTINGS_WINDOW_HEIGHT, &sh))
+        return;
+    if (sw < DISPLAY_MIN_SAVED || sh < DISPLAY_MIN_SAVED || sw > 1 << 15 || sh > 1 << 15)
+        return;
+    SDL_Rect usable;
+    if (SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &usable) && usable.w > 0 && usable.h > 0) {
+        int strip = D.overlay ? (int)D.overlay->height : 0;
+        double fit = 1;
+        if (sw > usable.w)
+            fit = (double)usable.w / (double)sw;
+        if (sh + strip > usable.h && (double)(usable.h - strip) / (double)sh < fit)
+            fit = (double)(usable.h - strip) / (double)sh;
+        sw = (int64_t)((double)sw * fit);
+        sh = (int64_t)((double)sh * fit);
+        if (sw < DISPLAY_MIN_SAVED || sh < DISPLAY_MIN_SAVED)
+            return;
+    }
+    *w = (int)sw;
+    *h = (int)sh;
+}
+
+/* Notes the window's size, if it is windowed, as the one to save. */
+static void note_size(void) {
+    if (!D.window || (SDL_GetWindowFlags(D.window) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MINIMIZED)))
+        return;
+    int w, h;
+    if (!SDL_GetWindowSize(D.window, &w, &h))
+        return;
+    h -= D.overlay ? (int)D.overlay->height : 0;
+    if (w >= DISPLAY_MIN_SAVED && h >= DISPLAY_MIN_SAVED) {
+        D.saved_w = w;
+        D.saved_h = h;
+    }
+}
+
+void display_save_size(void) {
+    static int saved_w, saved_h; /* what this process last saved */
+    if (!D.saved_w || (D.saved_w == saved_w && D.saved_h == saved_h))
+        return;
+    settings_set_int(SETTINGS_WINDOW_WIDTH, D.saved_w);
+    settings_set_int(SETTINGS_WINDOW_HEIGHT, D.saved_h);
+    saved_w = D.saved_w;
+    saved_h = D.saved_h;
+}
+
 static bool open_window(int w, int h) {
     D.tried = true;
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -151,15 +203,16 @@ static bool open_window(int w, int h) {
         return false;
     }
     menu_install();
-    int scale = w < 800 ? 2 : 1;
+    int strip = D.overlay ? (int)D.overlay->height : 0;
+    int win_w = w * (w < 800 ? 2 : 1), win_h = h * (w < 800 ? 2 : 1);
+    saved_size(&win_w, &win_h);
     const char *fs = getenv("LOONY_FULLSCREEN");
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | (fs && strcmp(fs, "1") == 0 ? SDL_WINDOW_FULLSCREEN : 0);
     /* HD frames, and the overlay's lines and text, at the display's own
        pixel density */
     if (hd_scale() || D.overlay)
         flags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;
-    int strip = D.overlay ? (int)D.overlay->height : 0;
-    D.window = SDL_CreateWindow(D.title ? D.title : "LittleWing", w * scale, h * scale + strip, flags);
+    D.window = SDL_CreateWindow(D.title ? D.title : "LittleWing", win_w, win_h + strip, flags);
     D.renderer = D.window ? SDL_CreateRenderer(D.window, NULL) : NULL;
     if (!D.renderer) {
         log_msg("display: can't create a window: %s (continuing without one)", SDL_GetError());
@@ -298,6 +351,7 @@ static void present(const uint8_t *rgba, int w, int h, int lw, int lh, const qd_
     if (!D.tried) {
         D.sdl_ok = open_window(lw, lh);
         atexit(display_log_stats);
+        atexit(display_save_size);
     }
     if (D.sdl_ok) {
         if (!D.texture || D.tex_w != w || D.tex_h != h) {
@@ -598,6 +652,9 @@ void display_poll(void) {
                 bool in = e.type == SDL_EVENT_MOUSE_MOTION;
                 D.overlay->pointer(&l, in ? e.motion.x * l.density : 0, in ? e.motion.y * l.density : 0, in);
             }
+            break;
+        case SDL_EVENT_WINDOW_RESIZED:
+            note_size();
             break;
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
         case SDL_EVENT_WINDOW_EXPOSED:

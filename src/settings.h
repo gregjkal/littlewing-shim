@@ -11,6 +11,8 @@
 
 #define SETTINGS_LAST_GAME "last game" /* string: the game the picker last chose */
 #define SETTINGS_VOLUME "volume"       /* integer: sound_volume, 0-100 */
+#define SETTINGS_WINDOW_WIDTH "window width"   /* integer: display_save_size, points */
+#define SETTINGS_WINDOW_HEIGHT "window height" /* integer: the game's part, without the strip */
 
 /* False, leaving out alone, if the key is missing or has the other type. */
 bool settings_get_str(const char *key, char *out, size_t cap);

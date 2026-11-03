@@ -34,6 +34,9 @@ contains no game files: you need your own copies of the games.
 
 You can change the keys from the game's OPTIONS menu.
 
+Drag the window's edge to make it any size. The next game opens at that size
+too; full screen leaves it alone.
+
 ## Installing more games
 
 LittleWing.app runs all ten of LittleWing's PowerPC Mac games:
