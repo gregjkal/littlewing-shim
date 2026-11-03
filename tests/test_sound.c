@@ -289,6 +289,77 @@ TEST(sound_source_stays_its_lead_behind_after_a_stall) {
     sound_set_source(NULL);
 }
 
+/* Pumps every 10 ms until the device is open (or closed), for at most
+   five seconds (a loaded machine's dummy device drains slowly). Whether it
+   is, at the end. */
+static bool pump_until_device(bool open) {
+    for (int k = 0; k < 500 && sound_device_open() != open; k++) {
+        sleep_s(0.01);
+        sound_pump();
+    }
+    return sound_device_open() == open;
+}
+
+/* An open device keeps the Mac awake, so it closes once every channel has
+   been idle long enough, and the next sound opens it again: its channel is
+   busy, and callbacks come, as with the device open throughout. */
+TEST(sound_device_closes_in_a_silence_and_opens_for_the_next_sound) {
+    setup();
+    sound_set_nap_ms(50);
+    sound_start_output(); /* the dummy device, on the real clock */
+    CHECK(sound_device_open());
+    uint32_t chan = new_channel();
+    call_import("SndDoCommand", 3, chan, cmd(SND_BUFFER_CMD, 0, std_header(MIX_RATE / 4, MIX_RATE)), 0u);
+    double t = wall_seconds();
+    sleep_s(0.1);
+    sound_pump();
+    if (wall_seconds() - t < 0.2) /* still playing: a busy channel isn't silence */
+        CHECK(sound_device_open());
+    CHECK(pump_until_device(false));
+    CHECK(!busy(chan));
+
+    /* A command that plays nothing leaves it closed, and still comes. */
+    call_import("SndDoCommand", 3, chan, cmd(SND_CALLBACK_CMD, 0, 0x1234), 0u);
+    CHECK(!sound_device_open());
+    for (int k = 0; k < 500 && gm_r32(GOT) != 0x1234; k++) {
+        sleep_s(0.01);
+        sound_pump();
+    }
+    CHECK_EQ(gm_r32(GOT), 0x1234);
+    CHECK(!sound_device_open());
+
+    call_import("SndDoCommand", 3, chan, cmd(SND_BUFFER_CMD, 0, std_header(MIX_RATE / 10, MIX_RATE)), 0u);
+    CHECK(sound_device_open());
+    CHECK(busy(chan));
+    call_import("SndDoCommand", 3, chan, cmd(SND_CALLBACK_CMD, 0, 0x5678), 0u);
+    for (int k = 0; k < 500 && gm_r32(GOT) != 0x5678; k++) {
+        sleep_s(0.01);
+        sound_pump();
+    }
+    CHECK_EQ(gm_r32(GOT), 0x5678);
+}
+
+static void quiet_source(int16_t *out, uint32_t frames) { (void)out, (void)frames; }
+
+/* The monitor closes once nothing has been heard long enough, and opens
+   again with the first frames that are heard. */
+TEST(sound_monitor_closes_in_a_silence_and_opens_when_heard) {
+    setup();
+    sound_set_nap_ms(50);
+    sound_set_source(source);
+    sound_start_output(); /* the dummy device, on the real clock */
+    for (int k = 0; k < 10; k++) {
+        sleep_s(0.01);
+        sound_pump();
+    }
+    CHECK(sound_device_open());
+    sound_set_source(quiet_source);
+    CHECK(pump_until_device(false));
+    sound_set_source(source);
+    CHECK(pump_until_device(true));
+    sound_set_source(NULL);
+}
+
 /* A format 1 'snd ' resource in a handle: one modifier, then a bufferCmd
    whose data pointer is the offset of a standard header of frames samples
    of value at rate Hz. */

@@ -1,5 +1,6 @@
 #include "export.h"
 
+#include <IOKit/pwr_mgt/IOPMLib.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -12,6 +13,8 @@
 #include <unistd.h>
 
 #include "util.h"
+
+static void keep_awake(bool on);
 
 /* ---- the lines ---- */
 
@@ -283,7 +286,27 @@ bool export_start(const char *self, export_kind kind, const char *replay, char *
     X.pid = pid;
     X.fd = fds[0];
     X.kind = kind;
+    keep_awake(true);
     return true;
+}
+
+/* While an export runs, the Mac doesn't sleep when idle: the export is
+   nobody's input, and the viewer's sound device closes in a silence
+   (sound.h), so nothing else keeps it awake. The display may sleep. */
+static IOPMAssertionID awake;
+static bool holding;
+
+static void keep_awake(bool on) {
+    if (on && !holding) {
+        holding = IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleSystemSleep,
+                                              kIOPMAssertionLevelOn, CFSTR("LittleWing exporting clips"),
+                                              &awake) == kIOReturnSuccess;
+        if (!holding)
+            log_msg("export: can't keep the Mac awake while it runs");
+    } else if (!on && holding) {
+        IOPMAssertionRelease(awake);
+        holding = false;
+    }
 }
 
 /* Reads all the pipe has now. False at its end (or on an error). */
@@ -322,6 +345,7 @@ bool export_poll(int *status) {
         X.fd = -1;
     }
     X.running = false;
+    keep_awake(false);
     *status = r < 0 ? 127 : WIFEXITED(st) ? WEXITSTATUS(st) : WIFSIGNALED(st) ? 128 + WTERMSIG(st) : 127;
     return true;
 }

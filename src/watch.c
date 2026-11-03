@@ -224,6 +224,7 @@ static bool headless(void) {
 /* Waiting: the window stays live (and opens, if nothing was drawn yet). */
 static void idle(void) {
     display_poll();
+    sound_nap();
     if (W.pending || !W.drawn)
         draw();
     update_title();
