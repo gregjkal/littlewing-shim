@@ -125,6 +125,7 @@ TEST(export_child_env_drops_the_viewers_settings) {
                          "LOONY_HD_SCALE=3",
                          "LOONY_CLIP_QUALITY=0.5",
                          "LOONY_WATCHFUL=kept",
+                         "LOONY_SETTINGS=/home/picker.plist",
                          NULL};
     char **out = export_child_env(env, EXPORT_MARKS, "/r/game.lwreplay");
     CHECK(out != NULL);
@@ -146,6 +147,7 @@ TEST(export_child_env_drops_the_viewers_settings) {
     CHECK_STR(entry(out, "LOONY_CLIP_PROGRESS"), "1");
     CHECK_STR(entry(out, "LOONY_REPLAY"), "/r/game.lwreplay");
     CHECK_STR(entry(out, "LOONY_LOG_INHERITED"), "1");
+    CHECK_STR(entry(out, "LOONY_SETTINGS"), ""); /* no app settings */
     export_free_env(out);
     out = export_child_env(env, EXPORT_CLIPS, "/r/game.lwreplay");
     CHECK(out != NULL);
