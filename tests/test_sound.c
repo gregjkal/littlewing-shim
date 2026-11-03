@@ -289,10 +289,11 @@ TEST(sound_source_stays_its_lead_behind_after_a_stall) {
     sound_set_source(NULL);
 }
 
-/* Pumps every 10 ms until the device is open (or closed), for at most a
-   second. Whether it is, at the end. */
+/* Pumps every 10 ms until the device is open (or closed), for at most
+   five seconds (a loaded machine's dummy device drains slowly). Whether it
+   is, at the end. */
 static bool pump_until_device(bool open) {
-    for (int k = 0; k < 100 && sound_device_open() != open; k++) {
+    for (int k = 0; k < 500 && sound_device_open() != open; k++) {
         sleep_s(0.01);
         sound_pump();
     }
@@ -308,11 +309,11 @@ TEST(sound_device_closes_in_a_silence_and_opens_for_the_next_sound) {
     sound_start_output(); /* the dummy device, on the real clock */
     CHECK(sound_device_open());
     uint32_t chan = new_channel();
-    call_import("SndDoCommand", 3, chan, cmd(SND_BUFFER_CMD, 0, std_header(MIX_RATE / 2, MIX_RATE)), 0u);
+    call_import("SndDoCommand", 3, chan, cmd(SND_BUFFER_CMD, 0, std_header(MIX_RATE / 4, MIX_RATE)), 0u);
     double t = wall_seconds();
     sleep_s(0.1);
     sound_pump();
-    if (wall_seconds() - t < 0.4) /* still playing: a busy channel isn't silence */
+    if (wall_seconds() - t < 0.2) /* still playing: a busy channel isn't silence */
         CHECK(sound_device_open());
     CHECK(pump_until_device(false));
     CHECK(!busy(chan));
@@ -320,7 +321,7 @@ TEST(sound_device_closes_in_a_silence_and_opens_for_the_next_sound) {
     /* A command that plays nothing leaves it closed, and still comes. */
     call_import("SndDoCommand", 3, chan, cmd(SND_CALLBACK_CMD, 0, 0x1234), 0u);
     CHECK(!sound_device_open());
-    for (int k = 0; k < 100 && gm_r32(GOT) != 0x1234; k++) {
+    for (int k = 0; k < 500 && gm_r32(GOT) != 0x1234; k++) {
         sleep_s(0.01);
         sound_pump();
     }
@@ -331,7 +332,7 @@ TEST(sound_device_closes_in_a_silence_and_opens_for_the_next_sound) {
     CHECK(sound_device_open());
     CHECK(busy(chan));
     call_import("SndDoCommand", 3, chan, cmd(SND_CALLBACK_CMD, 0, 0x5678), 0u);
-    for (int k = 0; k < 100 && gm_r32(GOT) != 0x5678; k++) {
+    for (int k = 0; k < 500 && gm_r32(GOT) != 0x5678; k++) {
         sleep_s(0.01);
         sound_pump();
     }

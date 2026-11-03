@@ -178,18 +178,24 @@ static void SDLCALL feed(void *unused, SDL_AudioStream *stream, int additional, 
    are late already: the monitor drops them rather than stay behind by them,
    and on the real clock, more than a second of them (the Mac slept) isn't
    rendered at all, since the game's render callbacks would run through all
-   of it. With the device closed for a silence, every channel is idle, so
-   more than a second isn't rendered either: the Mac may have slept for
-   hours. */
+   of it. With the device closed for a silence and every channel idle,
+   more than a second isn't rendered either: it is silence, and the Mac
+   may have slept for hours. */
+static bool any_busy(void);
+
+/* The game's clock, as catch_up reads it. */
+static double clock_now(void) {
+    return replay_recording() || replay_playing() ? misc_last_seconds() : misc_seconds();
+}
+
 static void catch_up(void) {
     if (SND.stream)
         return;
     bool real = !replay_recording() && !replay_playing();
-    double now = real ? misc_seconds() : misc_last_seconds();
-    uint64_t target = (uint64_t)(now * MIX_RATE);
+    uint64_t target = (uint64_t)(clock_now() * MIX_RATE);
     if (SND.source && real && !misc_fixed_clock() && target > SND.rendered + MIX_RATE)
         SND.rendered = target;
-    if (NAP.stream && target > SND.rendered + MIX_RATE)
+    if (NAP.stream && target > SND.rendered + MIX_RATE && !any_busy())
         SND.rendered = target;
     if (target > SND.rendered) {
         uint64_t frames = target - SND.rendered;
@@ -223,7 +229,7 @@ static void play_clock_driven(void);
 
 static void shutdown_output(void) {
     SND.source = NULL; /* the game has ended: its code doesn't run again */
-    NAP.stream = NAP.monitor = false;
+    NAP.monitor = false;
     if (SND.monitor) {
         SDL_DestroyAudioStream(SND.monitor);
         SND.monitor = NULL;
@@ -283,11 +289,6 @@ static void open_output(void) {
     SDL_ResumeAudioStreamDevice(s);
 }
 
-/* The game's clock, as catch_up reads it. */
-static double clock_now(void) {
-    return replay_recording() || replay_playing() ? misc_last_seconds() : misc_seconds();
-}
-
 /* Before a command that plays a sound: the device again, if it was closed
    for a silence. The clock drives the mixer through any other command. */
 static void wake(mix_kind kind) {
@@ -299,6 +300,16 @@ static void wake(mix_kind kind) {
 
 #define NAP_CHECK_MS 250
 
+/* Whether a channel plays, waits or has commands queued. */
+static bool any_busy(void) {
+    bool busy = false;
+    lock();
+    for (int i = 0; i < MIX_CHANNELS && !busy; i++)
+        busy = mix_busy(i);
+    unlock();
+    return busy;
+}
+
 void sound_nap(void) {
     static uint64_t checked;
     uint64_t now = SDL_GetTicks();
@@ -306,12 +317,7 @@ void sound_nap(void) {
         return;
     checked = now;
     if (SND.stream) {
-        bool busy = false;
-        lock();
-        for (int i = 0; i < MIX_CHANNELS && !busy; i++)
-            busy = mix_busy(i);
-        unlock();
-        if (busy) {
+        if (any_busy()) {
             sound_quiet_heard(&NAP.quiet);
         } else if (sound_quiet_close(&SND.stream, &NAP.quiet, "sound")) {
             /* Nothing sounds until a command comes (wake), so the clock
@@ -349,7 +355,7 @@ void sound_set_source(sound_source_fn fn) {
 }
 
 void sound_open_monitor(void) {
-    if (SND.stream || SND.monitor || NAP.monitor)
+    if (SND.stream || NAP.stream || SND.monitor || NAP.monitor)
         return;
     SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
