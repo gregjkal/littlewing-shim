@@ -11,11 +11,22 @@
 #include "util.h"
 
 static bool path(char *out, size_t cap) {
+    const char *pinned = getenv("LOONY_SETTINGS");
+    if (pinned && *pinned) {
+        snprintf(out, cap, "%s", pinned);
+        return true;
+    }
     char root[PATH_MAX];
     if (!files_data_root(root, sizeof root))
         return false;
     snprintf(out, cap, "%s/" GAME_PICKER_FILE, root);
     return true;
+}
+
+void settings_pin(void) {
+    char p[PATH_MAX];
+    if (path(p, sizeof p))
+        setenv("LOONY_SETTINGS", p, 1);
 }
 
 /* The entry for key, if the file has one. Free *all with plist_free. */

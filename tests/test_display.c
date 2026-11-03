@@ -601,8 +601,8 @@ TEST(display_window_shrinks_a_saved_size_to_fit) {
     CHECK(SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &usable));
     int w, h;
     window_size(&w, &h);
-    CHECK(w <= usable.w && h <= usable.h);
-    CHECK(w >= usable.w - 1 || h >= usable.h - 1);
+    CHECK(w <= usable.w && h <= usable.h - DISPLAY_TITLE_BAR);
+    CHECK(w >= usable.w - 1 || h >= usable.h - DISPLAY_TITLE_BAR - 1);
     CHECK(abs(w * 3 - h * 4) <= 4);
     test_remove_tree(home);
 }
@@ -619,5 +619,73 @@ TEST(display_window_without_a_saved_size_opens_at_the_screen_size) {
     window_size(&w, &h);
     CHECK_EQ(w, 128);
     CHECK_EQ(h, 96);
+    test_remove_tree(home);
+}
+
+static SDL_Window *the_window(void) {
+    int n = 0;
+    SDL_Window **all = SDL_GetWindows(&n);
+    SDL_Window *w = all && n > 0 ? all[0] : NULL;
+    SDL_free(all);
+    return w;
+}
+
+/* With the overlay's strip, the window is the saved size and the strip
+   below it, and the size saved leaves the strip out. */
+TEST(display_window_saved_size_leaves_out_the_strip) {
+    char home[1024];
+    own_home(home, sizeof home);
+    settings_set_int(SETTINGS_WINDOW_WIDTH, 640);
+    settings_set_int(SETTINGS_WINDOW_HEIGHT, 480);
+    gm_init();
+    mm_init();
+    qd_init(64, 48, 16);
+    display_set_overlay(&test_overlay);
+    display_present();
+    int w, h;
+    window_size(&w, &h);
+    CHECK_EQ(w, 640);
+    CHECK_EQ(h, 480 + 16);
+    SDL_Window *win = the_window();
+    CHECK(win);
+    SDL_SetWindowSize(win, 720, 540 + 16);
+    display_poll();
+    display_save_size();
+    int64_t sw = 0, sh = 0;
+    CHECK(settings_get_int(SETTINGS_WINDOW_WIDTH, &sw));
+    CHECK(settings_get_int(SETTINGS_WINDOW_HEIGHT, &sh));
+    CHECK_EQ(sw, 720);
+    CHECK_EQ(sh, 540);
+    test_remove_tree(home);
+}
+
+/* A replay sets LOONY_DATA_DIR to a folder of its own after launch
+   (replay_open); the settings pinned before it still give the size and
+   take a new one. */
+TEST(display_window_size_survives_a_replay_save_folder) {
+    char home[1024], replay_dir[1024];
+    own_home(home, sizeof home);
+    settings_set_int(SETTINGS_WINDOW_WIDTH, 640);
+    settings_set_int(SETTINGS_WINDOW_HEIGHT, 480);
+    settings_pin();
+    test_tmp_dir(replay_dir, sizeof replay_dir);
+    setenv("LOONY_DATA_DIR", replay_dir, 1);
+    gm_init();
+    mm_init();
+    qd_init(64, 48, 16);
+    display_present();
+    int w, h;
+    window_size(&w, &h);
+    CHECK_EQ(w, 640);
+    CHECK_EQ(h, 480);
+    SDL_SetWindowSize(the_window(), 720, 540);
+    display_poll();
+    display_save_size();
+    unsetenv("LOONY_SETTINGS");
+    unsetenv("LOONY_DATA_DIR"); /* read back from HOME's settings */
+    int64_t sw = 0;
+    CHECK(settings_get_int(SETTINGS_WINDOW_WIDTH, &sw));
+    CHECK_EQ(sw, 720);
+    test_remove_tree(replay_dir);
     test_remove_tree(home);
 }

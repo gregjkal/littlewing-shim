@@ -133,7 +133,7 @@ static const char *const dropped[] = {
     "LOONY_WATCH_IN",    "LOONY_SCRIPT",       "LOONY_SCREENSHOT",  "LOONY_FULLSCREEN",
     "LOONY_DATA_DIR",    "LOONY_EXIT_AFTER",   "LOONY_CLIP_OUT",    "LOONY_WAV",
     "LOONY_RECORD",      "LOONY_PICK",         "LOONY_PICKER_SHOT", "LOONY_HD_DUMP",
-    "LOONY_PRACTICE",
+    "LOONY_PRACTICE",    "LOONY_SETTINGS",
     /* set below */
     "LOONY_CLIP",        "LOONY_CLIP_PROGRESS", "LOONY_REPLAY",     "LOONY_LOG_INHERITED",
 };

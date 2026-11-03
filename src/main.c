@@ -343,6 +343,7 @@ static void retry_from_launch(void) {
 
 int main(int argc, char **argv) {
     log_to_file_if_app(argv[0]);
+    settings_pin(); /* before replay_open changes LOONY_DATA_DIR */
     char err[256];
     if (!replay_open(err, sizeof err)) /* sets the game, save folder and alerts it needs */
         return startup_error("%s", err);

@@ -147,8 +147,8 @@ void display_init(void) {
 }
 
 /* The size the last window had, for the game's part of it, if one was
-   saved, in place of *w x *h. It is made to fit the display it opens on, so
-   a size saved on a larger one still fits. */
+   saved, in place of *w x *h. It is made to fit the display it opens on,
+   below the title bar, so a size saved on a larger one still fits. */
 static void saved_size(int *w, int *h) {
     int64_t sw, sh;
     if (!settings_get_int(SETTINGS_WINDOW_WIDTH, &sw) || !settings_get_int(SETTINGS_WINDOW_HEIGHT, &sh))
@@ -157,7 +157,7 @@ static void saved_size(int *w, int *h) {
         return;
     SDL_Rect usable;
     if (SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &usable) && usable.w > 0 && usable.h > 0) {
-        int strip = D.overlay ? (int)D.overlay->height : 0;
+        int strip = (D.overlay ? (int)D.overlay->height : 0) + DISPLAY_TITLE_BAR;
         double fit = 1;
         if (sw > usable.w)
             fit = (double)usable.w / (double)sw;

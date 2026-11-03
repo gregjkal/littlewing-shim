@@ -47,10 +47,12 @@ bool display_fullscreen(void);
    alike, since every screen is 4:3. A full-screen window leaves the saved
    size alone. The size is saved in the app's settings (settings.h) at exit,
    and by this call, which a restart makes since exec skips the atexit
-   handlers. Without a save root (LOONY_DATA_DIR, as in the tests) the
-   window opens at the screen's own size, doubled below 800 wide. */
+   handlers. Without the settings (LOONY_DATA_DIR set, as in the tests,
+   and no LOONY_SETTINGS) the window opens at the screen's own size,
+   doubled below 800 wide. */
 void display_save_size(void);
 #define DISPLAY_MIN_SAVED 160 /* points: a saved side smaller than this is ignored */
+#define DISPLAY_TITLE_BAR 32  /* points left above a saved size made to fit: macOS's is 28 */
 
 /* Whether presenting waits for the display's refresh (the default). Turned
    off for fixed-clock runs, where waiting would only slow the run down. */
