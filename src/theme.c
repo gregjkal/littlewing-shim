@@ -22,6 +22,7 @@
 #include "files.h"
 #include "misc.h"
 #include "sound.h"
+#include "sound_device.h"
 #include "util.h"
 #include "wav.h"
 

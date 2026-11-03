@@ -6,6 +6,7 @@
 
 #include "guest_mem.h"
 #include "snapshot.h"
+#include "sound_device.h"
 #include "memmgr.h"
 #include "misc.h"
 #include "mixer.h"
@@ -67,7 +68,20 @@ static struct {
     uint32_t after_ms;
     bool stream, monitor; /* closed for the silence: open it at the next sound */
     sound_quiet quiet;
+    uint64_t retry_at; /* SDL_GetTicks before which a failed open isn't tried again */
 } NAP = {.after_ms = SOUND_NAP_MS};
+
+/* Whether to try opening a device closed for a silence: not more than once
+   a second, so a device that can't be opened isn't tried at every sound. */
+#define NAP_RETRY_MS 1000
+static bool may_reopen(void) {
+    uint64_t now = SDL_GetTicks();
+    if (now < NAP.retry_at)
+        return false;
+    NAP.retry_at = now + NAP_RETRY_MS;
+    log_msg("sound: opening the audio device again");
+    return true;
+}
 
 static void open_output(void);
 static bool open_monitor_stream(void);
@@ -122,13 +136,10 @@ static void monitor(const int16_t *buf, uint32_t n) {
         heard = abs(buf[k]) > SOUND_NAP_QUIET;
     if (heard)
         sound_quiet_heard(&NAP.quiet);
-    if (!SND.monitor) { /* closed for a silence */
-        if (!heard || !NAP.monitor)
+    if (!SND.monitor) { /* closed for a silence; never opened on the audio thread */
+        if (!heard || !NAP.monitor || SND.stream || !may_reopen() || !open_monitor_stream())
             return;
         NAP.monitor = false;
-        log_msg("sound: opening the audio device again");
-        if (!open_monitor_stream())
-            return;
     }
     int lead = (int)(4 * MIX_RATE * SND.lead_ms / 1000);
     int queued = SDL_GetAudioStreamQueued(SND.monitor);
@@ -171,6 +182,21 @@ static void SDLCALL feed(void *unused, SDL_AudioStream *stream, int additional, 
         render((uint32_t)additional / 4, 0, true);
 }
 
+/* The game's clock, as catch_up reads it. */
+static double clock_now(void) {
+    return replay_recording() || replay_playing() ? misc_last_seconds() : misc_seconds();
+}
+
+/* Whether a channel plays, waits or has commands queued. */
+static bool any_busy(void) {
+    bool busy = false;
+    lock();
+    for (int i = 0; i < MIX_CHANNELS && !busy; i++)
+        busy = mix_busy(i);
+    unlock();
+    return busy;
+}
+
 /* Clock-driven: renders the frames between the last call and now. On a
    recording or a replay, now is when the game last read the clock: reading
    it here would be a step, which a recording with an audio device doesn't
@@ -180,14 +206,8 @@ static void SDLCALL feed(void *unused, SDL_AudioStream *stream, int additional, 
    rendered at all, since the game's render callbacks would run through all
    of it. With the device closed for a silence and every channel idle,
    more than a second isn't rendered either: it is silence, and the Mac
-   may have slept for hours. */
-static bool any_busy(void);
-
-/* The game's clock, as catch_up reads it. */
-static double clock_now(void) {
-    return replay_recording() || replay_playing() ? misc_last_seconds() : misc_seconds();
-}
-
+   may have slept for hours. Unless the output is recorded (LOONY_WAV or
+   a tap), which takes every frame. */
 static void catch_up(void) {
     if (SND.stream)
         return;
@@ -195,7 +215,8 @@ static void catch_up(void) {
     uint64_t target = (uint64_t)(clock_now() * MIX_RATE);
     if (SND.source && real && !misc_fixed_clock() && target > SND.rendered + MIX_RATE)
         SND.rendered = target;
-    if (NAP.stream && target > SND.rendered + MIX_RATE && !any_busy())
+    if (NAP.stream && !SND.recording && !SND.tap && target > SND.rendered + MIX_RATE &&
+        !any_busy())
         SND.rendered = target;
     if (target > SND.rendered) {
         uint64_t frames = target - SND.rendered;
@@ -267,24 +288,28 @@ void sound_go_live(void) {
         open_output();
 }
 
+/* SDL's audio, before a device is opened. False (logged) if it can't start. */
+static bool start_audio(void) {
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO))
+        return true;
+    log_msg("sound: no audio output: %s (continuing silently)", SDL_GetError());
+    return false;
+}
+
 /* The device: sound_start_output's, or sound_go_live's. */
 static void open_output(void) {
     if (SND.source) {
         play_clock_driven();
         return;
     }
-    NAP.stream = false;
-    if (SND.stream)
+    if (SND.stream || !start_audio())
         return;
-    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
-    if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
-        log_msg("sound: no audio output: %s (continuing silently)", SDL_GetError());
-        return;
-    }
     SDL_AudioStream *s = sound_open_device(MIX_RATE, feed, &NAP.quiet, "sound");
-    if (!s)
+    if (!s) /* closed for a silence, it stays so, for the next sound to try */
         return;
-    catch_up(); /* the clock-driven frames so far */
+    catch_up(); /* the clock-driven frames so far, skipping a slept-through gap */
+    NAP.stream = false;
     SND.stream = s;
     SDL_ResumeAudioStreamDevice(s);
 }
@@ -292,23 +317,11 @@ static void open_output(void) {
 /* Before a command that plays a sound: the device again, if it was closed
    for a silence. The clock drives the mixer through any other command. */
 static void wake(mix_kind kind) {
-    if (!NAP.stream || kind != MIX_BUFFER)
-        return;
-    log_msg("sound: opening the audio device again");
-    open_output();
+    if (NAP.stream && kind == MIX_BUFFER && may_reopen())
+        open_output();
 }
 
 #define NAP_CHECK_MS 250
-
-/* Whether a channel plays, waits or has commands queued. */
-static bool any_busy(void) {
-    bool busy = false;
-    lock();
-    for (int i = 0; i < MIX_CHANNELS && !busy; i++)
-        busy = mix_busy(i);
-    unlock();
-    return busy;
-}
 
 void sound_nap(void) {
     static uint64_t checked;
@@ -355,13 +368,8 @@ void sound_set_source(sound_source_fn fn) {
 }
 
 void sound_open_monitor(void) {
-    if (SND.stream || NAP.stream || SND.monitor || NAP.monitor)
+    if (SND.stream || NAP.stream || SND.monitor || NAP.monitor || !start_audio())
         return;
-    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
-    if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
-        log_msg("sound: no audio output: %s (continuing silently)", SDL_GetError());
-        return;
-    }
     open_monitor_stream();
 }
 
