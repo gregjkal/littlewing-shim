@@ -301,7 +301,7 @@ static bool pump_until_device(bool open) {
 
 /* An open device keeps the Mac awake, so it closes once every channel has
    been idle long enough, and the next sound opens it again: its channel is
-   busy, and its callback comes, as with the device open throughout. */
+   busy, and callbacks come, as with the device open throughout. */
 TEST(sound_device_closes_in_a_silence_and_opens_for_the_next_sound) {
     setup();
     sound_set_nap_ms(50);
@@ -317,15 +317,25 @@ TEST(sound_device_closes_in_a_silence_and_opens_for_the_next_sound) {
     CHECK(pump_until_device(false));
     CHECK(!busy(chan));
 
-    call_import("SndDoCommand", 3, chan, cmd(SND_BUFFER_CMD, 0, std_header(MIX_RATE / 10, MIX_RATE)), 0u);
-    CHECK(sound_device_open());
-    CHECK(busy(chan));
+    /* A command that plays nothing leaves it closed, and still comes. */
     call_import("SndDoCommand", 3, chan, cmd(SND_CALLBACK_CMD, 0, 0x1234), 0u);
+    CHECK(!sound_device_open());
     for (int k = 0; k < 100 && gm_r32(GOT) != 0x1234; k++) {
         sleep_s(0.01);
         sound_pump();
     }
     CHECK_EQ(gm_r32(GOT), 0x1234);
+    CHECK(!sound_device_open());
+
+    call_import("SndDoCommand", 3, chan, cmd(SND_BUFFER_CMD, 0, std_header(MIX_RATE / 10, MIX_RATE)), 0u);
+    CHECK(sound_device_open());
+    CHECK(busy(chan));
+    call_import("SndDoCommand", 3, chan, cmd(SND_CALLBACK_CMD, 0, 0x5678), 0u);
+    for (int k = 0; k < 100 && gm_r32(GOT) != 0x5678; k++) {
+        sleep_s(0.01);
+        sound_pump();
+    }
+    CHECK_EQ(gm_r32(GOT), 0x5678);
 }
 
 static void quiet_source(int16_t *out, uint32_t frames) { (void)out, (void)frames; }

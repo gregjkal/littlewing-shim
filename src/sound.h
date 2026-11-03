@@ -13,9 +13,9 @@
    An open audio device keeps the Mac from sleeping, even playing silence,
    so after SOUND_NAP_MS of silence the device is closed until the next
    sound. With the Sound Manager on the device, that is once every channel
-   has been idle that long (sound_pump checks): the clock drives the mixer
-   meanwhile, as with no device, and the next command that can make a
-   sound opens the device again before it is queued. On the monitor (a
+   has been idle that long (sound_nap checks): the clock drives the mixer
+   meanwhile, as with no device, and the next command that plays a sound
+   opens the device again before it is queued. On the monitor (a
    watched replay or a source), it is once nothing louder than
    SOUND_NAP_QUIET has been played that long, and the first frames that
    are reopen it. Opening the device takes some tens of milliseconds, so a sound after
@@ -82,9 +82,14 @@ typedef void (*sound_tap_fn)(const int16_t *samples, uint32_t frames, uint64_t a
 void sound_set_tap(sound_tap_fn fn);
 
 /* Renders up to now if clock-driven, then delivers the callbacks the queues
-   have reached (guest_call), oldest first. The event loop calls this on every
-   iteration. */
+   have reached (guest_call), oldest first, and calls sound_nap. The event
+   loop calls this on every iteration. */
 void sound_pump(void);
+
+/* Closes the device once the silence has been long enough (above), looking
+   at most every quarter second. Runs no game code: the viewer calls it
+   while it waits, paused or at the end, when nothing calls sound_pump. */
+void sound_nap(void);
 
 /* A second source of sound, added into what the mixer renders: fn adds
    frames stereo frames to out (2 * frames samples, clamped as it adds). It
