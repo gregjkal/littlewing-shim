@@ -144,9 +144,17 @@ void display_init(void) {
         D.screenshot = NULL;
 }
 
+/* SDL's video. SDL keeps the display awake while a window is open unless
+   told otherwise; the player's keys keep it awake as any app's do, and when
+   nobody is playing the Mac should sleep as it would. */
+static bool init_video(void) {
+    SDL_SetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, "1");
+    return SDL_Init(SDL_INIT_VIDEO);
+}
+
 static bool open_window(int w, int h) {
     D.tried = true;
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
+    if (!init_video()) {
         log_msg("display: SDL_Init failed: %s (continuing without a window)", SDL_GetError());
         return false;
     }
@@ -438,7 +446,7 @@ static void open_pending(void) {
 
 void display_take_launch_events(uint32_t wait_ms) {
     const char *driver = getenv("SDL_VIDEO_DRIVER");
-    if ((driver && strcmp(driver, "cocoa") != 0) || !SDL_Init(SDL_INIT_VIDEO))
+    if ((driver && strcmp(driver, "cocoa") != 0) || !init_video())
         return;
     /* Only the drops: the rest stay queued for display_poll. */
     uint64_t until = SDL_GetTicks() + wait_ms;
