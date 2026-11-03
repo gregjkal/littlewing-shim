@@ -133,7 +133,7 @@ static const char *const dropped[] = {
     "LOONY_WATCH_IN",    "LOONY_SCRIPT",       "LOONY_SCREENSHOT",  "LOONY_FULLSCREEN",
     "LOONY_DATA_DIR",    "LOONY_EXIT_AFTER",   "LOONY_CLIP_OUT",    "LOONY_WAV",
     "LOONY_RECORD",      "LOONY_PICK",         "LOONY_PICKER_SHOT", "LOONY_HD_DUMP",
-    "LOONY_PRACTICE",
+    "LOONY_PRACTICE",    "LOONY_SETTINGS",
     /* set below */
     "LOONY_CLIP",        "LOONY_CLIP_PROGRESS", "LOONY_REPLAY",     "LOONY_LOG_INHERITED",
 };
@@ -171,7 +171,7 @@ char **export_env_with(char *const *env, const char *const *set) {
         count++;
     while (set[nset])
         nset++;
-    char **out = calloc(count + nset + 1, sizeof *out);
+    char **out = calloc(count + nset + 2, sizeof *out);
     if (!out)
         return NULL;
     size_t n = 0;
@@ -181,6 +181,8 @@ char **export_env_with(char *const *env, const char *const *set) {
     for (size_t i = 0; i < nset; i++)
         if (!(out[n++] = strdup(set[i])))
             goto fail;
+    if (!(out[n++] = strdup("LOONY_SETTINGS="))) /* no app settings (settings.h) */
+        goto fail;
     return out;
 fail:
     export_free_env(out);
