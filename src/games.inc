@@ -4,8 +4,8 @@
    third character with a computed one. The three branches past a refusal
    become unconditional and the compare's result becomes `li r3,0`. Addresses
    are guest addresses: a Mach-O game's equal its code+ offsets, a PEF game's
-   are the offset plus GUEST_IMAGE_BASE (0x100000). README.md has each game's
-   path to the verdict. */
+   are the offset plus GUEST_IMAGE_BASE (0x100000). docs/development.md has each
+   game's path to the verdict. */
 
 /* MONSTER FAIR 1.2.5 (the rehearsal; its public key works anyway). A key of
    24 or more letters and digits. The check during play (code+0x42be0) has its

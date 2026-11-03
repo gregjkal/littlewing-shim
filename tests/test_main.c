@@ -434,6 +434,8 @@ int main(int argc, char **argv) {
     /* No test may open a real window or play sound; children inherit this too. */
     setenv("SDL_VIDEO_DRIVER", "dummy", 1);
     setenv("SDL_AUDIO_DRIVER", "dummy", 1);
+    /* Tests find the app's settings from HOME alone, never the shell's file. */
+    unsetenv("LOONY_SETTINGS");
     /* The games start unregistered, as the frames the tests check were
        taken; the tests of the license saved by default unset this. */
     setenv("LOONY_UNREGISTERED", "1", 1);

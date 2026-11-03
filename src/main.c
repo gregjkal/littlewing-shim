@@ -227,6 +227,7 @@ static void restart_self(const char *why, bool same_args) {
     if (log_path[0])
         setenv("LOONY_LOG_INHERITED", "1", 1);
     display_log_stats(); /* exec skips the atexit handlers */
+    display_save_size();
     replay_finish();
     gamestart_take_end();
     theme_stop(); /* the picker's render, when a replay is opened from it */
@@ -257,7 +258,9 @@ static void back_to_picker(void) {
 /* A recording opened from Finder, dropped on the window or chosen from the
    Replays or Open Recent menu (display.h): the program restarts to watch
    it (watch.h) from from_ticks of play, in a save folder of its own,
-   whatever is playing. A game's preferences are saved first, and its
+   whatever is playing. One in a folder that takes no new file is copied
+   into the recordings folder first (recordings_bring_in), so its clips
+   can be saved. A game's preferences are saved first, and its
    recording ends where it is (restart_self), so the recording being made
    can be opened too. */
 static void open_replay_at(const char *path, uint32_t from_ticks) {
@@ -267,16 +270,25 @@ static void open_replay_at(const char *path, uint32_t from_ticks) {
         log_msg("not opening %s: not a replay", path);
         return;
     }
-    char why[512];
-    if (!realpath(path, full)) {
+    char why[512], found[PATH_MAX], dir[PATH_MAX];
+    if (!realpath(path, found)) {
         log_msg("can't open %s: %s", path, strerror(errno));
         return;
     }
-    if (!replay_check(full, why, sizeof why)) { /* said here: the game goes on */
+    bool ok = replay_check(found, why, sizeof why);
+    snprintf(full, sizeof full, "%s", found);
+    /* Copied in from a folder like Messages'. One that can't be still plays
+       where it is, without clips. */
+    if (ok && recordings_dir(dir, sizeof dir) &&
+        !recordings_bring_in(found, dir, full, sizeof full, why, sizeof why)) {
+        log_msg("watching %s where it is, which keeps no clips: %s", found, why);
+        snprintf(full, sizeof full, "%s", found);
+    }
+    if (!ok) { /* said here: the game goes on */
         const char *video = getenv("SDL_VIDEO_DRIVER");
         char msg[PATH_MAX + 600];
-        log_msg("can't open %s: %s", full, why);
-        snprintf(msg, sizeof msg, "LittleWing can't play %s: %s.", strrchr(full, '/') + 1, why);
+        log_msg("can't open %s: %s", found, why);
+        snprintf(msg, sizeof msg, "LittleWing can't play %s: %s.", strrchr(found, '/') + 1, why);
         if (!video || strcmp(video, "dummy") != 0)
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "LittleWing", msg, NULL);
         return;
@@ -331,6 +343,7 @@ static void retry_from_launch(void) {
 
 int main(int argc, char **argv) {
     log_to_file_if_app(argv[0]);
+    settings_pin(); /* before replay_open changes LOONY_DATA_DIR */
     char err[256];
     if (!replay_open(err, sizeof err)) /* sets the game, save folder and alerts it needs */
         return startup_error("%s", err);

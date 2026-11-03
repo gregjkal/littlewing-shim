@@ -6,7 +6,9 @@
 # notarizes it, and makes appcast.xml, the update feed, which offers the zip,
 # signed with the Sparkle key in the keychain. Only then does it tag the
 # commit vx.y.z, push the tag and make a draft GitHub release with the zip and
-# the feed. The notes are tools/release_notes.md with its @VERSION@, @MACOS@,
+# the feed. The zip goes up twice: as LittleWing-x.y.z.zip, which the feed
+# offers, and as LittleWing.zip, whose name never changes, so the README can
+# link to releases/latest/download/LittleWing.zip. The notes are tools/release_notes.md with its @VERSION@, @MACOS@,
 # @UNICORN@, @SDL@ and @SPARKLE@ filled in, followed by GitHub's list of the
 # pull requests since the last release with LOONY_RELEASE_SUMMARY, one
 # sentence about the release, under its "## What's Changed" heading. That
@@ -41,7 +43,7 @@ if git rev-parse -q --verify "refs/tags/$tag" >/dev/null || [ -n "$(git ls-remot
 fi
 unknown=$(grep -o '@[A-Z]*@' tools/release_notes.md | grep -vxE '@(VERSION|MACOS|UNICORN|SDL|SPARKLE)@' || true)
 [ -z "$unknown" ] || die "tools/release_notes.md has placeholders release.sh doesn't fill: $unknown"
-[ -s tools/sparkle_public_key.txt ] || die "tools/sparkle_public_key.txt is missing: make the Sparkle signing key (README: Releases)"
+[ -s tools/sparkle_public_key.txt ] || die "tools/sparkle_public_key.txt is missing: make the Sparkle signing key (docs/development.md: Releases)"
 gh auth status >/dev/null 2>&1 || die "gh isn't logged in to GitHub (gh auth login)"
 
 build=build-dist
@@ -51,7 +53,7 @@ MACOSX_DEPLOYMENT_TARGET=$macos tools/build_deps.sh "$build/deps"
 sparkle=$PWD/$build/deps/sparkle
 key_account=littlewing-shim  # the keychain item holding the Sparkle signing key
 echo "reading the Sparkle key: if macOS asks to allow generate_keys keychain access, click Always Allow"
-key=$("$sparkle/bin/generate_keys" --account "$key_account" -p) || die "the keychain has no Sparkle key for $key_account (README: Releases)"
+key=$("$sparkle/bin/generate_keys" --account "$key_account" -p) || die "the keychain has no Sparkle key for $key_account (docs/development.md: Releases)"
 [ "$key" = "$(tr -d ' \n' <tools/sparkle_public_key.txt)" ] ||
     die "the keychain's Sparkle key isn't the one in tools/sparkle_public_key.txt, so apps would refuse the update"
 PKG_CONFIG_PATH="$PWD/$build/deps/unicorn/lib/pkgconfig:$PWD/$build/deps/sdl3/lib/pkgconfig"
@@ -64,7 +66,7 @@ min=$(plutil -extract LSMinimumSystemVersion raw "$build/LittleWing.app/Contents
 [ "$min" = "$macos" ] || die "the app needs macOS $min, not $macos"
 tools/notarize.sh "$build/LittleWing.app" "$profile"
 zip="$build/LittleWing-$version.zip"
-mv "$build/LittleWing.zip" "$zip"
+cp "$build/LittleWing.zip" "$zip"
 
 unicorn=$(pkg-config --modversion unicorn)
 sdl=$(pkg-config --modversion sdl3)
@@ -101,7 +103,7 @@ printf '\n%s\n' "$generated" >>"$notes"
 git tag -a "$tag" -m "LittleWing $version"
 git push origin "$tag"
 # The tag is pushed, so a rerun would stop at it: say how to finish instead.
-gh release create "$tag" "$zip" "$updates/appcast.xml" --verify-tag --draft --title "LittleWing $version" \
-    --notes-file "$notes" ||
-    die "$tag is pushed but its release wasn't made; finish with: gh release create $tag $zip $updates/appcast.xml --verify-tag --draft --title 'LittleWing $version' --notes-file $notes"
+gh release create "$tag" "$zip" "$build/LittleWing.zip" "$updates/appcast.xml" --verify-tag --draft \
+    --title "LittleWing $version" --notes-file "$notes" ||
+    die "$tag is pushed but its release wasn't made; finish with: gh release create $tag $zip $build/LittleWing.zip $updates/appcast.xml --verify-tag --draft --title 'LittleWing $version' --notes-file $notes"
 echo "made a draft release of $tag: check it on GitHub, then publish it with: gh release edit $tag --draft=false --latest"
