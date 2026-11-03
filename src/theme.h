@@ -49,7 +49,9 @@ void theme_start(const game_info *const *games, int n, int selected, const char 
    once, stopping the one playing; one being rendered plays when it is. */
 void theme_select(int selected);
 
-/* Called every frame: collects a finished render and starts the next. */
+/* Called every frame: collects a finished render and starts the next, and
+   closes the audio device once the music has been over for SOUND_NAP_MS
+   (an open device keeps the Mac awake); the next clip opens it again. */
 void theme_tend(void);
 
 /* Stops the music and any render (its recording is dropped). */

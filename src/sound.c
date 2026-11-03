@@ -6,6 +6,7 @@
 
 #include "guest_mem.h"
 #include "snapshot.h"
+#include "sound_device.h"
 #include "memmgr.h"
 #include "misc.h"
 #include "mixer.h"
@@ -61,6 +62,70 @@ static void snap_walk(snapshot_walker *w) {
 }
 SNAPSHOT_STATE_WALK(SND, snap_walk)
 
+/* Closing the device in a long silence (sound.h). The host's alone, so it
+   isn't in a snapshot: a seek leaves the device as it is. */
+static struct {
+    uint32_t after_ms;
+    bool stream, monitor; /* closed for the silence: open it at the next sound */
+    sound_quiet quiet;
+    uint64_t retry_at; /* sound_may_open's */
+    bool audio;        /* SDL's audio started, once for good */
+} NAP = {.after_ms = SOUND_NAP_MS};
+
+#define NAP_CHECK_MS 250 /* how often a silence is looked at */
+
+bool sound_start_audio(const char *who) {
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO))
+        return true;
+    log_msg("%s: no audio output: %s", who, SDL_GetError());
+    return false;
+}
+
+#define RETRY_MS 1000
+bool sound_may_open(uint64_t *retry_at) {
+    uint64_t now = SDL_GetTicks();
+    if (now < *retry_at)
+        return false;
+    *retry_at = now + RETRY_MS;
+    return true;
+}
+
+static bool may_reopen(void) {
+    if (!sound_may_open(&NAP.retry_at))
+        return false;
+    log_msg("sound: opening the audio device again");
+    return true;
+}
+
+static void open_output(void);
+static bool open_monitor_stream(void);
+
+SDL_AudioStream *sound_open_device(int rate, SDL_AudioStreamCallback fn, sound_quiet *q,
+                                   const char *who) {
+    const SDL_AudioSpec spec = {SDL_AUDIO_S16, 2, rate};
+    SDL_AudioStream *s = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, fn, NULL);
+    if (!s) {
+        log_msg("%s: no audio output: %s", who, SDL_GetError());
+        return NULL;
+    }
+    SDL_SetAudioStreamGain(s, sound_gain(SND.volume));
+    sound_quiet_heard(q);
+    return s;
+}
+
+void sound_quiet_heard(sound_quiet *q) { q->since = SDL_GetTicks(); }
+
+bool sound_quiet_close(SDL_AudioStream **s, const sound_quiet *q, const char *who) {
+    if (!*s || SDL_GetTicks() - q->since < NAP.after_ms)
+        return false;
+    SDL_DestroyAudioStream(*s);
+    *s = NULL;
+    log_msg("%s: no sound for %u s: closing the audio device until there is", who,
+            NAP.after_ms / 1000);
+    return true;
+}
+
 /* The audio thread holds the stream's lock while it renders. */
 static void lock(void) {
     if (SND.stream)
@@ -81,6 +146,22 @@ static void unlock(void) {
 static void monitor(const int16_t *buf, uint32_t n) {
     static const int16_t silence[2 * MIX_RATE * SOUND_SOURCE_LEAD_MS / 1000];
     _Static_assert(SOUND_SOURCE_LEAD_MS >= SOUND_MONITOR_LEAD_MS, "the silence covers both leads");
+    if (!SND.stream) { /* the silence is the main thread's, never the audio thread's */
+        /* Heard less than a check ago (sound_nap): no need to look. */
+        bool look = !SND.monitor || SDL_GetTicks() - NAP.quiet.since >= NAP_CHECK_MS;
+        bool heard = false;
+        for (uint32_t k = 0; look && k < 2 * n && !heard; k++)
+            heard = abs(buf[k]) > SOUND_NAP_QUIET;
+        if (heard)
+            sound_quiet_heard(&NAP.quiet);
+        if (!SND.monitor) { /* closed for a silence */
+            if (!heard || !NAP.monitor || !may_reopen() || !open_monitor_stream())
+                return;
+            NAP.monitor = false;
+        }
+    }
+    if (!SND.monitor)
+        return;
     int lead = (int)(4 * MIX_RATE * SND.lead_ms / 1000);
     int queued = SDL_GetAudioStreamQueued(SND.monitor);
     if (SND.source && queued > 4 * lead) {
@@ -122,6 +203,21 @@ static void SDLCALL feed(void *unused, SDL_AudioStream *stream, int additional, 
         render((uint32_t)additional / 4, 0, true);
 }
 
+/* The game's clock, as catch_up reads it. */
+static double clock_now(void) {
+    return replay_recording() || replay_playing() ? misc_last_seconds() : misc_seconds();
+}
+
+/* Whether a channel plays, waits or has commands queued. */
+static bool any_busy(void) {
+    bool busy = false;
+    lock();
+    for (int i = 0; i < MIX_CHANNELS && !busy; i++)
+        busy = mix_busy(i);
+    unlock();
+    return busy;
+}
+
 /* Clock-driven: renders the frames between the last call and now. On a
    recording or a replay, now is when the game last read the clock: reading
    it here would be a step, which a recording with an audio device doesn't
@@ -129,19 +225,24 @@ static void SDLCALL feed(void *unused, SDL_AudioStream *stream, int additional, 
    are late already: the monitor drops them rather than stay behind by them,
    and on the real clock, more than a second of them (the Mac slept) isn't
    rendered at all, since the game's render callbacks would run through all
-   of it. */
+   of it. With the device closed for a silence and every channel idle,
+   more than a second isn't rendered either: it is silence, and the Mac
+   may have slept for hours. Unless the output is recorded (LOONY_WAV or
+   a tap), which takes every frame. */
 static void catch_up(void) {
     if (SND.stream)
         return;
     bool real = !replay_recording() && !replay_playing();
-    double now = real ? misc_seconds() : misc_last_seconds();
-    uint64_t target = (uint64_t)(now * MIX_RATE);
+    uint64_t target = (uint64_t)(clock_now() * MIX_RATE);
     if (SND.source && real && !misc_fixed_clock() && target > SND.rendered + MIX_RATE)
+        SND.rendered = target;
+    if (NAP.stream && !SND.recording && !SND.tap && target > SND.rendered + MIX_RATE &&
+        !any_busy())
         SND.rendered = target;
     if (target > SND.rendered) {
         uint64_t frames = target - SND.rendered;
         bool late = SND.source && frames > 2 * MIX_RATE * SND.lead_ms / 1000;
-        if (late && SND.monitor_on)
+        if (late && SND.monitor)
             SDL_ClearAudioStream(SND.monitor);
         double t0 = wall_seconds();
         render((uint32_t)frames, SND.rendered, !late);
@@ -167,10 +268,10 @@ void sound_init(void) {
 }
 
 static void play_clock_driven(void);
-static void open_output(void);
 
 static void shutdown_output(void) {
     SND.source = NULL; /* the game has ended: its code doesn't run again */
+    NAP.monitor = false;
     if (SND.monitor) {
         SDL_DestroyAudioStream(SND.monitor);
         SND.monitor = NULL;
@@ -208,29 +309,60 @@ void sound_go_live(void) {
         open_output();
 }
 
+/* SDL's audio, before a device is opened. False (logged) if it can't start. */
+static bool start_audio(void) {
+    if (!NAP.audio)
+        NAP.audio = sound_start_audio("sound");
+    return NAP.audio;
+}
+
 /* The device: sound_start_output's, or sound_go_live's. */
 static void open_output(void) {
     if (SND.source) {
         play_clock_driven();
         return;
     }
-    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
-    if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
-        log_msg("sound: no audio output: %s (continuing silently)", SDL_GetError());
+    if (SND.stream || !start_audio())
         return;
-    }
-    const SDL_AudioSpec spec = {SDL_AUDIO_S16, 2, MIX_RATE};
-    SDL_AudioStream *s =
-        SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, feed, NULL);
-    if (!s) {
-        log_msg("sound: no audio output: %s (continuing silently)", SDL_GetError());
+    SDL_AudioStream *s = sound_open_device(MIX_RATE, feed, &NAP.quiet, "sound");
+    if (!s) /* closed for a silence, it stays so, for the next sound to try */
         return;
-    }
-    catch_up(); /* the clock-driven frames so far */
-    SDL_SetAudioStreamGain(s, sound_gain(SND.volume));
+    catch_up(); /* the clock-driven frames so far, skipping a slept-through gap */
+    NAP.stream = false;
     SND.stream = s;
     SDL_ResumeAudioStreamDevice(s);
 }
+
+/* Before a command that plays a sound: the device again, if it was closed
+   for a silence. The clock drives the mixer through any other command. */
+static void wake(mix_kind kind) {
+    if (NAP.stream && kind == MIX_BUFFER && may_reopen())
+        open_output();
+}
+
+void sound_nap(void) {
+    static uint64_t checked;
+    uint64_t now = SDL_GetTicks();
+    if (now - checked < NAP_CHECK_MS) /* not a lock on the audio thread every frame */
+        return;
+    checked = now;
+    if (SND.stream) {
+        if (any_busy()) {
+            sound_quiet_heard(&NAP.quiet);
+        } else if (sound_quiet_close(&SND.stream, &NAP.quiet, "sound")) {
+            /* Nothing sounds until a command comes (wake), so the clock
+               can drive the mixer from here. */
+            SND.rendered = (uint64_t)(clock_now() * MIX_RATE);
+            NAP.stream = true;
+        }
+    } else if (sound_quiet_close(&SND.monitor, &NAP.quiet, "sound")) {
+        NAP.monitor = true;
+    }
+}
+
+bool sound_device_open(void) { return SND.stream || SND.monitor; }
+
+void sound_set_nap_ms(uint32_t ms) { NAP.after_ms = ms; }
 
 /* A source's sound: rendered as the clock goes (catch_up) and played
    behind it, from now. */
@@ -239,8 +371,8 @@ static void play_clock_driven(void) {
         SDL_DestroyAudioStream(SND.stream);
         SND.stream = NULL;
     }
-    double now = replay_recording() || replay_playing() ? misc_last_seconds() : misc_seconds();
-    SND.rendered = (uint64_t)(now * MIX_RATE);
+    NAP.stream = false;
+    SND.rendered = (uint64_t)(clock_now() * MIX_RATE);
     SND.lead_ms = SOUND_SOURCE_LEAD_MS;
     sound_open_monitor();
     sound_monitor(true);
@@ -248,33 +380,30 @@ static void play_clock_driven(void) {
 
 void sound_set_source(sound_source_fn fn) {
     SND.source = fn;
-    if (fn && SND.stream)
+    if (fn && (SND.stream || NAP.stream))
         play_clock_driven();
 }
 
 void sound_open_monitor(void) {
-    if (SND.stream || SND.monitor)
+    if (SND.stream || NAP.stream || SND.monitor || NAP.monitor || !start_audio())
         return;
-    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
-    if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
-        log_msg("sound: no audio output: %s (continuing silently)", SDL_GetError());
-        return;
-    }
-    const SDL_AudioSpec spec = {SDL_AUDIO_S16, 2, MIX_RATE};
-    SND.monitor = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
-    if (!SND.monitor) {
-        log_msg("sound: no audio output: %s (continuing silently)", SDL_GetError());
-        return;
-    }
-    SDL_SetAudioStreamGain(SND.monitor, sound_gain(SND.volume));
-    SDL_ResumeAudioStreamDevice(SND.monitor);
+    open_monitor_stream();
+}
+
+/* The monitor's device, the audio subsystem started. False (logged) if
+   it can't be opened. */
+static bool open_monitor_stream(void) {
+    SND.monitor = sound_open_device(MIX_RATE, NULL, &NAP.quiet, "sound");
+    if (SND.monitor)
+        SDL_ResumeAudioStreamDevice(SND.monitor);
+    return SND.monitor;
 }
 
 void sound_monitor(bool on) {
-    if (!SND.monitor || on == SND.monitor_on)
+    if ((!SND.monitor && !NAP.monitor) || on == SND.monitor_on)
         return;
     SND.monitor_on = on;
-    if (!on)
+    if (!on && SND.monitor)
         SDL_ClearAudioStream(SND.monitor);
 }
 
@@ -403,6 +532,7 @@ void sound_pump(void) {
     SND.in_pump = true;
     catch_up();
     SND.in_pump = false;
+    sound_nap();
     mix_callback cb;
     if (replay_playing()) {
         while (mix_take_callback(&cb))
@@ -478,6 +608,7 @@ static void h_snd_dispose_channel(void) {
 /* Queues m on channel i, a step of the replay (whether the queue was
    full). Returns an OSErr. */
 static int16_t queue(int i, mix_cmd m) {
+    wake(m.kind);
     catch_up();
     replay_step();
     bool full = replay_playing() && replay_take(REPLAY_SOUND_FULL, NULL);
@@ -519,6 +650,7 @@ static void h_snd_do_immediate(void) {
         if (m.kind == MIX_CALLBACK) {
             deliver_callback(i, m.param1, m.param2);
         } else {
+            wake(m.kind);
             catch_up();
             lock();
             mix_immediate(i, m);

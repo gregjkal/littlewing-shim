@@ -22,6 +22,7 @@
 #include "files.h"
 #include "misc.h"
 #include "sound.h"
+#include "sound_device.h"
 #include "util.h"
 #include "wav.h"
 
@@ -83,7 +84,10 @@ static struct {
     int n, selected;
     entry e[THEME_GAMES];
     char root[PATH_MAX], self[PATH_MAX];
-    SDL_AudioStream *stream;
+    bool audio;              /* the audio subsystem is started */
+    SDL_AudioStream *stream; /* NULL, with audio, in a silence (sound.h) */
+    sound_quiet quiet;
+    uint64_t retry_at; /* sound_may_open's */
     int volume;
     pid_t pid;  /* the render running, 0 for none */
     int render; /* its entry */
@@ -143,13 +147,27 @@ static void load(entry *e) {
     SDL_free(buf);
 }
 
-static void play(int i) {
-    if (!T.stream || i < 0 || i >= T.n)
+/* The device, the audio subsystem started. Logged if it can't be opened. */
+static void open_stream(void) {
+    T.stream = sound_open_device(THEME_RATE, NULL, &T.quiet, "picker music");
+    if (!T.stream)
         return;
-    SDL_ClearAudioStream(T.stream);
+    T.volume = sound_volume();
+    SDL_ResumeAudioStreamDevice(T.stream);
+}
+
+static void play(int i) {
+    if (!T.audio || i < 0 || i >= T.n)
+        return;
+    if (T.stream)
+        SDL_ClearAudioStream(T.stream);
     entry *e = &T.e[i];
     load(e);
-    if (e->frames)
+    if (!e->frames)
+        return;
+    if (!T.stream && sound_may_open(&T.retry_at))
+        open_stream();
+    if (T.stream)
         SDL_PutAudioStreamData(T.stream, e->clip, (int)(e->frames * 4));
 }
 
@@ -306,20 +324,14 @@ void theme_start(const game_info *const *games, int n, int selected, const char 
     }
     remove_leftovers();
     T.on = true;
-    if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
-        log_msg("picker music: no audio output: %s", SDL_GetError());
+    if (!sound_start_audio("picker music"))
         return;
-    }
-    const SDL_AudioSpec spec = {SDL_AUDIO_S16, 2, THEME_RATE};
-    T.stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
+    open_stream();
     if (!T.stream) {
-        log_msg("picker music: no audio output: %s", SDL_GetError());
         SDL_QuitSubSystem(SDL_INIT_AUDIO);
         return;
     }
-    T.volume = sound_volume();
-    SDL_SetAudioStreamGain(T.stream, sound_gain(T.volume));
-    SDL_ResumeAudioStreamDevice(T.stream);
+    T.audio = true;
 }
 
 void theme_select(int selected) {
@@ -336,6 +348,9 @@ void theme_tend(void) {
         T.volume = sound_volume();
         SDL_SetAudioStreamGain(T.stream, sound_gain(T.volume));
     }
+    if (T.stream && SDL_GetAudioStreamQueued(T.stream) > 0)
+        sound_quiet_heard(&T.quiet);
+    sound_quiet_close(&T.stream, &T.quiet, "picker music");
     if (T.pid) {
         int st = 0;
         pid_t r = waitpid(T.pid, &st, WNOHANG);
@@ -366,10 +381,10 @@ void theme_stop(void) {
         remove_tree(T.temp);
         log_msg("picker music: stopped rendering %s's", T.e[T.render].game->title);
     }
-    if (T.stream) {
+    if (T.stream)
         SDL_DestroyAudioStream(T.stream);
+    if (T.audio)
         SDL_QuitSubSystem(SDL_INIT_AUDIO);
-    }
     for (int i = 0; i < T.n; i++)
         free(T.e[i].clip);
     memset(&T, 0, sizeof T);

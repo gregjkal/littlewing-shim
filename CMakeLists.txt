@@ -33,7 +33,7 @@ target_include_directories(loony_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(loony_core PUBLIC PkgConfig::UNICORN PkgConfig::SDL3 "-framework CoreFoundation"
                       "-framework CoreGraphics" "-framework CoreText" "-framework ImageIO" "-framework AppKit"
                       "-framework AVFoundation" "-framework CoreMedia" "-framework CoreVideo"
-                      "-framework Accelerate" "-framework UniformTypeIdentifiers" z)
+                      "-framework Accelerate" "-framework UniformTypeIdentifiers" "-framework IOKit" z)
 
 add_executable(loony src/main.c)
 target_link_libraries(loony PRIVATE loony_core)

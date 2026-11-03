@@ -8,7 +8,21 @@
    plays the queues in real time; without one (the fixed clock, tests, no
    device), sound_pump renders them up to the current time, so a channel stays
    busy for as long as its sounds would play either way. Callbacks always run
-   on the main thread. Sound problems are logged, never fatal. */
+   on the main thread. Sound problems are logged, never fatal.
+
+   An open audio device keeps the Mac from sleeping, even playing silence,
+   so after SOUND_NAP_MS of silence the device is closed until the next
+   sound. With the Sound Manager on the device, that is once every channel
+   has been idle that long (sound_nap checks): the clock drives the mixer
+   meanwhile, as with no device, and the next command that plays a sound
+   opens the device again before it is queued. On the monitor (a
+   watched replay or a source), it is once nothing louder than
+   SOUND_NAP_QUIET has been played that long, and the first frames that
+   are reopen it. Opening the device takes some tens of milliseconds, so a sound after
+   a long silence comes that much late. The game sees none of this: a
+   channel is as busy, and its callbacks come, as they would have. */
+#define SOUND_NAP_MS 30000
+#define SOUND_NAP_QUIET 8 /* a sample at most this loud (of 32767) is silence */
 
 /* SndCommand numbers. */
 #define SND_NULL_CMD     0
@@ -68,9 +82,14 @@ typedef void (*sound_tap_fn)(const int16_t *samples, uint32_t frames, uint64_t a
 void sound_set_tap(sound_tap_fn fn);
 
 /* Renders up to now if clock-driven, then delivers the callbacks the queues
-   have reached (guest_call), oldest first. The event loop calls this on every
-   iteration. */
+   have reached (guest_call), oldest first, and calls sound_nap. The event
+   loop calls this on every iteration. */
 void sound_pump(void);
+
+/* Closes the device once the silence has been long enough (above), looking
+   at most every quarter second. Runs no game code: the viewer calls it
+   while it waits, paused or at the end, when nothing calls sound_pump. */
+void sound_nap(void);
 
 /* A second source of sound, added into what the mixer renders: fn adds
    frames stereo frames to out (2 * frames samples, clamped as it adds). It
@@ -93,6 +112,11 @@ double sound_render_seconds(void);
 
 /* The seconds of sound waiting on the monitor to play (tests read it). */
 double sound_monitor_queued_seconds(void);
+
+/* For tests: whether an audio device is open (the Sound Manager's or the
+   monitor), and the silence before it closes, SOUND_NAP_MS until set. */
+bool sound_device_open(void);
+void sound_set_nap_ms(uint32_t ms);
 
 /* Registers NewSndCallBackUPP, SndNewChannel, SndDisposeChannel,
    SndDoCommand, SndDoImmediate, SndChannelStatus, SndPlay (an 'snd '
