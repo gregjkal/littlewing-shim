@@ -32,8 +32,8 @@
    does. Each column is set by its ink, not by its characters' boxes: every
    rank's leftmost pixel is on the left margin, every name's on one column,
    and every score's rightmost pixel on the right margin, whatever its size.
-   A score too wide for the picture is set smaller until it fits, and a
-   name that would reach its score loses its last characters.
+   The best score, if too wide for the picture, is set smaller until it
+   fits, and a name that would reach its score loses its last characters.
 
    Baselines, for the tests: tall, the lines at 806, 950 (the large score),
    1077, 1140 and 1203, between x 72 and 1008; wide, at 242, 332, 423, 468

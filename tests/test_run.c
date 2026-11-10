@@ -80,6 +80,56 @@ TEST(run_plays_the_opening_headless) {
     free(png);
 }
 
+static char card_tall[1100], card_wide[1100];
+
+static void run_loony_with_scorecards(void *dir) {
+    setenv("LOONY_EXIT_AFTER", "240", 1);
+    setenv("LOONY_SCORECARD", card_tall, 1);
+    setenv("LOONY_SCORECARD_WIDE", card_wide, 1);
+    run_loony(dir);
+}
+
+/* LOONY_SCORECARD and LOONY_SCORECARD_WIDE (scorecard.h): at exit, while
+   the title is still up, the program writes both pictures of the scores
+   the game starts with, the table found beside the program in them. */
+TEST(run_writes_the_high_scores_pictures) {
+    SKIP_UNLESS_GAME();
+    char dir[1024], out[32768];
+    test_tmp_dir(dir, sizeof dir);
+    snprintf(card_tall, sizeof card_tall, "%s/tall.png", dir);
+    snprintf(card_wide, sizeof card_wide, "%s/wide.png", dir);
+    test_tmp_dir(run_data, sizeof run_data);
+    int status = test_run_child(run_loony_with_scorecards, (void *)test_game_dir(), out, sizeof out);
+    test_remove_tree(run_data);
+    run_data[0] = '\0';
+    cgimage_pixels tall = {0}, wide = {0};
+    char err[256];
+    bool got_tall = cgimage_decode_png(card_tall, &tall, err, sizeof err);
+    bool got_wide = cgimage_decode_png(card_wide, &wide, err, sizeof err);
+    test_remove_tree(dir);
+    CHECK_EQ(status, 0);
+    CHECK(!strstr(out, "LOONY_SCORECARD"));
+    CHECK(!strstr(out, "scorecard:")); /* the table's picture was found */
+    CHECK(got_tall);
+    CHECK(got_wide);
+    CHECK_EQ(tall.width, 1080);
+    CHECK_EQ(tall.height, 1350);
+    CHECK_EQ(wide.width, 1200);
+    CHECK_EQ(wide.height, 675);
+    /* the table: xRGB, not black in the middle of its place */
+    const uint8_t *t = tall.xrgb + ((size_t)300 * 1080 + 540) * 4;
+    const uint8_t *w = wide.xrgb + ((size_t)337 * 1200 + 220) * 4;
+    CHECK(t[1] + t[2] + t[3] > 60);
+    CHECK(w[1] + w[2] + w[3] > 60);
+    /* and a score: ink on the large score's line */
+    bool ink = false;
+    for (int x = 72; x < 1008 && !ink; x++)
+        ink = tall.xrgb[((size_t)900 * 1080 + (size_t)x) * 4 + 2] > 128;
+    CHECK(ink);
+    free(tall.xrgb);
+    free(wide.xrgb);
+}
+
 TEST(run_crystal_caliburn_plays_its_opening_headless) {
     SKIP_UNLESS_CC();
     const char *t = getenv("TMPDIR");

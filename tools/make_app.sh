@@ -10,9 +10,9 @@
 # version is LOONY_VERSION (x.y.z), or 0.0.0 for a build that isn't a release,
 # and the oldest macOS it claims to run on is the newest any of its binaries
 # needs (a release builds them all for macOS 14; see tools/release.sh).
-# Resources/Licenses holds this project's license, the bundled libraries' and
-# the high scores picture's font's,
-# Resources/hd-art the HD art (src/hd.h), and Resources/picker-art the
+# Resources/Licenses holds the licenses: this project's, the bundled
+# libraries', and that of the font of the high scores picture.
+# Resources/hd-art holds the HD art (src/hd.h), Resources/picker-art the
 # picker's card for each game (src/picker.h), and Resources/share-art the
 # table in the high scores picture (src/scorecard.h).
 # Resources/practice holds the shipped practices (src/practice.h).

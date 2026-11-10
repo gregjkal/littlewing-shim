@@ -163,7 +163,8 @@ Software Foundation, either version 2 of the License, or (at your option) any
 later version. See `LICENSE`.
 
 The app bundles Unicorn (GPLv2), with the changes in `tools/unicorn-patches`,
-and SDL3 (zlib license). Their licenses are in
+and SDL3 (zlib license), and its high scores picture is set in Share Tech
+Mono (SIL Open Font License, `fonts/`). Their licenses are in
 `LittleWing.app/Contents/Resources/Licenses`. The games, and the art in
-`hd-art/` made from them, belong to LittleWing and aren't covered by this
-license.
+`hd-art/` and `share-art/` made from them, belong to LittleWing and aren't
+covered by this license.
