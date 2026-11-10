@@ -271,7 +271,9 @@ static NSMenuItem *disabled_item(NSString *title) {
                               withIntermediateDirectories:YES
                                                attributes:nil
                                                     error:nil];
-    NSString *file = [NSString stringWithFormat:@"%s High Scores.png", scores_config.title];
+    /* a name each, so a tall one still being sent isn't written over */
+    NSString *file = [NSString stringWithFormat:@"%s High Scores%s.png", scores_config.title,
+                                                item.tag == SCORECARD_WIDE ? " Wide" : ""];
     NSURL *url = [NSURL fileURLWithPath:[dir stringByAppendingPathComponent:file]];
     char err[PATH_MAX + 64];
     if (!scorecard_share((scorecard_shape)item.tag, url.fileSystemRepresentation, err, sizeof err)) {

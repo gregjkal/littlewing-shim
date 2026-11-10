@@ -118,6 +118,8 @@ TEST(export_child_env_drops_the_viewers_settings) {
                          "LOONY_FULLSCREEN=1",
                          "LOONY_DATA_DIR=/tmp/lwreplay-x",
                          "LOONY_CLIP_OUT=/tmp/elsewhere.mp4",
+                         "LOONY_SCORECARD=/tmp/tall.png",
+                         "LOONY_SCORECARD_WIDE=/tmp/wide.png",
                          "LOONY_CLIP=0:01-0:02",
                          "LOONY_REPLAY=game.lwreplay",
                          "LOONY_REPLAY_LICENSE=/prefs.plist",
@@ -134,7 +136,7 @@ TEST(export_child_env_drops_the_viewers_settings) {
     static const char *const gone[] = {"LOONY_WATCH",        "LOONY_WATCH_FROM", "LOONY_WATCH_SPEED",
                                        "LOONY_WATCH_PAUSED", "LOONY_WATCH_IN",   "LOONY_SCRIPT",
                                        "LOONY_SCREENSHOT",   "LOONY_FULLSCREEN", "LOONY_DATA_DIR",
-                                       "LOONY_CLIP_OUT"};
+                                       "LOONY_CLIP_OUT",     "LOONY_SCORECARD",  "LOONY_SCORECARD_WIDE"};
     for (size_t i = 0; i < sizeof gone / sizeof gone[0]; i++)
         CHECK_STR(entry(out, gone[i]), "(none)");
     CHECK_STR(entry(out, "PATH"), "/usr/bin");
