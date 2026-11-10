@@ -17,6 +17,7 @@
 #include "practice.h"
 #include "recordings.h"
 #include "replay.h"
+#include "scorecard.h"
 #include "settings.h"
 #include "sound.h"
 #include "util.h"
@@ -149,6 +150,22 @@ static NSMenuItem *disabled_item(NSString *title) {
         item.submenu = sub;
         [menu addItem:item];
     }
+    /* The picture of them all (scorecard.h): tall, or wide with Option held. */
+    [menu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *tall = [[NSMenuItem alloc] initWithTitle:@"Share High Scores…"
+                                                  action:@selector(shareScores:)
+                                           keyEquivalent:@""];
+    tall.tag = SCORECARD_TALL;
+    NSMenuItem *wide = [[NSMenuItem alloc] initWithTitle:@"Share High Scores (Wide)…"
+                                                  action:@selector(shareScores:)
+                                           keyEquivalent:@""];
+    wide.tag = SCORECARD_WIDE;
+    wide.keyEquivalentModifierMask = NSEventModifierFlagOption;
+    wide.alternate = YES;
+    for (NSMenuItem *m in @[ tall, wide ]) {
+        m.target = self;
+        [menu addItem:m];
+    }
 }
 
 /* Writes the shared copy of info's recording to url, or says why not. A
@@ -231,6 +248,11 @@ static NSMenuItem *disabled_item(NSString *title) {
     NSURL *url = [NSURL fileURLWithPath:[dir stringByAppendingPathComponent:item.representedObject[@"file"]]];
     if (![self write:item.representedObject to:url])
         return;
+    [self offer:url];
+}
+
+/* Shows the share sheet for the file at url, in the middle of the window. */
+- (void)offer:(NSURL *)url {
     NSView *view = (NSApp.keyWindow ?: NSApp.mainWindow).contentView;
     if (!view) { /* no window to show the share sheet on */
         [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[ url ]];
@@ -239,6 +261,27 @@ static NSMenuItem *disabled_item(NSString *title) {
     NSSharingServicePicker *picker = [[NSSharingServicePicker alloc] initWithItems:@[ url ]];
     NSRect middle = NSMakeRect(NSMidX(view.bounds), NSMidY(view.bounds), 1, 1);
     [picker showRelativeToRect:middle ofView:view preferredEdge:NSRectEdgeMinY];
+}
+
+/* Share High Scores: draws the picture (item's tag is its shape) into a
+   temporary folder and offers it to the share sheet. */
+- (void)shareScores:(NSMenuItem *)item {
+    NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"LittleWing High Scores"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir
+                              withIntermediateDirectories:YES
+                                               attributes:nil
+                                                    error:nil];
+    NSString *file = [NSString stringWithFormat:@"%s High Scores.png", scores_config.title];
+    NSURL *url = [NSURL fileURLWithPath:[dir stringByAppendingPathComponent:file]];
+    char err[PATH_MAX + 64];
+    if (!scorecard_share((scorecard_shape)item.tag, url.fileSystemRepresentation, err, sizeof err)) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = @"The high scores can't be shared";
+        alert.informativeText = @(err);
+        [alert runModal];
+        return;
+    }
+    [self offer:url];
 }
 
 - (void)save:(NSMenuItem *)item {

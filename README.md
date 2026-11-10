@@ -127,6 +127,8 @@ recorded. You can:
 - Share the replay of a high score from the **High Scores** menu, by
   AirDrop, Mail or Messages. Double-click a `.lwreplay` file someone sends
   you to watch it.
+- Share a picture of your high scores beside the table, sized for
+  posting, with **Share High Scores…** in the same menu.
 - Practice from a moment you marked, or one the app ships, as many times
   as you like, from the **Replays** or **Practice** menus.
 

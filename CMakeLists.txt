@@ -28,8 +28,20 @@ pkg_check_modules(SDL3 REQUIRED IMPORTED_TARGET sdl3)
 file(GLOB CORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.c ${CMAKE_SOURCE_DIR}/src/*.m)
 list(REMOVE_ITEM CORE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.c)
 
-add_library(loony_core STATIC ${CORE_SOURCES})
-target_include_directories(loony_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
+# The font of the high scores picture (src/scorecard.h), as a list of bytes
+# scorecard.c includes.
+set(SCORECARD_FONT ${CMAKE_SOURCE_DIR}/fonts/ShareTechMono-Regular.ttf)
+set(SCORECARD_FONT_INC ${CMAKE_BINARY_DIR}/gen/scorecard_font.inc)
+add_custom_command(
+  OUTPUT ${SCORECARD_FONT_INC}
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/gen
+  COMMAND sh -c "xxd -i < '${SCORECARD_FONT}' > '${SCORECARD_FONT_INC}'"
+  DEPENDS ${SCORECARD_FONT}
+  COMMENT "Embedding the high scores font"
+  VERBATIM)
+
+add_library(loony_core STATIC ${CORE_SOURCES} ${SCORECARD_FONT_INC})
+target_include_directories(loony_core PUBLIC ${CMAKE_SOURCE_DIR}/src PRIVATE ${CMAKE_BINARY_DIR}/gen)
 target_link_libraries(loony_core PUBLIC PkgConfig::UNICORN PkgConfig::SDL3 "-framework CoreFoundation"
                       "-framework CoreGraphics" "-framework CoreText" "-framework ImageIO" "-framework AppKit"
                       "-framework AVFoundation" "-framework CoreMedia" "-framework CoreVideo"

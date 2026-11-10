@@ -156,6 +156,7 @@ LOONY_TRACE=imports,calls ./build/loony   # also log each call into the game (ca
 LOONY_TRACE=lowmem ./build/loony      # log the first write to each low-memory address
 LOONY_STUB=all ./build/loony          # unimplemented OS calls return 0 instead of crashing
 LOONY_EXIT_AFTER=600 LOONY_SCREENSHOT=shot.png ./build/loony   # run 10 s, save the last frame
+LOONY_SCORECARD=tall.png LOONY_SCORECARD_WIDE=wide.png ./build/loony   # at exit, the high scores pictures (Loony Labyrinth; docs/replays.md)
 SDL_VIDEO_DRIVER=dummy ./build/loony  # no window (with LOONY_SCREENSHOT for headless runs)
 LOONY_WAV=out.wav ./build/loony       # also record the sound (44.1 kHz 16-bit stereo)
 SDL_AUDIO_DRIVER=dummy ./build/loony  # no sound output
