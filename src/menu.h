@@ -22,7 +22,10 @@ void menu_install(void);
    a copy without the license (replay_share) and offers it to the share
    sheet (AirDrop, Mail, Messages), and Save Replay... writes that copy
    where the player chooses. A score with no recording, or no date, says
-   so. title names the copy ("Loony Labyrinth 430,745,960 GREG.lwreplay"). */
+   so. title names the copy ("Loony Labyrinth 430,745,960 GREG.lwreplay").
+   Under the scores, Share High Scores... offers the share sheet a picture
+   of them all beside the table (scorecard.h), 4:5; with Option held it is
+   Share High Scores (Wide)..., the 16:9 one. */
 void menu_add_high_scores(const char *game_id, const char *title, const char *rec_dir);
 
 /* Adds a Replay menu after the Sound menu, for watching a replay (watch.h):

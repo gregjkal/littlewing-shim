@@ -43,6 +43,7 @@
 #include "region.h"
 #include "replay.h"
 #include "rsrc.h"
+#include "scorecard.h"
 #include "script.h"
 #include "seek.h"
 #include "settings.h"
@@ -507,6 +508,7 @@ int main(int argc, char **argv) {
         const char *replay = getenv("LOONY_REPLAY");
         if (rec_dir[0] && (!replay || !*replay) && !clip_on())
             menu_add_high_scores(game->id, game->title, rec_dir);
+        scorecard_init(game->id, game->title);
     }
     if (!replay_start(game->id, buf, len, have_data ? data_dir : NULL, err, sizeof err))
         return startup_error("%s", err);

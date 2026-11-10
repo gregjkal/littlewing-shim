@@ -393,6 +393,15 @@ file runs the game from that state, not only from the inputs recorded.
 The high-score names and anything typed during play are in the copy. A game played before Loony Labyrinth was registered can't be shared:
 the replay would start differently.
 
+Under the scores, **Share High Scores…** opens the share sheet with a
+picture of them for posting: the table, the best score large, the others
+under it, and the date. It is a PNG, 1080x1350 (4:5). Hold Option and the
+item becomes **Share High Scores (Wide)…**, the same at 1200x675 (16:9),
+with the whole table at its left. The table in it is a picture the app
+carries, of the playfield in HD with its lamps lit.
+`LOONY_SCORECARD=<file>` and `LOONY_SCORECARD_WIDE=<file>` write the two
+pictures when the program exits, for a run without a window.
+
 ## Opening a replay
 
 Double-click a `.lwreplay` file, or drop one on the window, and

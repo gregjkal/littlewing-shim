@@ -4,6 +4,7 @@ build-*/
 !/tools/AppIcon.icon/Assets/*.png
 !/hd-art/**/*.png
 !/picker-art/*.png
+!/share-art/*.png
 !/docs/images/*.png
 /game/
 .DS_Store

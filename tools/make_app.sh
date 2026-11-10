@@ -10,9 +10,11 @@
 # version is LOONY_VERSION (x.y.z), or 0.0.0 for a build that isn't a release,
 # and the oldest macOS it claims to run on is the newest any of its binaries
 # needs (a release builds them all for macOS 14; see tools/release.sh).
-# Resources/Licenses holds this project's license and the bundled libraries',
-# Resources/hd-art the HD art (src/hd.h), and Resources/picker-art the
-# picker's card for each game (src/picker.h).
+# Resources/Licenses holds the licenses: this project's, the bundled
+# libraries', and that of the font of the high scores picture.
+# Resources/hd-art holds the HD art (src/hd.h), Resources/picker-art the
+# picker's card for each game (src/picker.h), and Resources/share-art the
+# table in the high scores picture (src/scorecard.h).
 # Resources/practice holds the shipped practices (src/practice.h).
 # With LOONY_SPARKLE (a folder from tools/sparkle.sh), as a release has, the
 # app updates itself: it bundles Sparkle.framework, and its Info.plist names
@@ -44,6 +46,8 @@ cp "$bin" "$app/Contents/MacOS/loony"
 cp -R "$here/../hd-art" "$app/Contents/Resources/hd-art"
 # The picker's cards (picker-art/<game id>.png): the download page's thumbnails.
 cp -R "$here/../picker-art" "$app/Contents/Resources/picker-art"
+# The table in the high scores picture (share-art/<game id>.png, src/scorecard.h).
+cp -R "$here/../share-art" "$app/Contents/Resources/share-art"
 # The shipped practices (practice/<name>.lwreplay and .practice, src/practice.h).
 cp -R "$here/../practice" "$app/Contents/Resources/practice"
 cat > "$app/Contents/Info.plist" <<PLIST
@@ -101,6 +105,8 @@ fi
 licenses="$app/Contents/Resources/Licenses"
 mkdir -p "$licenses"
 cp "$here/../LICENSE" "$licenses/littlewing-shim-LICENSE"
+# The font of the high scores picture (src/scorecard.h), built into the binary.
+cp "$here/../fonts/ShareTechMono-OFL.txt" "$licenses/ShareTechMono-OFL.txt"
 if [ -n "$sparkle" ]; then
     cp "$sparkle/LICENSE" "$licenses/Sparkle-LICENSE"
 fi
